@@ -1,0 +1,66 @@
+name: Deploy Agent Orchestrator
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: "enterprise-agent-demo"
+  REGION: "europe-west2"
+  GAR_LOCATION: "europe-west2"
+  REPOSITORY: "agent-docker-repo"
+  IMAGE: "agent-orchestrator"
+  WORKLOAD_IDENTITY_PROVIDER: "projects/123456789012/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider"
+  SERVICE_ACCOUNT: "github-actions-sa@enterprise-agent-demo.iam.gserviceaccount.com"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required for Workload Identity
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Lint and Test
+        run: |
+          pip install flake8
+          flake8 src/
+          # add pytest here when tests are written
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: '${{ env.WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ env.SERVICE_ACCOUNT }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_TAG="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}"
+          docker build -t $IMAGE_TAG -f deploy/Dockerfile .
+          docker push $IMAGE_TAG
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: |
+          terraform init
+          terraform apply -auto-approve

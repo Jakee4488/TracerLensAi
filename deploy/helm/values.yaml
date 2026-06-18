@@ -1,0 +1,42 @@
+replicaCount: 2
+
+image:
+  repository: europe-west2-docker.pkg.dev/enterprise-agent-demo/agent-docker-repo/agent-orchestrator
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+serviceAccount:
+  create: true
+  # Annotations for GCP Workload Identity
+  annotations:
+    iam.gke.io/gcp-service-account: agent-app-sa@enterprise-agent-demo.iam.gserviceaccount.com
+  name: "agent-ksa"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: true
+  className: "gce"
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+  hosts:
+    - host: agent.enterprise.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80

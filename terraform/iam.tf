@@ -1,0 +1,72 @@
+# Service Account for the GKE Application pods
+resource "google_service_account" "app_sa" {
+  account_id   = "agent-app-sa"
+  display_name = "Agent Orchestrator Application SA"
+}
+
+# Roles required by the application
+resource "google_project_iam_member" "app_aiplatform_user" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_project_iam_member" "app_bigquery_editor" {
+  project = var.project_id
+  role    = "roles/bigquery.dataEditor"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+resource "google_project_iam_member" "app_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+# Workload Identity binding for GKE Kubernetes Service Account to GCP Service Account
+resource "google_service_account_iam_member" "workload_identity_binding" {
+  service_account_id = google_service_account.app_sa.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[default/agent-ksa]"
+}
+
+# (Optional) Workload Identity Federation for GitHub Actions
+resource "google_iam_workload_identity_pool" "github_pool" {
+  workload_identity_pool_id = "github-actions-pool"
+  display_name              = "GitHub Actions Pool"
+}
+
+resource "google_iam_workload_identity_pool_provider" "github_provider" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_pool.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-actions-provider"
+  display_name                       = "GitHub Actions Provider"
+
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.actor"      = "assertion.actor"
+    "attribute.repository" = "assertion.repository"
+  }
+  attribute_condition = "assertion.repository == '${var.github_repo}'"
+
+  oidc {
+    issuer_uri = "https://token.actions.githubusercontent.com"
+  }
+}
+
+# Service Account for CI/CD
+resource "google_service_account" "cicd_sa" {
+  account_id   = "github-actions-sa"
+  display_name = "GitHub Actions CI/CD SA"
+}
+
+resource "google_project_iam_member" "cicd_owner" {
+  project = var.project_id
+  role    = "roles/owner" # WARNING: High privilege. Should scope down in production.
+  member  = "serviceAccount:${google_service_account.cicd_sa.email}"
+}
+
+resource "google_service_account_iam_member" "github_sa_binding" {
+  service_account_id = google_service_account.cicd_sa.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/${var.github_repo}"
+}
