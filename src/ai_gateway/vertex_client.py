@@ -17,15 +17,15 @@ class VertexAIClient:
 
         # Pre-initialize models for performance
         self.models = {
-            "gemini-3.5-flash": GenerativeModel("gemini-3.5-flash"),
-            "gemini-3-pro-image": GenerativeModel("gemini-3-pro-image")
+            "gemini-2.5-flash": GenerativeModel("gemini-2.5-flash"),
+            "gemini-2.5-pro": GenerativeModel("gemini-2.5-pro")
         }
 
     async def generate_response(
         self,
         prompt: str,
         system_instruction: str,
-        model_name: str = "gemini-1.5-flash",
+        model_name: str = "gemini-2.5-flash",
         temperature: float = 0.2
     ) -> AgentResponse:
         """

@@ -1,8 +1,14 @@
 #!/bin/bash
 
+# Setup logging directory and file
+mkdir -p logs
+LOG_FILE="logs/run_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 echo "========================================="
 echo "  Starting GCP Agent Build & Test Script "
 echo "========================================="
+echo "Logging output to: $LOG_FILE"
 
 echo -e "\n[1] Activating Virtual Environment..."
 if [ -f "venv/Scripts/activate" ]; then
@@ -30,17 +36,24 @@ echo -e "\n[3] Setting API Keys (Add yours below if needed)..."
 # export ANTHROPIC_API_KEY="your-key"
 echo "    -> API keys configured."
 
-echo -e "\n[4] Running Unit Tests..."
+echo -e "\n[4] Running Linting (flake8)..."
+if command -v flake8 > /dev/null 2>&1; then
+    flake8 src/ || echo "    -> Linting found some issues."
+else
+    echo "    -> flake8 not found. Skipping linting."
+fi
+
+echo -e "\n[5] Running Unit Tests..."
 if command -v pytest > /dev/null 2>&1; then
     python -m pytest tests/ || echo "    -> Pytest finished or tests directory not found."
 else
     echo "    -> pytest not found. Skipping unit tests."
 fi
 
-echo -e "\n[5] Running the Synthetic Evaluation Harness..."
+echo -e "\n[6] Running the Synthetic Evaluation Harness..."
 python -m src.observability.evaluator
 
-echo -e "\n[5] Testing API Endpoints..."
+echo -e "\n[7] Testing API Endpoints..."
 if curl -s http://127.0.0.1:8080/health > /dev/null; then
     echo "    -> Server is running. Health check passed."
     echo "    -> Sending test query to /inquire..."

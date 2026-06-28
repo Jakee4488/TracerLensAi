@@ -67,3 +67,5 @@ terraform.rc
 
 # Local test scripts (optional)
 test_vertex.py
+
+logs/
