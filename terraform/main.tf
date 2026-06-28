@@ -12,7 +12,7 @@ terraform {
   }
 
   backend "gcs" {
-    bucket = "enterprise-agent-terraform-state"
+    bucket = "tf-state-project-a566ac8f-a95c-4b33-88a"
     prefix = "terraform/state"
   }
 }

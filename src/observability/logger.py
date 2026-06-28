@@ -3,6 +3,7 @@ import json
 import logging
 from google.cloud import logging as gcp_logging
 
+
 def setup_logger():
     """
     Configures standard Python logging to output JSON structured logs
@@ -10,25 +11,27 @@ def setup_logger():
     """
     logger = logging.getLogger("agent_orchestrator")
     logger.setLevel(logging.INFO)
-    
+
     # Check if we are running in GCP
     if os.environ.get("KUBERNETES_SERVICE_HOST"):
         client = gcp_logging.Client()
         client.setup_logging()
     else:
         handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-        
+
     return logger
+
 
 def log_agent_metrics(user_id: str, prompt: str, metrics: dict):
     """
     Logs structured data intended for BigQuery ingestion via a Log Sink.
     """
     logger = logging.getLogger("agent_orchestrator")
-    
+
     log_entry = {
         "event_type": "agent_invocation",
         "user_id": user_id,
@@ -40,5 +43,5 @@ def log_agent_metrics(user_id: str, prompt: str, metrics: dict):
         "completion_tokens": metrics.get("completion_tokens"),
         "escalated": metrics.get("escalated", False)
     }
-    
+
     logger.info(json.dumps(log_entry))

@@ -1,6 +1,7 @@
 import asyncio
 from typing import Dict, Any
 
+
 async def fetch_user_profile(user_id: str) -> Dict[str, Any]:
     """
     Mock tool to fetch a user profile from a backend service.
@@ -12,6 +13,7 @@ async def fetch_user_profile(user_id: str) -> Dict[str, Any]:
         "tier": "enterprise",
         "active_tickets": 1
     }
+
 
 async def check_order_status(order_id: str) -> Dict[str, Any]:
     """
