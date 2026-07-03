@@ -11,14 +11,20 @@ echo "========================================="
 echo "Logging output to: $LOG_FILE"
 
 echo -e "\n[1] Activating Virtual Environment..."
-if [ -f "venv/Scripts/activate" ]; then
+if [ -f ".venv/Scripts/activate" ]; then
+    source .venv/Scripts/activate
+    echo "    -> Virtual environment activated (.venv)."
+elif [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+    echo "    -> Virtual environment activated (.venv)."
+elif [ -f "venv/Scripts/activate" ]; then
     # Windows/Git Bash path
     source venv/Scripts/activate
-    echo "    -> Virtual environment activated."
+    echo "    -> Virtual environment activated (venv)."
 elif [ -f "venv/bin/activate" ]; then
     # Linux/Mac path
     source venv/bin/activate
-    echo "    -> Virtual environment activated."
+    echo "    -> Virtual environment activated (venv)."
 else
     echo "    -> ERROR: Virtual environment not found. Please create it first."
     exit 1
@@ -51,7 +57,7 @@ else
 fi
 
 echo -e "\n[6] Running the Synthetic Evaluation Harness..."
-python -m src.observability.evaluator
+python -m src.observability.evaluato
 
 echo -e "\n[7] Testing API Endpoints..."
 if curl -s http://127.0.0.1:8080/health > /dev/null; then

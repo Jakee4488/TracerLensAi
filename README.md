@@ -41,23 +41,47 @@ This project provides a robust architecture for deploying LLM-powered customer s
 
 ### Local Development
 
-1.  Navigate to the `src/` directory and install dependencies:
+1.  Run the setup script to create a virtual environment and install all dependencies:
     ```bash
-    pip install -r src/requirements.txt
+    chmod +x setup.sh
+    ./setup.sh
     ```
-2.  Set required environment variables:
+2.  Activate the virtual environment:
+    ```bash
+    # On Linux/macOS
+    source .venv/bin/activate
+
+    # On Windows (Git Bash)
+    source .venv/Scripts/activate
+    ```
+3.  Set required environment variables:
     ```bash
     export GOOGLE_CLOUD_PROJECT="your-project-id"
     export GOOGLE_CLOUD_REGION="europe-west2"
     ```
-3.  Run the FastAPI application locally:
+4.  Run the FastAPI application locally:
     ```bash
     uvicorn src.main:app --reload --port 8080
     ```
-4.  *(Optional)* Run the synthetic evaluation harness to test agent policies:
+5.  *(Optional)* Run the synthetic evaluation harness to test agent policies:
     ```bash
     python -m src.observability.evaluator
     ```
+
+### Running in a Docker Container
+
+You can build the Docker image and run the container locally using the provided helper script:
+
+1.  Make the script executable:
+    ```bash
+    chmod +x run_docker.sh
+    ```
+2.  Execute the run script (this script automatically builds the image, mounts GCP application default credentials from your local machine, and runs the container):
+    ```bash
+    ./run_docker.sh
+    ```
+3.  The containerized application will run in the background on port `8080`. The script will wait for the server to start and run a health check and inquire endpoint test automatically.
+
 
 ### Infrastructure Deployment
 
