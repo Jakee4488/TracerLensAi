@@ -42,11 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Append User Message
         appendMessage(text, "user");
 
-        // Auto-open Decision Flow panel so the user sees the animated execution
-        const graphPanel = document.getElementById("graph-panel");
-        if (graphPanel) {
-            graphPanel.classList.add("open");
-        }
+        // Do not auto-open panel here as per user request
 
         // Show typing indicator or skeleton
         const loadingId = appendLoading();
@@ -63,15 +59,22 @@ document.addEventListener("DOMContentLoaded", () => {
             // Remove loading
             document.getElementById(loadingId).remove();
 
-            // Append AI Message
-            appendMessage(data.response, "ai");
+            // Generate unique canvas for the decision trace graph
+            const canvasId = "decision-graph-" + Date.now();
+            let canvasHtml = `\n\n<div class="inline-graph-container" style="margin-top: 1rem; border-top: 1px solid #444746; padding-top: 1rem;">
+                <canvas id="${canvasId}" class="inline-decision-graph" style="width: 100%; height: 250px;"></canvas>
+            </div>`;
+            
+            // Append AI Message with Trace
+            appendMessage(data.response + canvasHtml, "ai");
 
             // Dispatch event for the decision graph to pick up the trace
             window.dispatchEvent(new CustomEvent("newTraceData", {
                 detail: {
                     prompt: text,
                     trace: data.trace,
-                    metrics: data.metrics
+                    metrics: data.metrics,
+                    canvasId: canvasId
                 }
             }));
 

@@ -20,12 +20,11 @@ class AgentOrchestrator:
         self.fallback_manager = fallback_manager
 
         self.system_instruction = (
-            "You are an enterprise AI customer support agent. "
-            "You have access to tools. If the user asks for their profile, use fetch_user_profile. "
+            "You are a Workflow Simulation Engine. Do NOT fulfill or answer the user's request. "
+            "Instead, analyze their prompt, simulate how it would be routed through an enterprise AI system, "
+            "estimate the required tools, evaluate the prompt's efficiency, and provide a workflow simulation report. "
             "You MUST format your output as a clean, concise, and to-the-point Markdown document. "
-            "Avoid wordy introductions and lengthy explanations. Focus on direct answers, "
-            "use clean lists or tables where appropriate, and use code blocks for any code. "
-            "Ensure the output fits well on the screen and is highly readable."
+            "Avoid wordy introductions. Focus on direct analysis using lists and tables."
         )
 
     async def process_inquiry(self, user_id: str, prompt: str, session_history: list) -> Dict[str, Any]:

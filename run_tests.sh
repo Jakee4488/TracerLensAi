@@ -210,6 +210,40 @@ cmd_test_pipeline() {
     else
       warn "/inquire-traced returned HTTP $RESPONSE."
     fi
+
+    info "Testing POST /analyze-prompt..."
+    ANALYZE_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/analyze-prompt" \
+         -H "Content-Type: application/json" \
+         -d '{"prompt": "Please summarize this deployment plan as concise bullets."}')
+
+    if [ "$ANALYZE_RESPONSE" = "200" ]; then
+      success "/analyze-prompt returned HTTP 200."
+    else
+      error "/analyze-prompt returned HTTP $ANALYZE_RESPONSE."
+      cmd_stop 2>/dev/null || true
+      exit 1
+    fi
+
+    info "Testing POST /optimize-workflow..."
+    OPTIMIZE_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/optimize-workflow" \
+         -H "Content-Type: application/json" \
+         -d '{
+           "original_prompt": "Please fetch user profile for user 123",
+           "trace": [
+             {"step_type": "user_input", "description": "User Message Received", "tokens": 8, "latency_ms": 0.0},
+             {"step_type": "llm_call", "description": "LLM Generation", "tokens": 120, "latency_ms": 850.0},
+             {"step_type": "response", "description": "Response Delivered", "tokens": 45, "latency_ms": 0.0}
+           ],
+           "run_prompt_analysis": true
+         }')
+
+    if [ "$OPTIMIZE_RESPONSE" = "200" ]; then
+      success "/optimize-workflow returned HTTP 200."
+    else
+      error "/optimize-workflow returned HTTP $OPTIMIZE_RESPONSE."
+      cmd_stop 2>/dev/null || true
+      exit 1
+    fi
   else
     warn "Server did not become healthy within 30s — skipping API tests."
   fi
@@ -250,7 +284,7 @@ main() {
   local action="${1:-test}"
 
   case "$action" in
-    --start)
+    --start|--startl)
       check_prerequisites
       cmd_start
       ;;

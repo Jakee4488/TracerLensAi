@@ -35,8 +35,57 @@
                 <div class="header-title">
                     GCP Agent <span class="status-dot"></span>
                 </div>
-                <button class="toggle-graph-btn" id="toggle-graph">🔀 Decision Flow</button>
+                <button class="toggle-graph-btn" id="toggle-graph">⚡ Workflow Optimiser</button>
             </header>
+
+            <section class="prompt-analysis-panel" aria-labelledby="prompt-analysis-title">
+                <div class="prompt-analysis-header">
+                    <div>
+                        <h1 id="prompt-analysis-title">Prompt Analysis</h1>
+                        <p>Token efficiency, workflow simulation, and optimized prompt output.</p>
+                    </div>
+                    <span class="analysis-status" id="analysis-status">Ready</span>
+                </div>
+
+                <form class="prompt-analysis-form" id="prompt-analysis-form">
+                    <label for="prompt-analysis-input">Raw prompt</label>
+                    <textarea id="prompt-analysis-input" rows="4" placeholder="Paste a raw prompt for analysis"></textarea>
+                    <button type="submit" id="prompt-analysis-submit">Analyze prompt</button>
+                </form>
+
+                <div class="analysis-results" id="prompt-analysis-results" hidden>
+                    <div class="analysis-metrics">
+                        <div class="metric-tile">
+                            <span>Efficiency</span>
+                            <strong id="analysis-efficiency-score">-</strong>
+                        </div>
+                        <div class="metric-tile">
+                            <span>Workflow Nodes</span>
+                            <strong id="analysis-node-count">-</strong>
+                        </div>
+                        <div class="metric-tile">
+                            <span>Tips</span>
+                            <strong id="analysis-tip-count">-</strong>
+                        </div>
+                    </div>
+
+                    <div class="analysis-workflow-shell">
+                        <svg id="prompt-workflow-graph" role="img" aria-label="Simulated prompt workflow graph"></svg>
+                    </div>
+
+                    <div class="analysis-output-grid">
+                        <section class="analysis-output-section">
+                            <h2>Recommendations</h2>
+                            <ul id="optimization-tips"></ul>
+                        </section>
+
+                        <section class="analysis-output-section">
+                            <h2>Optimized Prompt</h2>
+                            <textarea id="optimized-prompt-output" readonly rows="7"></textarea>
+                        </section>
+                    </div>
+                </div>
+            </section>
 
             <div class="messages-area" id="messages-area">
                 <!-- Messages will be appended here -->
@@ -58,16 +107,14 @@
             </div>
         </main>
 
-        <!-- Decision Graph & Evaluator Panel -->
+        <!-- Workflow Optimiser Panel -->
         <aside class="graph-panel" id="graph-panel">
             <div class="graph-header">
-                <h3>Decision Trace</h3>
+                <h3>Workflow Optimiser</h3>
                 <button class="close-btn" id="close-graph">✕</button>
             </div>
-            
-            <div class="graph-canvas-container">
-                <canvas id="decision-graph"></canvas>
-            </div>
+
+            <div id="node-tooltip" class="node-tooltip" style="display: none;"></div>
 
             <div class="token-usage-panel">
                 <h4>Session Token Usage</h4>
@@ -85,27 +132,90 @@
                 </div>
             </div>
 
-            <button class="evaluate-btn" id="evaluate-btn">📊 Analyze Workflow</button>
+            <button class="evaluate-btn" id="optimise-btn">⚡ Optimise Workflow</button>
 
-            <!-- Evaluator Modal/Panel -->
-            <div class="evaluator-results" id="evaluator-results" style="display: none;">
-                <h4>Efficiency Dashboard</h4>
-                <div class="eval-stat">Step Efficiency: <span id="eval-efficiency">-</span></div>
-                <div class="eval-stat">Loop Rate: <span id="eval-loop">-</span></div>
-                <div class="eval-stat">Token Velocity: <span id="eval-velocity">-</span></div>
-                <div class="eval-stat">Bottleneck: <span id="eval-bottleneck">-</span></div>
-                
-                <h4>Root Cause Analysis</h4>
-                <ul id="eval-rca"></ul>
+            <!-- Workflow Optimiser Results -->
+            <div class="wo-results" id="wo-results" style="display: none; opacity: 0;">
 
-                <h4>Rectified Prompt</h4>
-                <textarea id="eval-prompt" readonly rows="5"></textarea>
+                <!-- Projection Summary -->
+                <div class="wo-projection-card">
+                    <h4>Token Projection</h4>
+                    <div class="wo-formula-row">
+                        <code class="wo-formula" id="wo-formula"></code>
+                    </div>
+                    <div class="wo-stats-grid">
+                        <div class="wo-stat">
+                            <span>Est. Total</span>
+                            <strong id="wo-est-total">-</strong>
+                        </div>
+                        <div class="wo-stat">
+                            <span>Cost Mult.</span>
+                            <strong id="wo-cost-mult">-</strong>
+                        </div>
+                        <div class="wo-stat">
+                            <span>History</span>
+                            <strong id="wo-comp-hist">-</strong>
+                        </div>
+                        <div class="wo-stat">
+                            <span>Risk</span>
+                            <strong><span class="wo-risk-badge" id="wo-risk-badge">-</span></strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Assumptions -->
+                <div class="wo-assumptions">
+                    <h4>Assumptions</h4>
+                    <table class="wo-assumptions-table">
+                        <tr><td>Expected Loops (N)</td><td id="wo-loops">-</td></tr>
+                        <tr><td>Base Prompt (P)</td><td id="wo-base-p">-</td></tr>
+                        <tr><td>Avg Model Output (O<sub>avg</sub>)</td><td id="wo-avg-o">-</td></tr>
+                        <tr><td>Avg Tool Output (T<sub>avg</sub>)</td><td id="wo-avg-t">-</td></tr>
+                    </table>
+                </div>
+
+                <!-- Compounding Chart -->
+                <div class="wo-chart-container">
+                    <h4>Token Compounding per Step</h4>
+                    <canvas id="wo-chart"></canvas>
+                </div>
+
+                <!-- Optimisation Tips -->
+                <div class="wo-section">
+                    <h4>Optimisation Tips</h4>
+                    <ul class="wo-tips-list" id="wo-tips-list"></ul>
+                </div>
+
+                <!-- Optimised Workflow Steps -->
+                <div class="wo-section">
+                    <h4>Optimised Workflow</h4>
+                    <ol class="wo-workflow-steps" id="wo-workflow-steps"></ol>
+                </div>
+
+                <!-- Golden Dataset Plan -->
+                <div class="wo-section">
+                    <h4>Golden Dataset Plan</h4>
+                    <ol class="wo-golden-plan" id="wo-golden-plan"></ol>
+                </div>
+
+                <!-- Piped Prompt Analysis -->
+                <div class="wo-section" id="wo-prompt-analysis" style="display: none;">
+                    <h4>Prompt Analysis</h4>
+                    <div class="wo-pa-score-row">
+                        <span>Efficiency Score</span>
+                        <strong id="wo-pa-score">-</strong>
+                    </div>
+                    <label>Optimised Prompt</label>
+                    <textarea id="wo-pa-prompt" readonly rows="4"></textarea>
+                </div>
+
             </div>
         </aside>
 
     </div>
 
-    <script src="/static/decision-graph.js"></script>
+    <script src="/static/workflow-optimizer.js"></script>
+    <script src="/static/prompt-analysis.js"></script>
     <script src="/static/chat.js"></script>
 </body>
 </html>

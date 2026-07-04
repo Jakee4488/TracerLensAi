@@ -10,6 +10,8 @@ from src.ai_gateway.vertex_client import VertexAIClient
 from src.ai_gateway.fallback_manager import FallbackManager
 from src.agent_engine.orchestrator import AgentOrchestrator
 from src.observability.optimization_engine import evaluate_workflow
+from src.observability.prompt_analysis import analyze_prompt
+from src.observability.workflow_optimizer import optimize_workflow
 
 app = FastAPI(title="TracerLensAi: AI Agentic Workflow Evaluator")
 logger = setup_logger()
@@ -56,6 +58,36 @@ class EvaluateRequest(BaseModel):
     ideal_steps: int
     trace: List[Dict[str, Any]]
 
+
+class PromptAnalysisRequest(BaseModel):
+    prompt: str
+
+
+class PromptWorkflowNode(BaseModel):
+    id: str
+    label: str
+    stage: str
+    description: str
+    tokens: int
+    latency_ms: float
+    position: Dict[str, int]
+
+
+class PromptAnalysisResponse(BaseModel):
+    original_prompt: str
+    simulated_workflow_nodes: List[PromptWorkflowNode]
+    efficiency_score: int
+    optimization_tips: List[str]
+    optimized_prompt: str
+
+
+class WorkflowOptimizeRequest(BaseModel):
+    original_prompt: str
+    trace: List[Dict[str, Any]]
+    expected_loops: int | None = None
+    run_prompt_analysis: bool = True
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     return FileResponse("src/static/index.html")
@@ -63,6 +95,32 @@ async def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.post("/analyze-prompt", response_model=PromptAnalysisResponse)
+async def analyze_prompt_endpoint(request: PromptAnalysisRequest):
+    if not request.prompt.strip():
+        raise HTTPException(status_code=422, detail="Prompt cannot be empty")
+    return analyze_prompt(request.prompt)
+
+
+@app.post("/optimize-workflow")
+async def optimize_workflow_endpoint(request: WorkflowOptimizeRequest):
+    if not request.original_prompt.strip():
+        raise HTTPException(status_code=422, detail="Original prompt cannot be empty")
+    if not request.trace:
+        raise HTTPException(status_code=422, detail="Trace cannot be empty")
+
+    prompt_analysis_result = None
+    if request.run_prompt_analysis:
+        prompt_analysis_result = analyze_prompt(request.original_prompt)
+
+    return optimize_workflow(
+        original_prompt=request.original_prompt,
+        trace=request.trace,
+        expected_loops=request.expected_loops,
+        prompt_analysis=prompt_analysis_result,
+    )
 
 @app.post("/inquire-traced", response_model=InquiryResponse)
 async def process_inquiry(request: InquiryRequest):
