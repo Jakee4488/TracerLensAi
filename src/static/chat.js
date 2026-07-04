@@ -3,6 +3,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const sendBtn = document.getElementById("send-btn");
     const messagesArea = document.getElementById("messages-area");
     
+    // Configure marked to use highlight.js for code blocks
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            }
+        });
+    }
+
     // Auto-resize textarea
     chatInput.addEventListener("input", function() {
         this.style.height = "auto";
@@ -69,9 +81,10 @@ document.addEventListener("DOMContentLoaded", () => {
         msgDiv.className = `message ${sender}`;
         
         if (sender === "ai") {
+            const htmlContent = typeof marked !== 'undefined' ? marked.parse(text) : escapeHtml(text).replace(/\n/g, '<br>');
             msgDiv.innerHTML = `
                 <div class="avatar ai-avatar"></div>
-                <div class="content"><p>${escapeHtml(text).replace(/\n/g, '<br>')}</p></div>
+                <div class="content markdown-body">${htmlContent}</div>
             `;
         } else {
             msgDiv.innerHTML = `<div class="content"><p>${escapeHtml(text).replace(/\n/g, '<br>')}</p></div>`;
