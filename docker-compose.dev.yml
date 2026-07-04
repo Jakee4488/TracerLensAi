@@ -26,15 +26,12 @@ services:
 
     # Override the production CMD with hot-reload for development
     command: >
-      uvicorn src.main:app
-      --host 0.0.0.0
-      --port 8080
-      --reload
-      --reload-dir /app/src
+      uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload --reload-dir /app/src
 
     # Mount source code for live editing (overrides the COPY in Dockerfile)
     volumes:
       - ./src:/app/src:ro
+      - ~/.config/gcloud:/home/agentuser/.config/gcloud:ro
 
     # Load environment from .env file (create from .env.example)
     env_file:
@@ -46,7 +43,7 @@ services:
 
     # Health check matching the production readiness probe
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -60,12 +57,13 @@ services:
     image: gcp-agent-dev:latest
     container_name: gcp-agent-test
     profiles:
-      - test    # Only runs when explicitly requested via --profile test
+      - test # Only runs when explicitly requested via --profile test
     volumes:
       - ./src:/app/src:ro
       - ./tests:/app/tests:ro
       - ./pytest.ini:/app/pytest.ini:ro
       - ./.flake8:/app/.flake8:ro
+      - ~/.config/gcloud:/home/agentuser/.config/gcloud:ro
     env_file:
       - .env
     environment:
