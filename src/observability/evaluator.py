@@ -36,12 +36,14 @@ async def run_evaluation():
             # Record result
             results.append({
                 "prompt": row["prompt"],
+                "response": res["response"],
                 "escalated": res["escalated"],
                 "latency_ms": res["metrics"]["latency_ms"],
                 "model": res["metrics"]["model"]
             })
             print(
-                f"Result: Escalated={res['escalated']}, Latency={res['metrics']['latency_ms']:.2f}ms\n")
+                f"Result: Escalated={res['escalated']}, Latency={res['metrics']['latency_ms']:.2f}ms")
+            print(f"Response: {res['response']}\n")
 
         print("Evaluation Summary:")
         print(json.dumps(results, indent=2))
