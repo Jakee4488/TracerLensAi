@@ -11,6 +11,8 @@ document.addEventListener("DOMContentLoaded", () => {
     
     let currentTrace = null;
     let currentPrompt = "";
+    let sessionPromptTokens = 0;
+    let sessionCompletionTokens = 0;
 
     // Toggle logic
     toggleBtn.addEventListener("click", () => graphPanel.classList.add("open"));
@@ -21,16 +23,38 @@ document.addEventListener("DOMContentLoaded", () => {
         currentPrompt = e.detail.prompt;
         currentTrace = e.detail.trace;
         
+        // Accumulate tokens
+        const pTokens = e.detail.metrics.prompt_tokens || 0;
+        const cTokens = e.detail.metrics.completion_tokens || 0;
+        sessionPromptTokens += pTokens;
+        sessionCompletionTokens += cTokens;
+        
         // Update Token Panel
-        document.getElementById("prompt-tokens-total").innerText = e.detail.metrics.prompt_tokens;
-        document.getElementById("completion-tokens-total").innerText = e.detail.metrics.completion_tokens;
-        document.getElementById("total-tokens").innerText = e.detail.metrics.prompt_tokens + e.detail.metrics.completion_tokens;
+        document.getElementById("prompt-tokens-total").innerText = sessionPromptTokens;
+        document.getElementById("completion-tokens-total").innerText = sessionCompletionTokens;
+        document.getElementById("total-tokens").innerText = sessionPromptTokens + sessionCompletionTokens;
         
         // Reset evaluator panel
         evalResults.style.display = "none";
         
         // Draw the graph
         drawGraph(currentTrace);
+    });
+
+    // Handle reset session
+    window.addEventListener("resetSession", () => {
+        currentTrace = null;
+        currentPrompt = "";
+        sessionPromptTokens = 0;
+        sessionCompletionTokens = 0;
+        
+        document.getElementById("prompt-tokens-total").innerText = "0";
+        document.getElementById("completion-tokens-total").innerText = "0";
+        document.getElementById("total-tokens").innerText = "0";
+        
+        evalResults.style.display = "none";
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
     });
 
     // Handle Evaluator

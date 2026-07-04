@@ -20,7 +20,9 @@ class VertexAIClient:
             aiplatform.init(project=project_id, location=location)
             self.models = {
                 "gemini-2.5-flash": GenerativeModel("gemini-2.5-flash"),
-                "gemini-2.5-pro": GenerativeModel("gemini-2.5-pro")
+                "gemini-2.5-pro": GenerativeModel("gemini-2.5-pro"),
+                "gemini-1.5-flash": GenerativeModel("gemini-1.5-flash"),
+                "gemini-1.5-pro": GenerativeModel("gemini-1.5-pro")
             }
 
     async def generate_response(
@@ -76,14 +78,20 @@ class VertexAIClient:
 
             latency = (time.time() - start_time) * 1000
 
+            # Extract tokens safely from _raw_response
+            p_tokens = 0
+            c_tokens = 0
+            if hasattr(response, '_raw_response') and hasattr(response._raw_response, 'usage_metadata'):
+                meta = response._raw_response.usage_metadata
+                p_tokens = getattr(meta, 'prompt_token_count', 0)
+                c_tokens = getattr(meta, 'candidates_token_count', 0)
+
             return AgentResponse(
                 content=response.text,
                 provider="vertex-ai",
                 model_name=model_name,
-                prompt_tokens=response.usage_metadata.prompt_token_count if hasattr(
-                    response, 'usage_metadata') else 0,
-                completion_tokens=response.usage_metadata.candidates_token_count if hasattr(
-                    response, 'usage_metadata') else 0,
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
                 latency_ms=latency
             )
         except Exception as e:

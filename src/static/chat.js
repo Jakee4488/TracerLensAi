@@ -112,4 +112,19 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("toggle-sidebar").addEventListener("click", () => {
         document.getElementById("sidebar").classList.toggle("collapsed");
     });
+
+    // New Chat Action
+    document.querySelector(".new-chat-btn").addEventListener("click", () => {
+        // Clear chat area except welcome message
+        messagesArea.innerHTML = `
+            <div class="message ai">
+                <div class="avatar ai-avatar"></div>
+                <div class="content">
+                    <p>Hi, I am TracerLensAi, your AI Observability and Workflow Optimization Engine. How can I help you today?</p>
+                </div>
+            </div>
+        `;
+        // Dispatch reset session event
+        window.dispatchEvent(new CustomEvent("resetSession"));
+    });
 });

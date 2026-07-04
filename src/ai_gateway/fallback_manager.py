@@ -14,7 +14,7 @@ class FallbackManager:
     def __init__(self, vertex_client: VertexAIClient):
         self.client = vertex_client
         # Define the fallback sequence
-        self.fallback_sequence = ["gemini-2.5-flash", "gemini-2.5-pro"]
+        self.fallback_sequence = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro"]
 
     async def generate_with_fallback(self, prompt: str, system_instruction: str) -> AgentResponse:
         last_error = None
