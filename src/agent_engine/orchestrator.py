@@ -1,5 +1,6 @@
 import logging
 import json
+import time
 from typing import Dict, Any
 
 from src.ai_gateway.fallback_manager import FallbackManager
@@ -29,6 +30,15 @@ class AgentOrchestrator:
         Main entry point for processing a user inquiry.
         """
         logger.info(f"Processing inquiry for user {user_id}: {prompt}")
+        trace = []
+
+        # Trace User Message
+        trace.append({
+            "step_type": "user_input",
+            "description": "User Message Received",
+            "tokens": len(prompt.split()),  # Rough estimation for prompt tokens
+            "latency_ms": 0.0
+        })
 
         # Step 1: LLM Generation
         response = await self.fallback_manager.generate_with_fallback(
@@ -36,32 +46,76 @@ class AgentOrchestrator:
             system_instruction=self.system_instruction
         )
 
+        trace.append({
+            "step_type": "llm_call",
+            "description": f"LLM Generation ({response.provider}: {response.model_name})",
+            "tokens": response.prompt_tokens + response.completion_tokens,
+            "latency_ms": response.latency_ms
+        })
+
         # Step 2: Tool Execution loop (simplified)
         if response.tool_calls:
             logger.info(f"LLM requested tools: {response.tool_calls}")
-            # In a real system, you'd loop through and execute tools, then feed results back to LLM.
-            # Here we just mock the execution.
             for tool_call in response.tool_calls:
                 func_name = tool_call.get("name")
                 if func_name in TOOL_REGISTRY:
+                    t_start = time.time()
                     tool_result = await TOOL_REGISTRY[func_name](**tool_call.get("args", {}))
-                    # Append result to context and re-prompt (omitted for brevity)
+                    t_latency = (time.time() - t_start) * 1000
+
+                    trace.append({
+                        "step_type": "tool_call",
+                        "description": f"Tool Execution: {func_name}",
+                        "tokens": len(str(tool_result).split()),  # Mock token calculation
+                        "latency_ms": t_latency
+                    })
+
                     response.content += f"\n[Tool {func_name} executed. Result: {json.dumps(tool_result)}]"
 
+            trace.append({
+                "step_type": "re_prompt",
+                "description": "Re-prompt with Tool Results",
+                "tokens": len(response.content.split()),  # Mock
+                "latency_ms": 0.0
+            })
+
         # Step 3: Policy Enforcement
+        t_start = time.time()
         escalate = RoutingPolicy.requires_human_escalation(
             prompt, response.content)
+        t_latency = (time.time() - t_start) * 1000
+
+        trace.append({
+            "step_type": "policy_check",
+            "description": "Escalation Policy Check",
+            "tokens": 0,
+            "latency_ms": t_latency
+        })
 
         if escalate:
             response.content = "I have escalated your request to a human agent. They will be with you shortly."
+            trace.append({
+                "step_type": "escalation",
+                "description": "Escalated to Human",
+                "tokens": 0,
+                "latency_ms": 0.0
+            })
+
+        trace.append({
+            "step_type": "response",
+            "description": "Response Delivered",
+            "tokens": response.completion_tokens,
+            "latency_ms": 0.0
+        })
 
         return {
             "response": response.content,
             "escalated": escalate,
+            "trace": trace,
             "metrics": {
                 "provider": response.provider,
                 "model": response.model_name,
-                "latency_ms": response.latency_ms,
+                "latency_ms": sum(t["latency_ms"] for t in trace),
                 "prompt_tokens": response.prompt_tokens,
                 "completion_tokens": response.completion_tokens
             }

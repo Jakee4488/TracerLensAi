@@ -1,8 +1,12 @@
 import os
 import json
 import logging
-from google.cloud import logging as gcp_logging
 
+try:
+    from google.cloud import logging as gcp_logging
+    HAVE_GCP_LOGGING = True
+except ImportError:
+    HAVE_GCP_LOGGING = False
 
 def setup_logger():
     """
@@ -13,7 +17,7 @@ def setup_logger():
     logger.setLevel(logging.INFO)
 
     # Check if we are running in GCP
-    if os.environ.get("KUBERNETES_SERVICE_HOST"):
+    if os.environ.get("KUBERNETES_SERVICE_HOST") and HAVE_GCP_LOGGING:
         client = gcp_logging.Client()
         client.setup_logging()
     else:
@@ -21,7 +25,8 @@ def setup_logger():
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
-        logger.addHandler(handler)
+        if not logger.handlers:
+            logger.addHandler(handler)
 
     return logger
 

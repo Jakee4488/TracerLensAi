@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TraceLens: AI Agentic Workflow Evaluator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Google+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <button class="menu-btn" id="toggle-sidebar">☰</button>
+                <span class="logo-text">TraceLens</span>
+            </div>
+            <button class="new-chat-btn">
+                <span class="plus-icon">+</span> New chat
+            </button>
+            <div class="history-list">
+                <div class="history-item">Recent workflows</div>
+                <div class="history-item">Escalation test #42</div>
+                <div class="history-item">Order status inquiry</div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-container">
+            <header class="chat-header">
+                <div class="header-title">
+                    GCP Agent <span class="status-dot"></span>
+                </div>
+                <button class="toggle-graph-btn" id="toggle-graph">🔀 Decision Flow</button>
+            </header>
+
+            <div class="messages-area" id="messages-area">
+                <!-- Messages will be appended here -->
+                <div class="message ai">
+                    <div class="avatar ai-avatar"></div>
+                    <div class="content">
+                        <p>Hi, I am TraceLens, your AI Observability and Workflow Optimization Engine. How can I help you today?</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-pill">
+                    <button class="attach-btn">+</button>
+                    <textarea id="chat-input" placeholder="Ask anything" rows="1"></textarea>
+                    <button class="send-btn" id="send-btn">➔</button>
+                </div>
+                <div class="disclaimer">TraceLens may display inaccurate info, so double-check its responses.</div>
+            </div>
+        </main>
+
+        <!-- Decision Graph & Evaluator Panel -->
+        <aside class="graph-panel" id="graph-panel">
+            <div class="graph-header">
+                <h3>Decision Trace</h3>
+                <button class="close-btn" id="close-graph">✕</button>
+            </div>
+            
+            <div class="graph-canvas-container">
+                <canvas id="decision-graph"></canvas>
+            </div>
+
+            <div class="token-usage-panel">
+                <h4>Session Token Usage</h4>
+                <div class="token-row">
+                    <span>Prompt Tokens</span>
+                    <span id="prompt-tokens-total">0</span>
+                </div>
+                <div class="token-row">
+                    <span>Completion Tokens</span>
+                    <span id="completion-tokens-total">0</span>
+                </div>
+                <div class="token-row total">
+                    <span>Total Tokens</span>
+                    <span id="total-tokens">0</span>
+                </div>
+            </div>
+
+            <button class="evaluate-btn" id="evaluate-btn">📊 Analyze Workflow</button>
+
+            <!-- Evaluator Modal/Panel -->
+            <div class="evaluator-results" id="evaluator-results" style="display: none;">
+                <h4>Efficiency Dashboard</h4>
+                <div class="eval-stat">Step Efficiency: <span id="eval-efficiency">-</span></div>
+                <div class="eval-stat">Loop Rate: <span id="eval-loop">-</span></div>
+                <div class="eval-stat">Token Velocity: <span id="eval-velocity">-</span></div>
+                <div class="eval-stat">Bottleneck: <span id="eval-bottleneck">-</span></div>
+                
+                <h4>Root Cause Analysis</h4>
+                <ul id="eval-rca"></ul>
+
+                <h4>Rectified Prompt</h4>
+                <textarea id="eval-prompt" readonly rows="5"></textarea>
+            </div>
+        </aside>
+
+    </div>
+
+    <script src="/static/decision-graph.js"></script>
+    <script src="/static/chat.js"></script>
+</body>
+</html>

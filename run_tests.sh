@@ -2,7 +2,7 @@
 # =============================================================================
 #  run_tests.sh — Local Docker Development & Test Script
 #
-#  Builds and runs the GCP Agent inside Docker for local development and
+#  Builds and runs the TraceLens Agent inside Docker for local development and
 #  testing.  Uses docker compose with the same Dockerfile as production.
 #
 #  Usage:
@@ -35,7 +35,7 @@ error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 step()    { echo -e "\n${BOLD}${CYAN}══ $* ${RESET}"; }
 
 COMPOSE_FILE="docker-compose.dev.yml"
-PROJECT_NAME="gcp-agent"
+PROJECT_NAME="tracelens"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 mkdir -p logs
@@ -58,7 +58,7 @@ ensure_env_file() {
     else
       warn "Creating a minimal .env with placeholder values."
       cat > .env <<'ENVEOF'
-# GCP Agent — Local Development Environment Variables
+# TraceLens — Local Development Environment Variables
 # Copy this file and fill in your values.
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_REGION=us-central1
@@ -141,7 +141,7 @@ cmd_clean() {
 cmd_test_pipeline() {
   echo ""
   echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════╗${RESET}"
-  echo -e "${BOLD}${CYAN}║   GCP Agent — Local Docker Test Pipeline    ║${RESET}"
+  echo -e "${BOLD}${CYAN}║   TraceLens — Local Docker Test Pipeline     ║${RESET}"
   echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════╝${RESET}"
   echo ""
 
@@ -183,7 +183,7 @@ cmd_test_pipeline() {
   # 5 — Smoke test (start app → hit endpoints → stop)
   step "5 │ Running API smoke tests"
   info "Starting app container..."
-  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d agent-app
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d tracelens-app
 
   info "Waiting for server to become healthy..."
   local healthy=false
@@ -198,17 +198,17 @@ cmd_test_pipeline() {
   if $healthy; then
     success "Health check passed."
 
-    info "Testing POST /inquire..."
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/inquire" \
+    info "Testing POST /inquire-traced..."
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/inquire-traced" \
          -H "Content-Type: application/json" \
          -d '{"user_id": "test-user", "prompt": "Hello!"}')
 
     if [ "$RESPONSE" = "200" ]; then
-      success "/inquire returned HTTP 200."
+      success "/inquire-traced returned HTTP 200."
     elif [ "$RESPONSE" = "500" ]; then
-      warn "/inquire returned HTTP 500 (Vertex AI may be unavailable locally — non-fatal)."
+      warn "/inquire-traced returned HTTP 500 (Vertex AI may be unavailable locally — non-fatal)."
     else
-      warn "/inquire returned HTTP $RESPONSE."
+      warn "/inquire-traced returned HTTP $RESPONSE."
     fi
   else
     warn "Server did not become healthy within 30s — skipping API tests."
@@ -231,7 +231,7 @@ cmd_test_pipeline() {
 # ── Argument parsing ──────────────────────────────────────────────────────────
 show_help() {
   echo ""
-  echo -e "${BOLD}GCP Agent — Local Docker Development Script${RESET}"
+  echo -e "${BOLD}TraceLens — Local Docker Development Script${RESET}"
   echo ""
   echo "Usage:"
   echo "  ./run_tests.sh               Full test pipeline (build → lint → test → smoke)"

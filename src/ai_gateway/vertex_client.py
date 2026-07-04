@@ -1,24 +1,27 @@
 import time
 import asyncio
-from google.cloud import aiplatform
-from vertexai.generative_models import GenerativeModel
-# In a real enterprise app, you'd also import Claude SDK from Vertex if using Anthropic.
-# For simplicity, we are wrapping Vertex Gemini.
+
+try:
+    from google.cloud import aiplatform
+    from vertexai.generative_models import GenerativeModel
+    HAVE_VERTEX = True
+except ImportError:
+    HAVE_VERTEX = False
 
 from src.ai_gateway.interface import AgentResponse
-
 
 class VertexAIClient:
     def __init__(self, project_id: str, location: str):
         self.project_id = project_id
         self.location = location
-        aiplatform.init(project=project_id, location=location)
+        self.models = {}
 
-        # Pre-initialize models for performance
-        self.models = {
-            "gemini-2.5-flash": GenerativeModel("gemini-2.5-flash"),
-            "gemini-2.5-pro": GenerativeModel("gemini-2.5-pro")
-        }
+        if HAVE_VERTEX:
+            aiplatform.init(project=project_id, location=location)
+            self.models = {
+                "gemini-2.5-flash": GenerativeModel("gemini-2.5-flash"),
+                "gemini-2.5-pro": GenerativeModel("gemini-2.5-pro")
+            }
 
     async def generate_response(
         self,
@@ -30,6 +33,28 @@ class VertexAIClient:
         """
         Calls the Vertex AI API and formats the response.
         """
+        if not HAVE_VERTEX:
+            await asyncio.sleep(0.8)  # simulate latency
+            if "profile" in prompt.lower():
+                return AgentResponse(
+                    content="",
+                    provider="mock-ai",
+                    model_name="mock-gemini",
+                    prompt_tokens=42,
+                    completion_tokens=15,
+                    latency_ms=800,
+                    tool_calls=[{"name": "fetch_user_profile", "args": {"user_id": "demo"}}]
+                )
+            else:
+                return AgentResponse(
+                    content=f"This is a mocked AI response to: {prompt}",
+                    provider="mock-ai",
+                    model_name="mock-gemini",
+                    prompt_tokens=42,
+                    completion_tokens=85,
+                    latency_ms=800
+                )
+
         if model_name not in self.models:
             raise ValueError(f"Model {model_name} not supported/initialized.")
 

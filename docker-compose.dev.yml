@@ -15,12 +15,12 @@
 ##############################################################################
 
 services:
-  agent-app:
+  tracelens-app:
     build:
       context: .
       dockerfile: deploy/Dockerfile
-    image: gcp-agent-dev:latest
-    container_name: gcp-agent-dev
+    image: tracelens-dev:latest
+    container_name: tracelens-dev
     ports:
       - "8080:8080"
 
@@ -31,12 +31,12 @@ services:
     # Mount source code for live editing (overrides the COPY in Dockerfile)
     volumes:
       - ./src:/app/src:ro
-      - ~/.config/gcloud:/home/agentuser/.config/gcloud:ro
+      - ~/.config/gcloud:/home/tracelensuser/.config/gcloud:ro
 
     # Load environment from .env file (create from .env.example)
     env_file:
       - .env
-
+    
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=development
@@ -54,8 +54,8 @@ services:
   # ── Test Runner ───────────────────────────────────────────────────────────
   # One-shot container for running tests (not started by default)
   test-runner:
-    image: gcp-agent-dev:latest
-    container_name: gcp-agent-test
+    image: tracelens-dev:latest
+    container_name: tracelens-test
     profiles:
       - test # Only runs when explicitly requested via --profile test
     volumes:
@@ -63,7 +63,7 @@ services:
       - ./tests:/app/tests:ro
       - ./pytest.ini:/app/pytest.ini:ro
       - ./.flake8:/app/.flake8:ro
-      - ~/.config/gcloud:/home/agentuser/.config/gcloud:ro
+      - ~/.config/gcloud:/home/tracelensuser/.config/gcloud:ro
     env_file:
       - .env
     environment:
