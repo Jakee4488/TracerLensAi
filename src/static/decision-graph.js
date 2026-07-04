@@ -13,6 +13,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let currentPrompt = "";
     let sessionPromptTokens = 0;
     let sessionCompletionTokens = 0;
+    let currentVisibleNodes = 0;
 
     // Toggle logic
     toggleBtn.addEventListener("click", () => graphPanel.classList.add("open"));
@@ -36,9 +37,10 @@ document.addEventListener("DOMContentLoaded", () => {
         
         // Reset evaluator panel
         evalResults.style.display = "none";
+        evalResults.style.opacity = 0;
         
-        // Draw the graph
-        drawGraph(currentTrace);
+        // Animate the graph
+        animateGraph(currentTrace);
     });
 
     // Handle reset session
@@ -47,22 +49,30 @@ document.addEventListener("DOMContentLoaded", () => {
         currentPrompt = "";
         sessionPromptTokens = 0;
         sessionCompletionTokens = 0;
+        currentVisibleNodes = 0;
         
         document.getElementById("prompt-tokens-total").innerText = "0";
         document.getElementById("completion-tokens-total").innerText = "0";
         document.getElementById("total-tokens").innerText = "0";
         
         evalResults.style.display = "none";
+        evalResults.style.opacity = 0;
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
     });
 
-    // Handle Evaluator
-    evalBtn.addEventListener("click", async () => {
+    // Handle Evaluator button click (manual trigger)
+    evalBtn.addEventListener("click", () => {
         if (!currentTrace) {
             alert("No trace available to evaluate.");
             return;
         }
+        triggerEvaluation();
+    });
+
+    // Trigger Evaluation Automatically
+    async function triggerEvaluation() {
+        if (!currentTrace) return;
 
         const btnOriginalText = evalBtn.innerText;
         evalBtn.innerText = "Analyzing Trace...";
@@ -74,7 +84,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     original_prompt: currentPrompt,
-                    ideal_steps: 3, // Hardcoded for this demo 
+                    ideal_steps: 3, 
                     trace: currentTrace
                 })
             });
@@ -97,7 +107,12 @@ document.addEventListener("DOMContentLoaded", () => {
             
             document.getElementById("eval-prompt").value = data.rectified_prompt;
             
+            // Reveal evaluation results smoothly
             evalResults.style.display = "block";
+            // Force reflow
+            evalResults.offsetHeight;
+            evalResults.style.transition = "opacity 0.6s ease";
+            evalResults.style.opacity = 1;
 
         } catch (error) {
             console.error("Evaluation failed", error);
@@ -106,20 +121,41 @@ document.addEventListener("DOMContentLoaded", () => {
             evalBtn.innerText = btnOriginalText;
             evalBtn.disabled = false;
         }
-    });
+    }
 
     // Resize canvas
     function resizeCanvas() {
         const container = canvas.parentElement;
         canvas.width = container.clientWidth;
         canvas.height = container.clientHeight;
-        if (currentTrace) drawGraph(currentTrace);
+        if (currentTrace) drawGraph(currentTrace, currentVisibleNodes);
     }
     window.addEventListener("resize", resizeCanvas);
     setTimeout(resizeCanvas, 100);
 
+    // Staggered node animation
+    function animateGraph(trace) {
+        currentVisibleNodes = 0;
+        
+        function nextStep() {
+            if (!currentTrace || currentTrace !== trace) return; // Guard against new queries
+            
+            if (currentVisibleNodes <= trace.length) {
+                drawGraph(trace, currentVisibleNodes);
+                currentVisibleNodes++;
+                if (currentVisibleNodes <= trace.length) {
+                    setTimeout(nextStep, 600); // 600ms stagger between nodes
+                } else {
+                    // Animation complete, automatically trigger the evaluation!
+                    triggerEvaluation();
+                }
+            }
+        }
+        nextStep();
+    }
+
     // Simple Node Drawer
-    function drawGraph(trace) {
+    function drawGraph(trace, maxNodesToShow = trace.length) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
         if (!trace || trace.length === 0) return;
@@ -130,7 +166,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let startY = 30;
         const ySpacing = 90;
 
-        for (let i = 0; i < trace.length; i++) {
+        for (let i = 0; i < Math.min(trace.length, maxNodesToShow); i++) {
             const step = trace[i];
             
             // Draw connector line from previous

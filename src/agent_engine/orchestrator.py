@@ -22,7 +22,10 @@ class AgentOrchestrator:
         self.system_instruction = (
             "You are an enterprise AI customer support agent. "
             "You have access to tools. If the user asks for their profile, use fetch_user_profile. "
-            "Be concise and professional."
+            "You MUST format your output as a clean, concise, and to-the-point Markdown document. "
+            "Avoid wordy introductions and lengthy explanations. Focus on direct answers, "
+            "use clean lists or tables where appropriate, and use code blocks for any code. "
+            "Ensure the output fits well on the screen and is highly readable."
         )
 
     async def process_inquiry(self, user_id: str, prompt: str, session_history: list) -> Dict[str, Any]:

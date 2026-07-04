@@ -42,6 +42,12 @@ document.addEventListener("DOMContentLoaded", () => {
         // Append User Message
         appendMessage(text, "user");
 
+        // Auto-open Decision Flow panel so the user sees the animated execution
+        const graphPanel = document.getElementById("graph-panel");
+        if (graphPanel) {
+            graphPanel.classList.add("open");
+        }
+
         // Show typing indicator or skeleton
         const loadingId = appendLoading();
 
@@ -101,7 +107,13 @@ document.addEventListener("DOMContentLoaded", () => {
         msgDiv.id = id;
         msgDiv.innerHTML = `
             <div class="avatar ai-avatar"></div>
-            <div class="content"><p>...</p></div>
+            <div class="content">
+                <div class="typing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </div>
         `;
         messagesArea.appendChild(msgDiv);
         scrollToBottom();
@@ -139,5 +151,21 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
         // Dispatch reset session event
         window.dispatchEvent(new CustomEvent("resetSession"));
+    });
+
+    // Click on sample/recent workflows
+    document.querySelectorAll(".history-item").forEach(item => {
+        item.addEventListener("click", () => {
+            let promptText = item.innerText;
+            if (promptText === "Escalation test #42") {
+                promptText = "I want to cancel my account, your service is terrible. I will sue.";
+            } else if (promptText === "Order status inquiry") {
+                promptText = "Hi, what is the status of my order 999?";
+            } else if (promptText === "Recent workflows") {
+                promptText = "Can you fetch my user profile?";
+            }
+            chatInput.value = promptText;
+            sendMessage();
+        });
     });
 });
