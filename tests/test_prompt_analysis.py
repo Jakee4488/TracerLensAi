@@ -74,4 +74,25 @@ def test_static_page_includes_prompt_analysis_component():
 
     assert response.status_code == 200
     assert 'id="prompt-analysis-form"' in response.text
+    assert 'id="prompt-analysis-panel"' in response.text
+    assert 'aria-controls="graph-panel prompt-analysis-panel"' in response.text
+    assert "Prompt Optimiser" in response.text
+    assert "Workflow Optimiser" in response.text
+    assert 'id="workflow-chat-panel"' in response.text
+    assert 'id="workflow-chat-input"' in response.text
+    assert 'id="workflow-send-btn"' in response.text
     assert "/static/prompt-analysis.js" in response.text
+    assert "/static/workflow-optimizer.js" in response.text
+
+
+def test_workflow_optimizer_script_toggles_between_panels():
+    script = client.get("/static/workflow-optimizer.js")
+
+    assert script.status_code == 200
+    assert "function setOptimiserView(showWorkflowOptimiser)" in script.text
+    assert 'document.body.classList.toggle("workflow-mode", showWorkflowOptimiser)' in script.text
+    assert 'promptPanel.hidden = showWorkflowOptimiser' in script.text
+    assert 'showWorkflowOptimiser ? "Prompt Optimiser" : "Workflow Optimiser"' in script.text
+    assert "async function sendWorkflowMessage()" in script.text
+    assert 'fetch("/inquire-traced"' in script.text
+    assert "Send a message first so a trace is available to optimise." not in script.text

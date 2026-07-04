@@ -35,14 +35,20 @@
                 <div class="header-title">
                     GCP Agent <span class="status-dot"></span>
                 </div>
-                <button class="toggle-graph-btn" id="toggle-graph">⚡ Workflow Optimiser</button>
+                <button
+                    class="toggle-graph-btn"
+                    id="toggle-graph"
+                    type="button"
+                    aria-controls="graph-panel prompt-analysis-panel"
+                    aria-expanded="false"
+                >Workflow Optimiser</button>
             </header>
 
-            <section class="prompt-analysis-panel" aria-labelledby="prompt-analysis-title">
+            <section class="prompt-analysis-panel" id="prompt-analysis-panel" aria-labelledby="prompt-analysis-title">
                 <div class="prompt-analysis-header">
                     <div>
-                        <h1 id="prompt-analysis-title">Prompt Analysis</h1>
-                        <p>Token efficiency, workflow simulation, and optimized prompt output.</p>
+                        <h1 id="prompt-analysis-title">Prompt Optimiser</h1>
+                        <p>Token efficiency, workflow simulation, and optimised prompt output.</p>
                     </div>
                     <span class="analysis-status" id="analysis-status">Ready</span>
                 </div>
@@ -50,7 +56,7 @@
                 <form class="prompt-analysis-form" id="prompt-analysis-form">
                     <label for="prompt-analysis-input">Raw prompt</label>
                     <textarea id="prompt-analysis-input" rows="4" placeholder="Paste a raw prompt for analysis"></textarea>
-                    <button type="submit" id="prompt-analysis-submit">Analyze prompt</button>
+                    <button type="submit" id="prompt-analysis-submit">Optimise prompt</button>
                 </form>
 
                 <div class="analysis-results" id="prompt-analysis-results" hidden>
@@ -80,7 +86,7 @@
                         </section>
 
                         <section class="analysis-output-section">
-                            <h2>Optimized Prompt</h2>
+                            <h2>Optimised Prompt</h2>
                             <textarea id="optimized-prompt-output" readonly rows="7"></textarea>
                         </section>
                     </div>
@@ -116,6 +122,23 @@
 
             <div id="node-tooltip" class="node-tooltip" style="display: none;"></div>
 
+            <div class="wo-layout-container">
+                <div class="wo-layout-left">
+                    <section class="workflow-chat-panel" id="workflow-chat-panel">
+                <div class="workflow-chat-header">
+                    <h4>Workflow Trace Chat</h4>
+                    <span id="workflow-trace-status">No trace yet</span>
+                </div>
+                <div class="workflow-messages-area" id="workflow-messages-area">
+                    <div class="workflow-empty-state">Send a workflow prompt to generate a trace for optimisation.</div>
+                </div>
+                <div class="workflow-input-row">
+                    <textarea id="workflow-chat-input" rows="2" placeholder="Describe the agentic workflow to simulate"></textarea>
+                    <button type="button" id="workflow-send-btn">Send</button>
+                </div>
+            </section>
+                </div>
+                <div class="wo-layout-right">
             <div class="token-usage-panel">
                 <h4>Session Token Usage</h4>
                 <div class="token-row">
@@ -209,6 +232,8 @@
                     <textarea id="wo-pa-prompt" readonly rows="4"></textarea>
                 </div>
 
+            </div>
+                </div>
             </div>
         </aside>
 

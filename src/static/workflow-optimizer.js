@@ -9,11 +9,16 @@
  */
 document.addEventListener("DOMContentLoaded", () => {
     const graphPanel = document.getElementById("graph-panel");
+    const promptPanel = document.getElementById("prompt-analysis-panel");
     const toggleBtn = document.getElementById("toggle-graph");
     const closeBtn = document.getElementById("close-graph");
 
     // Optimiser trigger
     const optimiseBtn = document.getElementById("optimise-btn");
+    const workflowInput = document.getElementById("workflow-chat-input");
+    const workflowSendBtn = document.getElementById("workflow-send-btn");
+    const workflowMessages = document.getElementById("workflow-messages-area");
+    const workflowTraceStatus = document.getElementById("workflow-trace-status");
 
     let currentTrace = null;
     let currentPrompt = "";
@@ -24,8 +29,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const canvasInstances = {};
 
     // ── Toggle logic ────────────────────────────────────────────────────────
-    toggleBtn.addEventListener("click", () => graphPanel.classList.add("open"));
-    closeBtn.addEventListener("click", () => graphPanel.classList.remove("open"));
+    toggleBtn.addEventListener("click", () => {
+        setOptimiserView(!graphPanel.classList.contains("open"));
+    });
+    closeBtn.addEventListener("click", () => setOptimiserView(false));
+
+    function setOptimiserView(showWorkflowOptimiser) {
+        document.body.classList.toggle("workflow-mode", showWorkflowOptimiser);
+        graphPanel.classList.toggle("open", showWorkflowOptimiser);
+        if (promptPanel) {
+            promptPanel.hidden = showWorkflowOptimiser;
+        }
+
+        toggleBtn.setAttribute("aria-expanded", String(showWorkflowOptimiser));
+        toggleBtn.textContent = showWorkflowOptimiser ? "Prompt Optimiser" : "Workflow Optimiser";
+        closeBtn.textContent = showWorkflowOptimiser ? "Prompt Optimiser" : "×";
+    }
 
     // ── Listen for new trace data from chat.js ──────────────────────────────
     window.addEventListener("newTraceData", (e) => {
@@ -33,16 +52,7 @@ document.addEventListener("DOMContentLoaded", () => {
         currentTrace = e.detail.trace;
         const canvasId = e.detail.canvasId;
 
-        // Accumulate tokens
-        const pTokens = e.detail.metrics.prompt_tokens || 0;
-        const cTokens = e.detail.metrics.completion_tokens || 0;
-        sessionPromptTokens += pTokens;
-        sessionCompletionTokens += cTokens;
-
-        // Update Token Panel
-        document.getElementById("prompt-tokens-total").innerText = sessionPromptTokens;
-        document.getElementById("completion-tokens-total").innerText = sessionCompletionTokens;
-        document.getElementById("total-tokens").innerText = sessionPromptTokens + sessionCompletionTokens;
+        updateSessionTokenTotals(e.detail.metrics || {});
 
         // Reset optimiser results
         resetOptimiserResults();
@@ -74,14 +84,120 @@ document.addEventListener("DOMContentLoaded", () => {
         resetOptimiserResults();
     });
 
+    function updateSessionTokenTotals(metrics) {
+        const pTokens = metrics.prompt_tokens || 0;
+        const cTokens = metrics.completion_tokens || 0;
+        sessionPromptTokens += pTokens;
+        sessionCompletionTokens += cTokens;
+
+        document.getElementById("prompt-tokens-total").innerText = sessionPromptTokens;
+        document.getElementById("completion-tokens-total").innerText = sessionCompletionTokens;
+        document.getElementById("total-tokens").innerText = sessionPromptTokens + sessionCompletionTokens;
+    }
+
+    function appendWorkflowMessage(text, sender) {
+        const message = document.createElement("div");
+        message.className = `workflow-message ${sender}`;
+        message.textContent = text;
+        workflowMessages.appendChild(message);
+        workflowMessages.scrollTop = workflowMessages.scrollHeight;
+    }
+
+    function appendWorkflowLoading() {
+        const id = `workflow-loading-${Date.now()}`;
+        const message = document.createElement("div");
+        message.id = id;
+        message.className = "workflow-message ai";
+        message.textContent = "Generating trace...";
+        workflowMessages.appendChild(message);
+        workflowMessages.scrollTop = workflowMessages.scrollHeight;
+        return id;
+    }
+
+    function removeWorkflowLoading(id) {
+        const loading = document.getElementById(id);
+        if (loading) loading.remove();
+    }
+
+    function clearWorkflowEmptyState() {
+        const empty = workflowMessages.querySelector(".workflow-empty-state");
+        if (empty) empty.remove();
+    }
+
+    function setWorkflowStatus(text) {
+        workflowTraceStatus.textContent = text;
+    }
+
     // ── Optimise Workflow button ─────────────────────────────────────────────
     optimiseBtn.addEventListener("click", () => {
         if (!currentTrace) {
-            alert("Send a message first so a trace is available to optimise.");
+            setWorkflowStatus("Send a workflow prompt first");
+            workflowInput.focus();
             return;
         }
         triggerOptimisation();
     });
+
+    workflowSendBtn.addEventListener("click", sendWorkflowMessage);
+    workflowInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            sendWorkflowMessage();
+        }
+    });
+
+    workflowInput.addEventListener("input", function() {
+        this.style.height = "auto";
+        this.style.height = `${this.scrollHeight}px`;
+    });
+
+    async function sendWorkflowMessage() {
+        const prompt = workflowInput.value.trim();
+        if (!prompt) {
+            setWorkflowStatus("Add a workflow prompt");
+            return;
+        }
+
+        workflowInput.value = "";
+        workflowInput.style.height = "auto";
+        clearWorkflowEmptyState();
+        appendWorkflowMessage(prompt, "user");
+        const loadingId = appendWorkflowLoading();
+        workflowSendBtn.disabled = true;
+        setWorkflowStatus("Generating trace");
+
+        try {
+            const response = await fetch("/inquire-traced", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: "workflow_user", prompt }),
+            });
+
+            const data = await response.json();
+            removeWorkflowLoading(loadingId);
+            appendWorkflowMessage(data.response || "Workflow trace generated.", "ai");
+            currentPrompt = prompt;
+            currentTrace = data.trace || [];
+            updateSessionTokenTotals(data.metrics || {});
+            resetOptimiserResults();
+            setWorkflowStatus(currentTrace.length ? `${currentTrace.length} trace steps ready` : "Trace ready");
+
+            window.dispatchEvent(new CustomEvent("workflowTraceReady", {
+                detail: {
+                    prompt,
+                    trace: currentTrace,
+                    metrics: data.metrics || {},
+                },
+            }));
+        } catch (error) {
+            removeWorkflowLoading(loadingId);
+            appendWorkflowMessage("Sorry, the workflow trace could not be generated.", "ai");
+            setWorkflowStatus("Trace failed");
+            console.error(error);
+        } finally {
+            workflowSendBtn.disabled = false;
+        }
+    }
 
     async function triggerOptimisation() {
         if (!currentTrace) return;
