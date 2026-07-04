@@ -19,7 +19,7 @@ RUN groupadd -r agentuser && useradd -r -g agentuser agentuser
 WORKDIR /app
 
 # Copy installed dependencies from builder
-COPY --from=builder /root/.local /home/agentuser/.local
+COPY --chown=agentuser:agentuser --from=builder /root/.local /home/agentuser/.local
 ENV PATH=/home/agentuser/.local/bin:$PATH
 
 # Copy source code

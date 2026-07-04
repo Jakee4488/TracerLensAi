@@ -1,0 +1,75 @@
+##############################################################################
+# docker-compose.dev.yml — Local Development Environment
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up --build       # Start with rebuild
+#   docker compose -f docker-compose.dev.yml up               # Start (cached)
+#   docker compose -f docker-compose.dev.yml down              # Stop & remove
+#   docker compose -f docker-compose.dev.yml down -v --rmi local  # Full cleanup
+#
+# Notes:
+#   - Mounts ./src as a volume for live code reloading
+#   - Uses uvicorn --reload for hot-reload on file changes
+#   - Reads environment from .env (create from .env.example)
+#   - Optionally mounts GCP ADC for Vertex AI access
+##############################################################################
+
+services:
+  agent-app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: gcp-agent-dev:latest
+    container_name: gcp-agent-dev
+    ports:
+      - "8080:8080"
+
+    # Override the production CMD with hot-reload for development
+    command: >
+      uvicorn src.main:app
+      --host 0.0.0.0
+      --port 8080
+      --reload
+      --reload-dir /app/src
+
+    # Mount source code for live editing (overrides the COPY in Dockerfile)
+    volumes:
+      - ./src:/app/src:ro
+
+    # Load environment from .env file (create from .env.example)
+    env_file:
+      - .env
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=development
+
+    # Health check matching the production readiness probe
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    restart: unless-stopped
+
+  # ── Test Runner ───────────────────────────────────────────────────────────
+  # One-shot container for running tests (not started by default)
+  test-runner:
+    image: gcp-agent-dev:latest
+    container_name: gcp-agent-test
+    profiles:
+      - test    # Only runs when explicitly requested via --profile test
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+      - ./pytest.ini:/app/pytest.ini:ro
+      - ./.flake8:/app/.flake8:ro
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=test
+    # Default: run the full test suite.  Overridden per-step in run_tests.sh
+    command: python -m pytest tests/ -v --tb=short

@@ -1,66 +1,306 @@
-name: Deploy Agent Orchestrator
+# =============================================================================
+# deploy.yml — Staging & Production Deployment
+#
+# Triggers:
+#   push to main  → build Docker image, push to Artifact Registry,
+#                   deploy to GKE STAGING environment
+#   push of tag   → deploy the already-built image to GKE PRODUCTION
+#     matching      (requires manual approval in GitHub Environments)
+#     v[0-9]+.*
+#
+# Authentication: Keyless via Workload Identity Federation (no JSON keys)
+#
+# Required GitHub Secrets (repository level):
+#   WIF_PROVIDER   — full Workload Identity Provider resource name
+#   WIF_SA_EMAIL   — Service Account email bound to the WIF pool
+#
+# Required GitHub Variables (repository level):
+#   GOOGLE_CLOUD_PROJECT  — GCP project ID
+#   GOOGLE_CLOUD_REGION   — e.g. europe-west2
+#   GKE_CLUSTER_NAME      — GKE cluster name
+#   GKE_CLUSTER_ZONE      — GKE cluster zone or region
+#   AR_REGISTRY           — e.g. europe-west2-docker.pkg.dev
+#   AR_REPO               — Artifact Registry repo name, e.g. agent-docker-repo
+#   IMAGE_NAME            — e.g. agent-orchestrator
+#   STAGING_NAMESPACE     — k8s namespace for staging, e.g. staging
+#   PROD_NAMESPACE        — k8s namespace for production, e.g. production
+#
+# GitHub Environments required:
+#   staging    — no approval gate
+#   production — require at least 1 reviewer before deploy runs
+# =============================================================================
+name: "Deploy — Staging & Production"
 
 on:
   push:
     branches:
       - main
+    tags:
+      - "v[0-9]+*"   # e.g. v1.0.0, v2.3.1-rc1
 
+# Only one deployment to the same environment at a time
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # never cancel a running deploy
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared environment variables (resolved from GitHub Variables)
+# ─────────────────────────────────────────────────────────────────────────────
 env:
-  PROJECT_ID: "enterprise-agent-demo"
-  REGION: "europe-west2"
-  GAR_LOCATION: "europe-west2"
-  REPOSITORY: "agent-docker-repo"
-  IMAGE: "agent-orchestrator"
-  WORKLOAD_IDENTITY_PROVIDER: "projects/123456789012/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider"
-  SERVICE_ACCOUNT: "github-actions-sa@enterprise-agent-demo.iam.gserviceaccount.com"
+  GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+  GOOGLE_CLOUD_REGION:  ${{ vars.GOOGLE_CLOUD_REGION }}
+  AR_REGISTRY:          ${{ vars.AR_REGISTRY }}
+  AR_REPO:              ${{ vars.AR_REPO }}
+  IMAGE_NAME:           ${{ vars.IMAGE_NAME }}
+  GKE_CLUSTER_NAME:     ${{ vars.GKE_CLUSTER_NAME }}
+  GKE_CLUSTER_ZONE:     ${{ vars.GKE_CLUSTER_ZONE }}
 
 jobs:
-  build-and-deploy:
+  # ===========================================================================
+  # JOB 1 — Full test suite (always runs on push to main)
+  # ===========================================================================
+  test:
+    name: "Test Suite"
     runs-on: ubuntu-latest
-    permissions:
-      contents: 'read'
-      id-token: 'write' # Required for Workload Identity
+    if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: "pip"
 
-      - name: Lint and Test
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (flake8)
         run: |
           pip install flake8
           flake8 src/
-          # add pytest here when tests are written
 
-      - name: Authenticate to Google Cloud
+      - name: Unit tests (pytest)
+        run: python -m pytest tests/ -v --tb=short
+
+      - name: Evaluator smoke test
+        run: python -m src.observability.evaluator
+
+  # ===========================================================================
+  # JOB 2 — Build & push Docker image  (push to main only, after tests pass)
+  # ===========================================================================
+  build-and-push:
+    name: "Build & Push Image"
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write   # Required for Workload Identity Federation
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
+      image-ref: ${{ steps.meta.outputs.ref }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Keyless GCP authentication ─────────────────────────────────────────
+      - name: Authenticate to Google Cloud (Workload Identity)
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: '${{ env.WORKLOAD_IDENTITY_PROVIDER }}'
-          service_account: '${{ env.SERVICE_ACCOUNT }}'
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for Artifact Registry
-        run: |
-          gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev
+        run: gcloud auth configure-docker ${{ env.AR_REGISTRY }} --quiet
 
-      - name: Build and Push Docker Image
+      # ── Derive image tag ───────────────────────────────────────────────────
+      - name: Compute image metadata
+        id: meta
         run: |
-          IMAGE_TAG="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}"
-          docker build -t $IMAGE_TAG -f deploy/Dockerfile .
-          docker push $IMAGE_TAG
+          SHORT_SHA="${GITHUB_SHA::8}"
+          IMAGE_REPO="${{ env.AR_REGISTRY }}/${{ env.GOOGLE_CLOUD_PROJECT }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}"
+          echo "tag=${SHORT_SHA}"       >> "$GITHUB_OUTPUT"
+          echo "ref=${IMAGE_REPO}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "latest=${IMAGE_REPO}:latest"    >> "$GITHUB_OUTPUT"
+          echo "IMAGE_REPO=${IMAGE_REPO}"       >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${SHORT_SHA}"         >> "$GITHUB_ENV"
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Apply
-        working-directory: ./terraform
+      # ── Docker build & push ────────────────────────────────────────────────
+      - name: Build Docker image
         run: |
-          terraform init
-          terraform apply -auto-approve
+          docker build \
+            --file deploy/Dockerfile \
+            --tag "$IMAGE_REPO:$SHORT_SHA" \
+            --tag "$IMAGE_REPO:latest" \
+            --label "git-sha=$SHORT_SHA" \
+            --label "build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "github-run=${{ github.run_id }}" \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "$IMAGE_REPO:$SHORT_SHA"
+          docker push "$IMAGE_REPO:latest"
+
+      - name: Summary
+        run: |
+          echo "### 🐳 Image pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$IMAGE_REPO:$SHORT_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # JOB 3 — Deploy to STAGING  (push to main only, after build passes)
+  # ===========================================================================
+  deploy-staging:
+    name: "Deploy → Staging"
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+    environment: staging   # no approval gate on staging
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER_NAME }}
+          location:     ${{ env.GKE_CLUSTER_ZONE }}
+          project_id:   ${{ env.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Helm upgrade (staging)
+        run: |
+          IMAGE_REPO="${{ env.AR_REGISTRY }}/${{ env.GOOGLE_CLOUD_PROJECT }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}"
+          helm upgrade --install gcp-agent-staging deploy/helm/ \
+            --namespace "${{ vars.STAGING_NAMESPACE }}" \
+            --create-namespace \
+            --set image.repository="${IMAGE_REPO}" \
+            --set image.tag="${{ needs.build-and-push.outputs.image-tag }}" \
+            --set replicaCount=1 \
+            --wait \
+            --timeout 5m
+
+      - name: Verify staging rollout
+        run: |
+          kubectl rollout status deployment/gcp-agent-staging \
+            --namespace "${{ vars.STAGING_NAMESPACE }}" \
+            --timeout=120s
+          kubectl get pods --namespace "${{ vars.STAGING_NAMESPACE }}" \
+            --selector="app.kubernetes.io/instance=gcp-agent-staging"
+
+      - name: Staging smoke test (health endpoint)
+        run: |
+          # Port-forward and hit /health — replace with your staging ingress URL if available
+          kubectl port-forward \
+            --namespace "${{ vars.STAGING_NAMESPACE }}" \
+            service/gcp-agent-staging 8080:8080 &
+          sleep 5
+          curl --fail --silent http://localhost:8080/health | jq .
+          echo "### ✅ Staging smoke test passed" >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # JOB 4 — Deploy to PRODUCTION  (git tag v*.* only, requires approval)
+  # ===========================================================================
+  deploy-production:
+    name: "Deploy → Production"
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: production   # ← requires manual reviewer approval
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER_NAME }}
+          location:     ${{ env.GKE_CLUSTER_ZONE }}
+          project_id:   ${{ env.GOOGLE_CLOUD_PROJECT }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # For a production tag, we re-use the image already pushed for the
+      # commit that the tag points to.  Git tag name (e.g. v1.2.3) is also
+      # added as an additional image tag for traceability.
+      - name: Resolve image tag from git tag
+        id: resolve
+        run: |
+          IMAGE_REPO="${{ env.AR_REGISTRY }}/${{ env.GOOGLE_CLOUD_PROJECT }}/${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}"
+          # The tag ref is refs/tags/v1.2.3 → strip prefix
+          RELEASE_TAG="${GITHUB_REF#refs/tags/}"
+          SHORT_SHA="${GITHUB_SHA::8}"
+
+          # Re-tag the SHA image with the release version in the registry
+          gcloud auth configure-docker "${{ env.AR_REGISTRY }}" --quiet
+          docker pull "${IMAGE_REPO}:${SHORT_SHA}"
+          docker tag  "${IMAGE_REPO}:${SHORT_SHA}" "${IMAGE_REPO}:${RELEASE_TAG}"
+          docker push "${IMAGE_REPO}:${RELEASE_TAG}"
+
+          echo "release-tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "image-ref=${IMAGE_REPO}:${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_REPO=${IMAGE_REPO}" >> "$GITHUB_ENV"
+
+      - name: Helm upgrade (production)
+        run: |
+          RELEASE_TAG="${{ steps.resolve.outputs.release-tag }}"
+          helm upgrade --install gcp-agent-prod deploy/helm/ \
+            --namespace "${{ vars.PROD_NAMESPACE }}" \
+            --create-namespace \
+            --set image.repository="${IMAGE_REPO}" \
+            --set image.tag="${RELEASE_TAG}" \
+            --wait \
+            --timeout 10m
+
+      - name: Verify production rollout
+        run: |
+          kubectl rollout status deployment/gcp-agent-prod \
+            --namespace "${{ vars.PROD_NAMESPACE }}" \
+            --timeout=300s
+          kubectl get pods --namespace "${{ vars.PROD_NAMESPACE }}" \
+            --selector="app.kubernetes.io/instance=gcp-agent-prod"
+
+      - name: Production deploy summary
+        run: |
+          echo "### 🚀 Production deployment complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Release tag | \`${{ steps.resolve.outputs.release-tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${{ steps.resolve.outputs.image-ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Namespace | \`${{ vars.PROD_NAMESPACE }}\` |" >> "$GITHUB_STEP_SUMMARY"

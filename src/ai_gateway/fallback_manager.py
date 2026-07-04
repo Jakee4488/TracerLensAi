@@ -1,5 +1,4 @@
 import logging
-from typing import List
 from src.ai_gateway.interface import AgentResponse
 from src.ai_gateway.vertex_client import VertexAIClient
 

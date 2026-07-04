@@ -65,6 +65,9 @@ terraform.rc
 *.pem
 *.key
 
+# Docker Compose developer overrides
+docker-compose.override.yml
+
 # Local test scripts (optional)
 test_vertex.py
 

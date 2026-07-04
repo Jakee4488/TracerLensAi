@@ -1,8 +1,7 @@
 import time
 import asyncio
-from typing import Dict, Any, Optional
 from google.cloud import aiplatform
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai.generative_models import GenerativeModel
 # In a real enterprise app, you'd also import Claude SDK from Vertex if using Anthropic.
 # For simplicity, we are wrapping Vertex Gemini.
 

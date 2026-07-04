@@ -1,6 +1,6 @@
 # Advanced Developer Guide
 
-This document provides deep technical context on the architecture and extension points of the Enterprise Agentic Customer Support Orchestrator.
+This document provides deep technical context on the architecture, local container setup, extension points, and deployment paradigms of the Enterprise Agentic Customer Support Orchestrator.
 
 ---
 
@@ -21,55 +21,83 @@ The `FallbackManager` iterates through an array of models. If `generate_response
 
 ---
 
-## 2. Agent Engine & Orchestration (`src/agent_engine`)
+## 2. Local Container Architecture & Developer Loop
 
-The orchestration logic is intentionally kept lightweight (avoiding heavy, opaque frameworks) to ensure maximum observability and control over the interaction graph.
+To guarantee that the local development environment mirrors GKE staging and production behavior, all developer workflows run inside Docker via **Docker Compose**.
 
-### Modifying the State Loop (`orchestrator.py`)
+### Compose Configuration (`docker-compose.dev.yml`)
 
-The `process_inquiry` method handles the core conversational loop:
-1.  **Generation**: LLM processes the user prompt.
-2.  **Tool Execution**: The code currently mocks tool execution for brevity. To implement real tool execution loops (like ReAct or LangGraph paradigms), you should:
-    *   Parse the `response.tool_calls` array.
-    *   Map the requested tool to `TOOL_REGISTRY`.
-    *   Execute the tool.
-    *   Append the result to the session context.
-    *   Trigger a recursive or subsequent LLM generation pass with the updated context.
-3.  **Policy Enforcement**: Before returning a response to the user, the text is passed through the `RoutingPolicy`.
+The compose environment contains two services built using `deploy/Dockerfile`:
 
-### Adding New Tools (`tools.py`)
+*   **`agent-app`**: The application server.
+    *   **Hot-Reload**: Mounts `./src` as a read-only volume to `/app/src`.
+    *   **Dev Command**: Overrides the default container startup with `uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload` to detect changes on the host and reload immediately.
+    *   **Ports**: Maps container port `8080` to host port `8080`.
+*   **`test-runner`**: A profile-scoped container used for one-shot test operations.
+    *   Mounts `./src`, `./tests`, and `pytest.ini`.
+    *   Allows running test suites, linting checks, and evaluation scripts on demand without affecting the active application server container.
 
-To add a new capability to the agent:
-1.  Define an asynchronous Python function in `tools.py`. Ensure it includes a descriptive docstring and type hints (these are used by the LLM to understand how to use the tool).
-2.  Register the function in the `TOOL_REGISTRY` dictionary.
+### Developer Script Wrapper (`run_tests.sh`)
+
+Instead of invoking `docker compose` commands directly, use `./run_tests.sh` to automate local tasks:
+
+*   **Running full test pipelines**: `./run_tests.sh` builds the dev image, executes `flake8 src/`, runs `pytest tests/`, executes `python -m src.observability.evaluator`, runs a health-check smoke test against a spun-up server, and cleans up containers.
+*   **Interactive work**: Run `./run_tests.sh --start` to start the app in the background and track file changes. Run `./run_tests.sh --stop` to tear it down.
 
 ---
 
-## 3. Security & CI/CD (Workload Identity)
+## 3. GKE Deployments & CI/CD Pipelines
 
-The system relies heavily on **Google Cloud Workload Identity**.
+Deployment is governed by a **GitOps pipeline** orchestrated via GitHub Actions.
 
-### GKE Runtime Security
-In `terraform/iam.tf`, the GCP Service Account (`agent-app-sa`) is bound to the Kubernetes Service Account (`agent-ksa`). 
-The `helm/values.yaml` annotates the Kubernetes Service Account. When the application pods run, the Google Cloud client libraries automatically detect the Workload Identity endpoint and authenticate *keylessly*. 
+```
+                  ┌──────────────────────────────────────────────┐
+                  │              Merge into main                 │
+                  └──────────────────────┬───────────────────────┘
+                                         │
+                                         ▼
+                  ┌──────────────────────────────────────────────┐
+                  │          CI: Runs tests & linter             │
+                  └──────────────────────┬───────────────────────┘
+                                         │
+                                         ▼
+                  ┌──────────────────────────────────────────────┐
+                  │      CD: Builds image, pushes to AR          │
+                  │      & deploys to GKE Staging (Helm)         │
+                  └──────────────────────┬───────────────────────┘
+                                         │
+                         ┌───────────────┴───────────────┐
+                         ▼                               ▼
+            [Create release tag vX.Y.Z]         [Manual Fallback Path]
+                         │                               │
+                         ▼                               ▼
+            ┌───────────────────────────┐    ┌───────────────────────┐
+            │ Production Deploy (CD)    │    │   build_deploy.sh     │
+            │ Requires approval gate    │    │  gcloud auth-required │
+            └───────────────────────────┘    └───────────────────────┘
+```
 
-**Important:** Never inject `GOOGLE_APPLICATION_CREDENTIALS` JSON keys into the GKE cluster.
+### Security & Authentication
 
-### GitHub Actions OIDC Federation
-The `.github/workflows/deploy.yml` pipeline authenticates to GCP using OpenID Connect (OIDC).
-1.  GitHub Actions requests a short-lived OIDC token.
-2.  The `google-github-actions/auth` step exchanges this token with the Workload Identity Pool created in `terraform/iam.tf`.
-3.  GCP verifies the token signature and the repository claim (ensuring only your specific repo can assume the role).
-4.  The pipeline assumes the `github-actions-sa` Service Account to execute `docker push` and `terraform apply`.
+*   **GKE Runtime Security**: We map Kubernetes Service Accounts (KSA) to GCP Service Accounts (GSA) via **Workload Identity**. The pod specification annotates the `agent-ksa` service account. GCP SDK clients auto-authenticate keylessly at runtime. Long-lived key files are completely blocked.
+*   **CI/CD Pipeline Security**: GitHub Actions uses Workload Identity Federation (OIDC) to authenticate to Google Cloud. The pool validates repository claims before assuming the `github-actions-sa` identity.
+
+### Manual Fallback Deployment (`build_deploy.sh`)
+
+In emergency circumstances (e.g., GitHub Actions outage), you can deploy manually using `build_deploy.sh`.
+*   Verify your changes dry-run first: `./build_deploy.sh --dry-run`
+*   Execute the deploy (you will be prompted to confirm): `./build_deploy.sh`
+*   The script logs outputs to `logs/build_deploy_YYYYMMDD_HHMMSS.log`
 
 ---
 
 ## 4. Observability Data Sink
 
-The `logger.py` module detects if the application is running inside GKE. If so, it leverages `google.cloud.logging` to write structured JSON payloads. 
+The `logger.py` module detects if the application is running inside GKE. If so, it leverages `google.cloud.logging` to write structured JSON payloads.
 
 ### BigQuery Integration
-In the GCP Console, you can create a **Log Router Sink** that filters for the `"agent_invocation"` event type and streams these logs directly into the BigQuery dataset provisioned by `terraform/storage.tf`. 
+
+In the GCP Console, you can create a **Log Router Sink** that filters for the `"agent_invocation"` event type and streams these logs directly into the BigQuery dataset provisioned by `terraform/storage.tf`.
 
 This enables complex SQL analytics on agent performance:
 ```sql

@@ -12,6 +12,9 @@ This project provides a robust architecture for deploying LLM-powered customer s
 *   **Business Policy Enforcement**: Strict heuristic and ML-based routing policies that instantly escalate high-severity interactions to human agents.
 *   **Enterprise Observability**: Integrated structured JSON logging for precise BigQuery ingestion, capturing token counts, latency, and costs per invocation loop.
 *   **Keyless CI/CD & Security**: Implements GKE Workload Identity and GitHub Actions OIDC federation, entirely eliminating the need for long-lived service account JSON keys.
+*   **Dockerized Local Dev**: Hot-reloadable local Docker Compose environment matching production execution characteristics.
+
+---
 
 ## 📂 Repository Structure
 
@@ -25,81 +28,99 @@ This project provides a robust architecture for deploying LLM-powered customer s
 │   └── main.py                  # FastAPI Entrypoint
 ├── deploy/                      # Containerization (Dockerfile) & Helm Charts
 ├── docs/                        # Advanced Developer Documentation
-└── .github/workflows/           # CI/CD Pipeline Definitions
+├── .github/workflows/           # CI/CD Pipeline Definitions (ci.yml, deploy.yml)
+├── docker-compose.dev.yml       # Local development Docker Compose definition
+├── run_tests.sh                 # Docker-based test, lint, and hot-reload runner
+├── build_deploy.sh              # Emergency/manual GCP deploy fallback script
+└── .env.example                 # Template for local dev environment configurations
 ```
+
+---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
-1.  **GCP Account**: An active GCP Project with billing enabled.
-2.  **Tools**: Install `gcloud` CLI, `terraform`, `docker`, and `kubectl`.
-3.  **Authentication**: Authenticate locally using Application Default Credentials (ADC):
+1.  **Docker & Docker Compose**: Install Docker Desktop on your machine.
+2.  **GCP Account**: An active GCP Project with Vertex AI APIs enabled.
+3.  **Tools**: Install `gcloud` CLI, `terraform`, `kubectl`, and `helm` (only needed for infrastructure setup or manual deployments).
+
+---
+
+### Local Development & Testing
+
+All local development and verification is done **inside Docker** using `run_tests.sh` to ensure exact parity with production.
+
+1.  **Configure Environment**:
+    Copy the template environment file to `.env`:
     ```bash
-    gcloud auth application-default login
+    cp .env.example .env
+    ```
+    Open `.env` and fill in your `GOOGLE_CLOUD_PROJECT` and credentials if needed.
+
+2.  **Run the Test Pipeline**:
+    Execute the test runner script to run the complete build, lint, pytest, and evaluator harness test suite inside containers:
+    ```bash
+    chmod +x run_tests.sh
+    ./run_tests.sh
+    ```
+    This script will:
+    *   Build the local development Docker image.
+    *   Run `flake8` linting on `/src`.
+    *   Run `pytest` unit tests.
+    *   Run the Vertex AI synthetic evaluation harness.
+    *   Start the containerized service and verify health endpoints.
+    *   Clean up all temporary Docker resources automatically.
+
+3.  **Run the Hot-Reload Dev Server**:
+    To develop interactively with live code reload:
+    ```bash
+    ./run_tests.sh --start
+    ```
+    The application will start on `http://localhost:8080`. Any changes to files in `./src` will trigger an automatic application reload.
+
+4.  **Stop the Dev Server**:
+    When finished developing:
+    ```bash
+    ./run_tests.sh --stop
     ```
 
-### Local Development
-
-1.  Run the setup script to create a virtual environment and install all dependencies:
+5.  **Clean Docker Resources**:
+    To wipe all containers, local images, and compose volumes:
     ```bash
-    chmod +x setup.sh
-    ./setup.sh
-    ```
-2.  Activate the virtual environment:
-    ```bash
-    # On Linux/macOS
-    source .venv/bin/activate
-
-    # On Windows (Git Bash)
-    source .venv/Scripts/activate
-    ```
-3.  Set required environment variables:
-    ```bash
-    export GOOGLE_CLOUD_PROJECT="your-project-id"
-    export GOOGLE_CLOUD_REGION="europe-west2"
-    ```
-4.  Run the FastAPI application locally:
-    ```bash
-    uvicorn src.main:app --reload --port 8080
-    ```
-5.  *(Optional)* Run the synthetic evaluation harness to test agent policies:
-    ```bash
-    python -m src.observability.evaluator
+    ./run_tests.sh --clean
     ```
 
-### Running in a Docker Container
+---
 
-You can build the Docker image and run the container locally using the provided helper script:
+## 🚀 Deployment & CI/CD
 
-1.  Make the script executable:
+Deployment is fully automated and orchestrated via GitHub Actions CI/CD workflows.
+
+### 1. Automated (Primary) Deployments
+*   **Lint & Test Gating**: Every Pull Request targeting `main` triggers `.github/workflows/ci.yml` to lint and test the code.
+*   **Staging Deploy**: Merges into the `main` branch trigger `.github/workflows/deploy.yml` to build, tag (`latest` + Git SHA), push to GCP Artifact Registry, and deploy to the GKE Staging environment.
+*   **Production Deploy**: Pushing a git release tag matching `v[0-9]+.*` (e.g., `v1.2.0`) triggers deployment to GKE Production (subject to manual approval gates in GitHub Environments).
+
+### 2. Manual Deploy Fallback
+If the CI/CD pipeline is unavailable, you can manually build, push, and deploy to GCP using `build_deploy.sh`. 
+
+> [!WARNING]
+> Manual deployment should only be used as a last resort/escape hatch. Always prefer standard branch merges for deployments.
+
+*   **Dry Run (Verify actions first)**:
     ```bash
-    chmod +x run_docker.sh
+    chmod +x build_deploy.sh
+    ./build_deploy.sh --dry-run
     ```
-2.  Execute the run script (this script automatically builds the image, mounts GCP application default credentials from your local machine, and runs the container):
+*   **Execute Deployment**:
     ```bash
-    ./run_docker.sh
+    ./build_deploy.sh
     ```
-3.  The containerized application will run in the background on port `8080`. The script will wait for the server to start and run a health check and inquire endpoint test automatically.
+    *(Requires local `gcloud` authentication and container cluster access).*
 
-
-### Infrastructure Deployment
-
-To deploy the cloud infrastructure, navigate to the `terraform/` directory:
-
-1.  Initialize Terraform:
-    ```bash
-    terraform init
-    ```
-2.  Review the execution plan:
-    ```bash
-    terraform plan -var="project_id=your-project-id"
-    ```
-3.  Apply the configuration:
-    ```bash
-    terraform apply -var="project_id=your-project-id"
-    ```
+---
 
 ## 📚 Documentation
 
-For an in-depth look at modifying the agent state graph, adding new LLM providers, and managing the Workload Identity CI/CD setup, please refer to the [Advanced Developer Guide](docs/developer_guide.md).
+For an in-depth look at modifying the agent state graph, adding new LLM providers, local Docker architecture, and managing the Workload Identity CI/CD setup, please refer to the [Advanced Developer Guide](docs/developer_guide.md).

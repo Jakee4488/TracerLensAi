@@ -1,76 +1,283 @@
 #!/bin/bash
+# =============================================================================
+#  run_tests.sh — Local Docker Development & Test Script
+#
+#  Builds and runs the GCP Agent inside Docker for local development and
+#  testing.  Uses docker compose with the same Dockerfile as production.
+#
+#  Usage:
+#    ./run_tests.sh             # Full test pipeline (build → lint → test →
+#                               #   evaluate → smoke test → teardown)
+#    ./run_tests.sh --start     # Start dev server with hot-reload
+#    ./run_tests.sh --stop      # Stop the running dev server
+#    ./run_tests.sh --build-only  # Build the Docker image only
+#    ./run_tests.sh --clean     # Remove containers, images, and volumes
+#    ./run_tests.sh --help      # Show this help text
+#
+#  Prerequisites:
+#    - Docker Desktop (with Compose V2 plugin)
+#    - .env file in the project root (copy from .env.example)
+#
+#  The dev server mounts ./src as a volume so code changes are reflected
+#  immediately without rebuilding.
+# =============================================================================
 
-# Setup logging directory and file
+set -euo pipefail
+
+# ── Colour helpers ────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
+
+info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
+success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+step()    { echo -e "\n${BOLD}${CYAN}══ $* ${RESET}"; }
+
+COMPOSE_FILE="docker-compose.dev.yml"
+PROJECT_NAME="gcp-agent"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
 mkdir -p logs
-LOG_FILE="logs/run_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="logs/dev_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo "========================================="
-echo "  Starting GCP Agent Build & Test Script "
-echo "========================================="
-echo "Logging output to: $LOG_FILE"
+# ── Helper: run a one-shot command in the test-runner container ───────────────
+run_in_container() {
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" \
+    run --rm --no-deps test-runner "$@"
+}
 
-echo -e "\n[1] Activating Virtual Environment..."
-if [ -f ".venv/Scripts/activate" ]; then
-    source .venv/Scripts/activate
-    echo "    -> Virtual environment activated (.venv)."
-elif [ -f ".venv/bin/activate" ]; then
-    source .venv/bin/activate
-    echo "    -> Virtual environment activated (.venv)."
-elif [ -f "venv/Scripts/activate" ]; then
-    # Windows/Git Bash path
-    source venv/Scripts/activate
-    echo "    -> Virtual environment activated (venv)."
-elif [ -f "venv/bin/activate" ]; then
-    # Linux/Mac path
-    source venv/bin/activate
-    echo "    -> Virtual environment activated (venv)."
-else
-    echo "    -> ERROR: Virtual environment not found. Please create it first."
+# ── Helper: ensure .env exists ────────────────────────────────────────────────
+ensure_env_file() {
+  if [ ! -f ".env" ]; then
+    warn "No .env file found."
+    if [ -f ".env.example" ]; then
+      info "Copying .env.example → .env (fill in your values)."
+      cp .env.example .env
+    else
+      warn "Creating a minimal .env with placeholder values."
+      cat > .env <<'ENVEOF'
+# GCP Agent — Local Development Environment Variables
+# Copy this file and fill in your values.
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_REGION=us-central1
+ENVEOF
+    fi
+  fi
+}
+
+# ── Helper: prerequisite checks ──────────────────────────────────────────────
+check_prerequisites() {
+  step "Checking prerequisites"
+
+  if ! command -v docker > /dev/null 2>&1; then
+    error "Docker is not installed. Install Docker Desktop and retry."
     exit 1
-fi
+  fi
+  success "docker found"
 
-echo -e "\n[2] Setting Google Cloud Environment Variables..."
-export GOOGLE_CLOUD_PROJECT="project-a566ac8f-a95c-4b33-88a"
-export GOOGLE_CLOUD_REGION="us-central1"
-echo "    -> Project ID set to $GOOGLE_CLOUD_PROJECT"
-echo "    -> Region set to $GOOGLE_CLOUD_REGION"
+  if ! docker compose version > /dev/null 2>&1; then
+    error "Docker Compose V2 plugin not found."
+    error "Upgrade Docker Desktop or install the compose plugin."
+    exit 1
+  fi
+  success "docker compose $(docker compose version --short) found"
 
-echo -e "\n[3] Setting API Keys (Add yours below if needed)..."
-# Example of setting other API keys
-# export OPENAI_API_KEY="sk-your-key"
-# export ANTHROPIC_API_KEY="your-key"
-echo "    -> API keys configured."
+  if ! docker info > /dev/null 2>&1; then
+    error "Docker daemon is not running. Start Docker Desktop and retry."
+    exit 1
+  fi
+  success "Docker daemon is running"
+}
 
-echo -e "\n[4] Running Linting (flake8)..."
-if command -v flake8 > /dev/null 2>&1; then
-    flake8 src/ || echo "    -> Linting found some issues."
-else
-    echo "    -> flake8 not found. Skipping linting."
-fi
+# ── Command: BUILD ────────────────────────────────────────────────────────────
+cmd_build() {
+  step "Building Docker image"
+  ensure_env_file
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" build
+  success "Docker image built successfully."
+}
 
-echo -e "\n[5] Running Unit Tests..."
-if command -v pytest > /dev/null 2>&1; then
-    python -m pytest tests/ || echo "    -> Pytest finished or tests directory not found."
-else
-    echo "    -> pytest not found. Skipping unit tests."
-fi
+# ── Command: START (dev server with hot-reload) ───────────────────────────────
+cmd_start() {
+  step "Starting dev server (hot-reload enabled)"
+  ensure_env_file
 
-echo -e "\n[6] Running the Synthetic Evaluation Harness..."
-python -m src.observability.evaluato
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d --build agent-app
+  success "Dev server started on http://localhost:8080"
+  info "Source code is mounted — edits to src/ will auto-reload."
+  info "Stop with: ./run_tests.sh --stop"
+  echo ""
 
-echo -e "\n[7] Testing API Endpoints..."
-if curl -s http://127.0.0.1:8080/health > /dev/null; then
-    echo "    -> Server is running. Health check passed."
-    echo "    -> Sending test query to /inquire..."
-    curl -s -X POST "http://127.0.0.1:8080/inquire" \
+  info "Waiting for health check..."
+  local retries=12
+  for i in $(seq 1 $retries); do
+    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+      success "Health check passed — server is ready."
+      return 0
+    fi
+    sleep 2
+  done
+  warn "Server started but health check did not pass within ${retries}×2s."
+  warn "Check logs: docker compose -f $COMPOSE_FILE -p $PROJECT_NAME logs -f"
+}
+
+# ── Command: STOP ─────────────────────────────────────────────────────────────
+cmd_stop() {
+  step "Stopping dev server"
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" down
+  success "Dev server stopped."
+}
+
+# ── Command: CLEAN ────────────────────────────────────────────────────────────
+cmd_clean() {
+  step "Cleaning up Docker resources"
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" down -v --rmi local --remove-orphans 2>/dev/null || true
+  success "All containers, volumes, and locally-built images removed."
+}
+
+# ── Command: FULL TEST PIPELINE ──────────────────────────────────────────────
+cmd_test_pipeline() {
+  echo ""
+  echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════╗${RESET}"
+  echo -e "${BOLD}${CYAN}║   GCP Agent — Local Docker Test Pipeline    ║${RESET}"
+  echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════╝${RESET}"
+  echo ""
+
+  ensure_env_file
+
+  # 1 — Build
+  step "1 │ Building Docker image"
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" build
+  success "Image built."
+
+  # 2 — Lint
+  step "2 │ Running flake8 linting"
+  if run_in_container flake8 src/; then
+    success "Linting passed."
+  else
+    error "Linting FAILED — fix the issues above."
+    cmd_stop 2>/dev/null || true
+    exit 1
+  fi
+
+  # 3 — Unit tests
+  step "3 │ Running pytest"
+  if run_in_container python -m pytest tests/ -v --tb=short; then
+    success "All unit tests passed."
+  else
+    error "Unit tests FAILED — fix the failures above."
+    cmd_stop 2>/dev/null || true
+    exit 1
+  fi
+
+  # 4 — Evaluator harness
+  step "4 │ Running synthetic evaluation harness"
+  if run_in_container python -m src.observability.evaluator; then
+    success "Evaluation harness completed."
+  else
+    warn "Evaluation harness exited non-zero (may need Vertex AI — non-fatal)."
+  fi
+
+  # 5 — Smoke test (start app → hit endpoints → stop)
+  step "5 │ Running API smoke tests"
+  info "Starting app container..."
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d agent-app
+
+  info "Waiting for server to become healthy..."
+  local healthy=false
+  for i in $(seq 1 15); do
+    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+      healthy=true
+      break
+    fi
+    sleep 2
+  done
+
+  if $healthy; then
+    success "Health check passed."
+
+    info "Testing POST /inquire..."
+    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/inquire" \
          -H "Content-Type: application/json" \
-         -d '{"user_id": "test-user", "prompt": "Hello!"}'
-    echo ""
-else
-    echo "    -> Server not running on 8080. Skipping API test. Start server first to test API."
-fi
+         -d '{"user_id": "test-user", "prompt": "Hello!"}')
 
-echo -e "\n========================================="
-echo "  Script Completed!"
-echo "========================================="
+    if [ "$RESPONSE" = "200" ]; then
+      success "/inquire returned HTTP 200."
+    elif [ "$RESPONSE" = "500" ]; then
+      warn "/inquire returned HTTP 500 (Vertex AI may be unavailable locally — non-fatal)."
+    else
+      warn "/inquire returned HTTP $RESPONSE."
+    fi
+  else
+    warn "Server did not become healthy within 30s — skipping API tests."
+  fi
+
+  # 6 — Tear down
+  step "6 │ Tearing down"
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" down
+  success "Containers stopped and removed."
+
+  # Done
+  echo ""
+  echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════╗${RESET}"
+  echo -e "${BOLD}${GREEN}║   Local Test Pipeline Completed  ✓          ║${RESET}"
+  echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════╝${RESET}"
+  info "Log: ${LOG_FILE}"
+  echo ""
+}
+
+# ── Argument parsing ──────────────────────────────────────────────────────────
+show_help() {
+  echo ""
+  echo -e "${BOLD}GCP Agent — Local Docker Development Script${RESET}"
+  echo ""
+  echo "Usage:"
+  echo "  ./run_tests.sh               Full test pipeline (build → lint → test → smoke)"
+  echo "  ./run_tests.sh --start       Start dev server with hot-reload"
+  echo "  ./run_tests.sh --stop        Stop the running dev server"
+  echo "  ./run_tests.sh --build-only  Build the Docker image only"
+  echo "  ./run_tests.sh --clean       Remove containers, images, and volumes"
+  echo "  ./run_tests.sh --help        Show this help text"
+  echo ""
+  echo "The dev server mounts ./src into the container. Code changes"
+  echo "are reflected immediately without rebuilding."
+  echo ""
+}
+
+main() {
+  local action="${1:-test}"
+
+  case "$action" in
+    --start)
+      check_prerequisites
+      cmd_start
+      ;;
+    --stop)
+      cmd_stop
+      ;;
+    --build-only)
+      check_prerequisites
+      cmd_build
+      ;;
+    --clean)
+      cmd_clean
+      ;;
+    --help|-h)
+      show_help
+      exit 0
+      ;;
+    test|"")
+      check_prerequisites
+      cmd_test_pipeline
+      ;;
+    *)
+      error "Unknown argument: $action"
+      show_help
+      exit 1
+      ;;
+  esac
+}
+
+main "${1:-}"
