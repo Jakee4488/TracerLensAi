@@ -63,7 +63,7 @@ info "Log file: $LOG_FILE"
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${YELLOW}╔══════════════════════════════════════════════════════╗${RESET}"
-echo -e "${BOLD}${YELLOW}║   TraceLens — MANUAL DEPLOY (Fallback)              ║${RESET}"
+echo -e "${BOLD}${YELLOW}║   TracerLensAi — MANUAL DEPLOY (Fallback)              ║${RESET}"
 echo -e "${BOLD}${YELLOW}║                                                      ║${RESET}"
 echo -e "${BOLD}${YELLOW}║   Primary deploy path: merge PR → main (CI/CD)       ║${RESET}"
 echo -e "${BOLD}${YELLOW}║   Production deploy:   git tag v*.* (CI/CD)          ║${RESET}"

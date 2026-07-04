@@ -14,22 +14,22 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 FROM python:3.11-slim
 
 # Create a non-root user
-RUN groupadd -r tracelensuser && useradd -r -g tracelensuser tracelensuser
+RUN groupadd -r tracerlensaiuser && useradd -r -g tracerlensaiuser tracerlensaiuser
 
 WORKDIR /app
 
 # Copy installed dependencies from builder
-COPY --chown=tracelensuser:tracelensuser --from=builder /root/.local /home/tracelensuser/.local
-ENV PATH=/home/tracelensuser/.local/bin:$PATH
+COPY --chown=tracerlensaiuser:tracerlensaiuser --from=builder /root/.local /home/tracerlensaiuser/.local
+ENV PATH=/home/tracerlensaiuser/.local/bin:$PATH
 
 # Copy source code
 COPY src/ /app/src/
 
 # Set ownership to non-root user
-RUN chown -R tracelensuser:tracelensuser /app
+RUN chown -R tracerlensaiuser:tracerlensaiuser /app
 
 # Switch to non-root user
-USER tracelensuser
+USER tracerlensaiuser
 
 EXPOSE 8080
 

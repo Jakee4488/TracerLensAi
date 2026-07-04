@@ -2,7 +2,7 @@
 # =============================================================================
 #  run_tests.sh — Local Docker Development & Test Script
 #
-#  Builds and runs the TraceLens Agent inside Docker for local development and
+#  Builds and runs the TracerLensAi Agent inside Docker for local development and
 #  testing.  Uses docker compose with the same Dockerfile as production.
 #
 #  Usage:
@@ -35,7 +35,7 @@ error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 step()    { echo -e "\n${BOLD}${CYAN}══ $* ${RESET}"; }
 
 COMPOSE_FILE="docker-compose.dev.yml"
-PROJECT_NAME="tracelens"
+PROJECT_NAME="tracerlensai"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 mkdir -p logs
@@ -58,7 +58,7 @@ ensure_env_file() {
     else
       warn "Creating a minimal .env with placeholder values."
       cat > .env <<'ENVEOF'
-# TraceLens — Local Development Environment Variables
+# TracerLensAi — Local Development Environment Variables
 # Copy this file and fill in your values.
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_REGION=us-central1
@@ -104,7 +104,7 @@ cmd_start() {
   step "Starting dev server (hot-reload enabled)"
   ensure_env_file
 
-  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d --build agent-app
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d --build tracerlensai-app
   success "Dev server started on http://localhost:8080"
   info "Source code is mounted — edits to src/ will auto-reload."
   info "Stop with: ./run_tests.sh --stop"
@@ -141,7 +141,7 @@ cmd_clean() {
 cmd_test_pipeline() {
   echo ""
   echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════╗${RESET}"
-  echo -e "${BOLD}${CYAN}║   TraceLens — Local Docker Test Pipeline     ║${RESET}"
+  echo -e "${BOLD}${CYAN}║   TracerLensAi — Local Docker Test Pipeline     ║${RESET}"
   echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════╝${RESET}"
   echo ""
 
@@ -183,7 +183,7 @@ cmd_test_pipeline() {
   # 5 — Smoke test (start app → hit endpoints → stop)
   step "5 │ Running API smoke tests"
   info "Starting app container..."
-  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d tracelens-app
+  docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d tracerlensai-app
 
   info "Waiting for server to become healthy..."
   local healthy=false
@@ -231,7 +231,7 @@ cmd_test_pipeline() {
 # ── Argument parsing ──────────────────────────────────────────────────────────
 show_help() {
   echo ""
-  echo -e "${BOLD}TraceLens — Local Docker Development Script${RESET}"
+  echo -e "${BOLD}TracerLensAi — Local Docker Development Script${RESET}"
   echo ""
   echo "Usage:"
   echo "  ./run_tests.sh               Full test pipeline (build → lint → test → smoke)"

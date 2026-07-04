@@ -11,7 +11,7 @@ from src.ai_gateway.fallback_manager import FallbackManager
 from src.agent_engine.orchestrator import AgentOrchestrator
 from src.observability.optimization_engine import evaluate_workflow
 
-app = FastAPI(title="TraceLens: AI Agentic Workflow Evaluator")
+app = FastAPI(title="TracerLensAi: AI Agentic Workflow Evaluator")
 logger = setup_logger()
 
 # Mount static files
