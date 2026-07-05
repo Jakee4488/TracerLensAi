@@ -150,11 +150,6 @@ document.addEventListener("DOMContentLoaded", () => {
                         { prompt: "Calculate 2+2", total_token_cost: 100 },
                         { prompt: "search weather in London", total_token_cost: 300 },
                         { prompt: "search complex aggregate data", total_token_cost: 500 },
-                        { prompt: "translate hello to french", total_token_cost: 150 },
-                        { prompt: "search latest news on AI", total_token_cost: 400 },
-                        { prompt: "tell me a joke", total_token_cost: 120 },
-                        { prompt: "search stock prices", total_token_cost: 350 },
-                        { prompt: "write a poem", total_token_cost: 200 },
                         { prompt: text, total_token_cost: optData.projection?.estimated_total_tokens || 200 }
                     ]
                 };

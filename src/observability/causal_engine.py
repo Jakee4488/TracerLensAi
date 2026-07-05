@@ -16,8 +16,11 @@ except Exception as e:
 
 import networkx as nx
 
-if not hasattr(nx.algorithms, 'd_separated') and hasattr(nx, 'd_separated'):
-    nx.algorithms.d_separated = nx.d_separated
+if not hasattr(nx.algorithms, 'd_separated'):
+    if hasattr(nx.algorithms, 'd_separation') and hasattr(nx.algorithms.d_separation, 'is_d_separator'):
+        nx.algorithms.d_separated = nx.algorithms.d_separation.is_d_separator
+    elif hasattr(nx, 'd_separated'):
+        nx.algorithms.d_separated = nx.d_separated
 
 logger = logging.getLogger(__name__)
 

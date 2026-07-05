@@ -115,13 +115,20 @@ async def analyze_prompt_endpoint(request: PromptAnalysisRequest):
 
 @app.post("/optimize-workflow")
 async def optimize_workflow_endpoint(request: WorkflowOptimizeRequest):
+    if not request.original_prompt.strip():
+        raise HTTPException(status_code=422, detail="Original prompt cannot be empty")
     if not request.trace:
         raise HTTPException(status_code=422, detail="Trace cannot be empty")
+
+    prompt_analysis_result = None
+    if request.run_prompt_analysis:
+        prompt_analysis_result = analyze_prompt(request.original_prompt)
+
     return optimize_workflow(
         original_prompt=request.original_prompt,
         trace=request.trace,
         expected_loops=request.expected_loops,
-        run_prompt_analysis=request.run_prompt_analysis
+        prompt_analysis=prompt_analysis_result
     )
 
 @app.post("/inquire-traced", response_model=InquiryResponse)

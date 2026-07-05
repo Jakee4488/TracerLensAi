@@ -1,0 +1,46 @@
+
+A module that was compiled using NumPy 1.x cannot be run in
+NumPy 2.4.6 as it may crash. To support both 1.x and 2.x
+versions of NumPy, modules must be compiled with NumPy 2.0.
+Some module may need to rebuild instead e.g. with 'pybind11>=2.12'.
+
+If you are a user of the module, the easiest solution will be to
+downgrade to 'numpy<2' or try to upgrade the affected module.
+We expect that some modules will need time to support NumPy 2.
+
+Traceback (most recent call last):  File "C:\Users\jacob\Desktop\Working_directory\Agent_Dev\GCP_AGENT\src\main.py", line 15, in <module>
+    from src.observability.causal_engine import CausalOptimizer
+  File "C:\Users\jacob\Desktop\Working_directory\Agent_Dev\GCP_AGENT\src\observability\causal_engine.py", line 9, in <module>
+    importlib.import_module("econml.dml")
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\importlib\__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\econml\dml\__init__.py", line 37, in <module>
+    from .dml import (DML, LinearDML, SparseLinearDML,
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\econml\dml\dml.py", line 18, in <module>
+    from .._ortho_learner import _OrthoLearner
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\econml\_ortho_learner.py", line 43, in <module>
+    from ._cate_estimator import (BaseCateEstimator, LinearCateEstimator,
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\econml\_cate_estimator.py", line 18, in <module>
+    from ._shap import _shap_explain_cme, _shap_explain_joint_linear_model_cate
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\econml\_shap.py", line 15, in <module>
+    import shap
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\shap\__init__.py", line 7, in <module>
+    from .explainers import other
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\shap\explainers\__init__.py", line 4, in <module>
+    from ._gpu_tree import GPUTreeExplainer
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\shap\explainers\_gpu_tree.py", line 5, in <module>
+    from ._tree import TreeExplainer, feature_perturbation_codes, output_transform_codes
+  File "C:\Users\jacob\AppData\Local\Programs\Python\Python311\Lib\site-packages\shap\explainers\_tree.py", line 26, in <module>
+    from .. import _cext
+AttributeError: _ARRAY_API not found
+WARNING:root:econml could not be loaded due to: `np.obj2sctype` was removed in the NumPy 2.0 release. Use `np.dtype(obj).type` instead.. Causal estimation will fallback to standard methods if possible.
+INFO:     Started server process [14988]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+WARNING:dowhy.causal_model:Causal Graph not provided. DoWhy will construct a graph based on data inputs.
+WARNING:dowhy.causal_model:There are an additional 2 variables in the dataset that are not in the graph. Variable names are: '['includes_few_shot', 'prompt']'
+omni_normtest is not valid with less than 8 observations; 4 samples were given.
+divide by zero encountered in scalar divide
+ERROR:src.observability.causal_engine:Error estimating causal effects: 0. Returning mock estimate.
+INFO:     127.0.0.1:64014 - "POST /causal-optimize HTTP/1.1" 200 OK
