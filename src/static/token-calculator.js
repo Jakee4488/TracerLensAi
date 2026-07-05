@@ -119,54 +119,41 @@ document.addEventListener("DOMContentLoaded", () => {
         scrollToBottom();
 
         try {
-            // 1. Fetch Trace
-            const traceResponse = await fetch("/inquire-traced", {
+            // Fetch unified Analysis Report
+            const analysisResponse = await fetch("/analyze-prompt", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id: "demo_user", prompt: text })
+                body: JSON.stringify({ prompt: text })
             });
-            const traceData = await traceResponse.json();
-            const trace = traceData.trace || [];
+            const report = await analysisResponse.json();
             
-            // 2. Fetch Optimisation
-            const optResponse = await fetch("/optimize-workflow", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    original_prompt: text,
-                    trace: trace,
-                    run_prompt_analysis: true,
-                }),
-            });
-            const optData = await optResponse.json();
-
-            // 3. Fetch Causal
-            let causalData = null;
-            try {
-                const causalPayload = {
-                    treatment: "includes_search_tool",
-                    outcome: "total_token_cost",
-                    traces: [
-                        { prompt: "Calculate 2+2", total_token_cost: 100 },
-                        { prompt: "search weather in London", total_token_cost: 300 },
-                        { prompt: "search complex aggregate data", total_token_cost: 500 },
-                        { prompt: "translate hello to french", total_token_cost: 150 },
-                        { prompt: "search latest news on AI", total_token_cost: 400 },
-                        { prompt: "tell me a joke", total_token_cost: 120 },
-                        { prompt: "search stock prices", total_token_cost: 350 },
-                        { prompt: "write a poem", total_token_cost: 200 },
-                        { prompt: text, total_token_cost: optData.projection?.estimated_total_tokens || 200 }
-                    ]
-                };
-                const causalResp = await fetch("/causal-optimize", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(causalPayload),
-                });
-                if (causalResp.ok) {
-                    causalData = await causalResp.json();
+            // Map new API structure back to what the UI expects
+            const trace = report.synthetic_trace || [];
+            
+            // Reconstruct optData for charts/html rendering compatibility
+            const optData = {
+                prompt_analysis: {
+                    efficiency_score: report.observability_metrics?.efficiency_ratio 
+                        ? Math.round(report.observability_metrics.efficiency_ratio * 100) 
+                        : 0,
+                    optimization_tips: [report.causal_analysis?.recommendation || ""],
+                    optimized_prompt: report.optimized_prompt
+                },
+                projection: {
+                    estimated_total_tokens: report.token_prediction?.estimated_total_tokens || 0,
+                    cost_multiplier: report.token_prediction?.cost_multiplier || 1.0,
+                    risk_level: report.inference?.risk_level || "low",
+                    token_velocity: Math.round(report.observability_metrics?.total_tokens_used / (report.observability_metrics?.total_latency_ms / 1000 || 1)) + " tokens/sec",
+                    latency_bottleneck: report.observability_metrics?.bottleneck || "none"
                 }
-            } catch (e) { console.warn(e); }
+            };
+
+            const causalData = {
+                treatment_name: report.causal_analysis?.treatment || "-",
+                outcome_name: report.causal_analysis?.outcome || "-",
+                estimated_effect: report.causal_analysis?.average_treatment_effect || 0,
+                recommendation: report.causal_analysis?.recommendation || ""
+            };
 
             // Hide loading, show results
             document.getElementById(loadingId).remove();

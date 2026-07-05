@@ -23,6 +23,8 @@
 
 set -euo pipefail
 
+# Ensure local helm binary is in PATH
+export PATH="$PATH:$HOME/.local/bin"
 # ── Colour helpers ────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
@@ -37,10 +39,12 @@ step()    { echo -e "\n${BOLD}${CYAN}══ $* ${RESET}"; }
 RUN_PUSH=true
 RUN_DEPLOY=true
 DRY_RUN=false
+WITH_CAUSAL_MLOPS=false
 
 for arg in "$@"; do
   case $arg in
     --dry-run)   DRY_RUN=true ;;
+    --with-causal-mlops) WITH_CAUSAL_MLOPS=true ;;
     --no-push)   RUN_PUSH=false; RUN_DEPLOY=false ;;
     --no-deploy) RUN_DEPLOY=false ;;
     --help|-h)
@@ -269,7 +273,7 @@ if ! $RUN_PUSH; then
   warn "Push skipped via --no-push flag."
 else
   info "Configuring Docker authentication for ${AR_REGISTRY}..."
-  gcloud auth configure-docker "${AR_REGISTRY}" --quiet
+  gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${AR_REGISTRY}
 
   info "Pushing ${FULL_IMAGE}..."
   docker push "${FULL_IMAGE}"
@@ -281,55 +285,80 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 4 — Deploy to GKE via Helm
+# STEP 4 — Deploy TracerLensAi API to Cloud Run
 # ─────────────────────────────────────────────────────────────────────────────
-step "4 │ Deploying to GKE with Helm"
+step "4 │ Deploying TracerLensAi API to Cloud Run"
 
 if ! $RUN_DEPLOY; then
   warn "Deploy skipped (--no-deploy or --no-push flag set)."
 else
-  # Get GKE credentials
-  info "Fetching GKE credentials for cluster: ${GKE_CLUSTER_NAME}..."
-  gcloud container clusters get-credentials "${GKE_CLUSTER_NAME}" \
-    --zone "${GKE_CLUSTER_ZONE}" \
-    --project "${GOOGLE_CLOUD_PROJECT}"
+  info "Deploying image ${FULL_IMAGE} to Cloud Run service 'tracerlens-api-v2'..."
 
-  success "kubectl context set to ${GKE_CLUSTER_NAME}."
+  gcloud run deploy tracerlens-api-v2 \
+    --image "${FULL_IMAGE}" \
+    --region "${GOOGLE_CLOUD_REGION}" \
+    --project "${GOOGLE_CLOUD_PROJECT}" \
+    --allow-unauthenticated
 
-  # Helm upgrade / install
-  info "Running helm upgrade --install..."
-  helm upgrade --install "${HELM_RELEASE_NAME}" deploy/helm/ \
-    --namespace "${K8S_NAMESPACE}" \
-    --create-namespace \
-    --set image.repository="${IMAGE_REPO}" \
-    --set image.tag="${IMAGE_TAG}" \
-    --wait \
-    --timeout 5m
+  success "Cloud Run deployment complete!"
+  
+  API_URL=$(gcloud run services describe tracerlens-api-v2 --platform managed --region "${GOOGLE_CLOUD_REGION}" --project "${GOOGLE_CLOUD_PROJECT}" --format 'value(status.url)')
+  info "TracerLensAi API is live at: ${API_URL}"
+fi
 
-  success "Helm release '${HELM_RELEASE_NAME}' deployed."
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # STEP 5 — Verify rollout
-  # ─────────────────────────────────────────────────────────────────────────
-  step "5 │ Verifying rollout"
-
-  DEPLOYMENT_NAME="${HELM_RELEASE_NAME}"
-  info "Waiting for deployment '${DEPLOYMENT_NAME}' to roll out..."
-
-  if kubectl rollout status deployment/"${DEPLOYMENT_NAME}" \
-      --namespace "${K8S_NAMESPACE}" \
-      --timeout=120s; then
-    success "Deployment rolled out successfully."
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 6 — Deploy Causal MLOps Services
+# ─────────────────────────────────────────────────────────────────────────────
+if $WITH_CAUSAL_MLOPS; then
+  step "6 │ Deploying Causal MLOps Infrastructure"
+  if $DRY_RUN; then
+    info "Would apply Terraform and deploy Causal Cloud Functions & Cloud Run API."
   else
-    error "Rollout did not complete within timeout."
-    error "Check pod status: kubectl get pods -n ${K8S_NAMESPACE}"
-    exit 1
-  fi
+    info "Starting Causal MLOps Deployment..."
+    
+    CAUSAL_AR_REPO="causal-mlops-repo"
+    CAUSAL_AR_REGISTRY="${GOOGLE_CLOUD_REGION}-docker.pkg.dev"
 
-  # Print pod status summary
-  info "Pod status:"
-  kubectl get pods --namespace "${K8S_NAMESPACE}" \
-    --selector="app.kubernetes.io/instance=${HELM_RELEASE_NAME}"
+    info "Applying Terraform Infrastructure..."
+    (cd terraform && terraform init && terraform apply -auto-approve -var="project_id=${GOOGLE_CLOUD_PROJECT}" -var="region=${GOOGLE_CLOUD_REGION}")
+
+    info "Building and pushing Docker containers..."
+    gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${CAUSAL_AR_REGISTRY}
+
+    VERTEX_IMAGE="${CAUSAL_AR_REGISTRY}/${GOOGLE_CLOUD_PROJECT}/${CAUSAL_AR_REPO}/causal-components:latest"
+    API_IMAGE="${CAUSAL_AR_REGISTRY}/${GOOGLE_CLOUD_PROJECT}/${CAUSAL_AR_REPO}/calculator-api:latest"
+
+    info "Building Vertex AI Components..."
+    docker build -t ${VERTEX_IMAGE} src/causal_mlops/causal_engine/components/
+    if $RUN_PUSH; then docker push ${VERTEX_IMAGE}; fi
+
+    info "Building Cloud Run Calculator API..."
+    docker build -t ${API_IMAGE} src/causal_mlops/calculator_api/
+    if $RUN_PUSH; then docker push ${API_IMAGE}; fi
+
+    info "Deploying Data Ingestion Cloud Function..."
+    gcloud functions deploy causal-data-ingestion \
+      --gen2 \
+      --runtime python310 \
+      --region ${GOOGLE_CLOUD_REGION} \
+      --source src/causal_mlops/data_ingestion \
+      --entry-point ingest_synthetic_traces \
+      --trigger-http \
+      --allow-unauthenticated \
+      --project ${GOOGLE_CLOUD_PROJECT}
+
+    info "Deploying Token Calculator API to Cloud Run..."
+    gcloud run deploy causal-calculator-api \
+      --image ${API_IMAGE} \
+      --region ${GOOGLE_CLOUD_REGION} \
+      --allow-unauthenticated \
+      --set-env-vars="GCS_BUCKET_NAME=tracerlens-causal-artifacts-${GOOGLE_CLOUD_PROJECT}" \
+      --project ${GOOGLE_CLOUD_PROJECT}
+
+    API_URL=$(gcloud run services describe causal-calculator-api --platform managed --region ${GOOGLE_CLOUD_REGION} --project ${GOOGLE_CLOUD_PROJECT} --format 'value(status.url)')
+    success "Causal MLOps Calculator API is live at: ${API_URL}"
+    info "Update your .env with: CAUSAL_CALCULATOR_API_URL=${API_URL}"
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
