@@ -12,6 +12,8 @@ from src.agent_engine.orchestrator import AgentOrchestrator
 from src.observability.optimization_engine import evaluate_workflow
 from src.observability.prompt_analysis import analyze_prompt
 from src.observability.workflow_optimizer import optimize_workflow
+from src.observability.causal_engine import CausalOptimizer
+from src.observability.graph_manager import GraphitiContextBuilder
 
 app = FastAPI(title="TracerLensAi: AI Agentic Workflow Evaluator")
 logger = setup_logger()
@@ -82,6 +84,19 @@ class WorkflowOptimizeRequest(BaseModel):
     run_prompt_analysis: bool = True
 
 
+class CausalOptimizeRequest(BaseModel):
+    treatment: str
+    outcome: str
+    traces: List[Dict[str, Any]]
+
+
+class CausalOptimizeResponse(BaseModel):
+    estimated_effect: float
+    treatment_name: str
+    outcome_name: str
+    recommendation: str
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     return FileResponse("src/static/index.html")
@@ -100,20 +115,13 @@ async def analyze_prompt_endpoint(request: PromptAnalysisRequest):
 
 @app.post("/optimize-workflow")
 async def optimize_workflow_endpoint(request: WorkflowOptimizeRequest):
-    if not request.original_prompt.strip():
-        raise HTTPException(status_code=422, detail="Original prompt cannot be empty")
     if not request.trace:
         raise HTTPException(status_code=422, detail="Trace cannot be empty")
-
-    prompt_analysis_result = None
-    if request.run_prompt_analysis:
-        prompt_analysis_result = analyze_prompt(request.original_prompt)
-
     return optimize_workflow(
         original_prompt=request.original_prompt,
         trace=request.trace,
         expected_loops=request.expected_loops,
-        prompt_analysis=prompt_analysis_result,
+        run_prompt_analysis=request.run_prompt_analysis
     )
 
 @app.post("/inquire-traced", response_model=InquiryResponse)
@@ -157,6 +165,45 @@ async def evaluate_trace(request: EvaluateRequest):
     except Exception as e:
         logger.error(f"Error evaluating trace: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/causal-optimize", response_model=CausalOptimizeResponse)
+async def causal_optimize_endpoint(request: CausalOptimizeRequest):
+    if not request.traces:
+        raise HTTPException(status_code=422, detail="Traces cannot be empty")
+
+    try:
+        # 1. Use Graphiti Context Builder to enrich traces
+        graph_builder = GraphitiContextBuilder()
+        enriched_traces = []
+        for trace in request.traces:
+            features = graph_builder.extract_graph_features(trace)
+            # Merge raw trace with graph features
+            enriched_trace = {**trace, **features}
+            enriched_traces.append(enriched_trace)
+
+        # 2. Run DoWhy + EconML Causal Engine
+        optimizer = CausalOptimizer()
+
+        # We assume Graphiti extraction provides these common causes
+        common_causes = ["query_complexity", "system_prompt_size"]
+
+        optimizer.build_causal_model(
+            trace_data=enriched_traces,
+            treatment=request.treatment,
+            outcome=request.outcome,
+            common_causes=common_causes
+        )
+
+        effect = optimizer.estimate_treatment_effects()
+        return CausalOptimizeResponse(**effect)
+
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error during causal optimization: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error during causal estimation")
+
 
 if __name__ == "__main__":
     import uvicorn

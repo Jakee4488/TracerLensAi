@@ -11,7 +11,14 @@ google-cloud-bigquery==3.17.2
 # Tracing and Observability
 opentelemetry-api==1.22.0
 opentelemetry-sdk==1.22.0
-opentelemetry-exporter-gcp-trace==1.5.0
+google-cloud-trace==1.11.3
+
+# Causal Engine & Graph
+dowhy
+econml
+google-cloud-spanner==3.44.0
+numpy<2.0.0
+networkx<3.0
 
 # Testing & Dev
 pytest==7.4.0
