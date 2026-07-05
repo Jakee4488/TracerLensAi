@@ -86,19 +86,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     <div class="visual-stack">
                         <div class="visual-block">
-                            <h5 style="margin-top: 0; margin-bottom: 0.5rem; color: #e3e3e3;">Causal Analysis Engine</h5>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; font-size: 0.85rem;">
-                                <div><span style="color: #9aa0a6;">Treatment</span><br><strong id="causalTreatment-${uniqueId}" style="color: #4285f4;">-</strong></div>
-                                <div><span style="color: #9aa0a6;">Outcome</span><br><strong id="causalOutcome-${uniqueId}" style="color: #f59e0b;">-</strong></div>
-                                <div style="grid-column: 1 / -1;"><span style="color: #9aa0a6;">Average Treatment Effect (ATE)</span><br><strong id="causalEffect-${uniqueId}" style="font-size: 1.1rem; color: #00ff88;">-</strong></div>
-                                <div style="grid-column: 1 / -1; margin-top: 0.5rem;">
-                                    <label style="color: #9aa0a6;">Recommendation</label>
-                                    <textarea id="causalRec-${uniqueId}" readonly rows="2" style="width: 100%; background: #222; border: 1px solid #444; color: #fff; border-radius: 4px; padding: 0.5rem; font-size: 0.85rem; resize: none; margin-top: 0.2rem;"></textarea>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="visual-block">
                             <h5 style="margin-top: 0; margin-bottom: 1rem; color: #e3e3e3;">Token Compounding per Step</h5>
                             <canvas id="${chartCanvasId}" style="width:100%; height:180px;"></canvas>
                         </div>
@@ -140,28 +127,6 @@ document.addEventListener("DOMContentLoaded", () => {
             });
             const optData = await optResponse.json();
 
-            // 3. Fetch Causal
-            let causalData = null;
-            try {
-                const causalPayload = {
-                    treatment: "includes_search_tool",
-                    outcome: "total_token_cost",
-                    traces: [
-                        { prompt: "Calculate 2+2", total_token_cost: 100 },
-                        { prompt: "search weather in London", total_token_cost: 300 },
-                        { prompt: "search complex aggregate data", total_token_cost: 500 },
-                        { prompt: text, total_token_cost: optData.projection?.estimated_total_tokens || 200 }
-                    ]
-                };
-                const causalResp = await fetch("/causal-optimize", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(causalPayload),
-                });
-                if (causalResp.ok) {
-                    causalData = await causalResp.json();
-                }
-            } catch (e) { console.warn(e); }
 
             // Hide loading, show results
             document.getElementById(loadingId).remove();
@@ -179,14 +144,6 @@ document.addEventListener("DOMContentLoaded", () => {
             const risk = (proj.risk_level || "low").toLowerCase();
             riskBadge.innerText = risk.charAt(0).toUpperCase() + risk.slice(1);
             riskBadge.className = "wo-risk-badge risk-" + risk;
-
-            // Populate Causal
-            if (causalData) {
-                document.getElementById(`causalTreatment-${uniqueId}`).innerText = causalData.treatment_name || "-";
-                document.getElementById(`causalOutcome-${uniqueId}`).innerText = causalData.outcome_name || "-";
-                document.getElementById(`causalEffect-${uniqueId}`).innerText = (causalData.estimated_effect || 0).toFixed(2);
-                document.getElementById(`causalRec-${uniqueId}`).value = causalData.recommendation || "";
-            }
 
             const textualAnalysis = document.getElementById(textualAnalysisId);
             if (textualAnalysis) {
