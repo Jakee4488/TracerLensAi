@@ -10,16 +10,16 @@ def main():
 
     # Load dataset
     df = pd.read_csv(args.dataset)
-    
+
     # Select columns for causal discovery
     # Order matters: prompt_size, tool_usage_count, loops_count, total_tokens
     columns = ["prompt_size", "tool_usage_count", "loops_count", "total_tokens"]
     data = df[columns].to_numpy()
-    
+
     # Run PC algorithm
     print("Running PC algorithm for causal discovery...")
     cg = pc(data)
-    
+
     # Save the output DAG to the text file
     print(f"Saving DAG to {args.output}")
     with open(args.output, "w") as f:
@@ -28,6 +28,7 @@ def main():
         f.write(str(cg.G.graph))
         f.write("\n---\n")
         f.write(",".join(columns))
+
 
 if __name__ == "__main__":
     main()

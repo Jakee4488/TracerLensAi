@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 # Stage 2: Runtime
 FROM python:3.11-slim
 
+# Install system dependencies if required by causal-learn/dowhy (e.g., graphviz)
+# Need to run as root before switching user
+RUN apt-get update && apt-get install -y graphviz && rm -rf /var/lib/apt/lists/*
+
 # Create a non-root user
 RUN groupadd -r tracerlensaiuser && useradd -r -g tracerlensaiuser tracerlensaiuser
 
@@ -21,6 +25,7 @@ WORKDIR /app
 # Copy installed dependencies from builder
 COPY --chown=tracerlensaiuser:tracerlensaiuser --from=builder /root/.local /home/tracerlensaiuser/.local
 ENV PATH=/home/tracerlensaiuser/.local/bin:$PATH
+ENV PYTHONPATH="/app:${PYTHONPATH:-}"
 
 # Copy source code
 COPY src/ /app/src/

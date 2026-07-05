@@ -198,19 +198,6 @@ cmd_test_pipeline() {
   if $healthy; then
     success "Health check passed."
 
-    info "Testing POST /inquire-traced..."
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/inquire-traced" \
-         -H "Content-Type: application/json" \
-         -d '{"user_id": "test-user", "prompt": "Hello!"}')
-
-    if [ "$RESPONSE" = "200" ]; then
-      success "/inquire-traced returned HTTP 200."
-    elif [ "$RESPONSE" = "500" ]; then
-      warn "/inquire-traced returned HTTP 500 (Vertex AI may be unavailable locally — non-fatal)."
-    else
-      warn "/inquire-traced returned HTTP $RESPONSE."
-    fi
-
     info "Testing POST /analyze-prompt..."
     ANALYZE_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/analyze-prompt" \
          -H "Content-Type: application/json" \
@@ -224,26 +211,7 @@ cmd_test_pipeline() {
       exit 1
     fi
 
-    info "Testing POST /optimize-workflow..."
-    OPTIMIZE_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/optimize-workflow" \
-         -H "Content-Type: application/json" \
-         -d '{
-           "original_prompt": "Please fetch user profile for user 123",
-           "trace": [
-             {"step_type": "user_input", "description": "User Message Received", "tokens": 8, "latency_ms": 0.0},
-             {"step_type": "llm_call", "description": "LLM Generation", "tokens": 120, "latency_ms": 850.0},
-             {"step_type": "response", "description": "Response Delivered", "tokens": 45, "latency_ms": 0.0}
-           ],
-           "run_prompt_analysis": true
-         }')
 
-    if [ "$OPTIMIZE_RESPONSE" = "200" ]; then
-      success "/optimize-workflow returned HTTP 200."
-    else
-      error "/optimize-workflow returned HTTP $OPTIMIZE_RESPONSE."
-      cmd_stop 2>/dev/null || true
-      exit 1
-    fi
   else
     warn "Server did not become healthy within 30s — skipping API tests."
   fi

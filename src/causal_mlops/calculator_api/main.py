@@ -19,20 +19,20 @@ def load_weights_from_gcs():
     """Loads the latest causal coefficients from GCS."""
     bucket_name = os.environ.get("GCS_BUCKET_NAME")
     blob_name = os.environ.get("GCS_BLOB_NAME", "causal_coefficients.json")
-    
+
     if not bucket_name:
         logging.warning("GCS_BUCKET_NAME not set. Using default weights.")
         return
-        
+
     try:
         client = storage.Client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
-        
+
         if blob.exists():
             data = blob.download_as_text()
             weights = json.loads(data)
-            global causal_weights
+
             causal_weights.update(weights)
             logging.info(f"Successfully loaded causal weights: {causal_weights}")
         else:
@@ -63,7 +63,7 @@ async def predict_tokens(request: PredictionRequest):
             request.expected_tool_usage * causal_weights["tool_usage_cost"] +
             request.expected_loops * causal_weights["loop_cost"]
         )
-        
+
         return PredictionResponse(
             predicted_tokens=int(predicted),
             weights_used=causal_weights

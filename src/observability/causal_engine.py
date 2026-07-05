@@ -29,6 +29,7 @@ class CausalOptimizer:
     Core engine for identifying the causal relationships between agentic workflow steps
     and outcomes (like token cost or success rate).
     """
+
     def __init__(self):
         self.model = None
         self.estimate = None

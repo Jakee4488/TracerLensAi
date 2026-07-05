@@ -197,7 +197,7 @@ if $DRY_RUN; then
   echo ""
   info "The following actions WOULD be performed:"
   echo ""
-  echo -e "  ${BOLD}1.${RESET} docker build --file deploy/Dockerfile --tag ${FULL_IMAGE} ."
+  echo -e "  ${BOLD}1.${RESET} docker build --file Dockerfile --tag ${FULL_IMAGE} ."
   if $RUN_PUSH; then
     echo -e "  ${BOLD}2.${RESET} gcloud auth configure-docker ${AR_REGISTRY}"
     echo -e "  ${BOLD}3.${RESET} docker push ${FULL_IMAGE}"
@@ -254,7 +254,7 @@ info "Build root : . (project root)"
 info "Image      : ${FULL_IMAGE}"
 
 docker build \
-  --file deploy/Dockerfile \
+  --file Dockerfile \
   --tag "${FULL_IMAGE}" \
   --tag "${LATEST_IMAGE}" \
   --label "git-sha=${GIT_SHA}" \
@@ -329,23 +329,25 @@ if $WITH_CAUSAL_MLOPS; then
     API_IMAGE="${CAUSAL_AR_REGISTRY}/${GOOGLE_CLOUD_PROJECT}/${CAUSAL_AR_REPO}/calculator-api:latest"
 
     info "Building Vertex AI Components..."
-    docker build -t ${VERTEX_IMAGE} src/causal_mlops/causal_engine/components/
+    docker build -t ${VERTEX_IMAGE} .
     if $RUN_PUSH; then docker push ${VERTEX_IMAGE}; fi
 
     info "Building Cloud Run Calculator API..."
-    docker build -t ${API_IMAGE} src/causal_mlops/calculator_api/
+    docker build -t ${API_IMAGE} .
     if $RUN_PUSH; then docker push ${API_IMAGE}; fi
 
     info "Deploying Data Ingestion Cloud Function..."
+    cp requirements.txt src/causal_mlops/data_ingestion/requirements.txt
     gcloud functions deploy causal-data-ingestion \
       --gen2 \
-      --runtime python310 \
+      --runtime python311 \
       --region ${GOOGLE_CLOUD_REGION} \
       --source src/causal_mlops/data_ingestion \
       --entry-point ingest_synthetic_traces \
       --trigger-http \
       --allow-unauthenticated \
       --project ${GOOGLE_CLOUD_PROJECT}
+    rm src/causal_mlops/data_ingestion/requirements.txt
 
     info "Deploying Token Calculator API to Cloud Run..."
     gcloud run deploy causal-calculator-api \

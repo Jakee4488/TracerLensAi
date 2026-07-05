@@ -1,9 +1,7 @@
-import math
-import uuid
 from typing import List, Dict, Any
 from src.ai_gateway.tokenizer_helper import _heuristic_token_count
 from src.analysis_engine.models import (
-    PromptFeatures, WorkflowInference, TokenPrediction, 
+    PromptFeatures, WorkflowInference, TokenPrediction,
     ExecutionStep, AnalysisReport
 )
 
@@ -13,13 +11,13 @@ class PromptFeatureExtractor:
         length = len(prompt)
         # Naive complexity heuristic based on length and punctuation
         complexity = min(1.0, (length / 500) + (prompt.count("?") * 0.1))
-        
+
         intent = "information_retrieval"
         if "calculate" in prompt.lower() or "+" in prompt:
             intent = "calculation"
         elif "cancel" in prompt.lower() or "refund" in prompt.lower():
             intent = "support_escalation"
-            
+
         return PromptFeatures(
             raw_prompt=prompt,
             length_chars=length,
@@ -33,13 +31,13 @@ class WorkflowInferenceEngine:
         tools = 1 if features.complexity_score > 0.3 else 0
         if features.intent == "calculation":
             tools += 1
-            
+
         loops = 2 if tools > 0 else 1
-        
+
         risk = "low"
         if features.intent == "support_escalation":
             risk = "high"
-            
+
         return WorkflowInference(
             expected_tools=tools,
             expected_loops=loops,
@@ -52,12 +50,12 @@ class TokenPredictionEngine:
         base_tokens = _heuristic_token_count(features.raw_prompt)
         tool_tokens = inference.expected_tools * 150
         completion_tokens = 100 * inference.expected_loops
-        
+
         total = base_tokens + tool_tokens + completion_tokens
-        
+
         # Exponential cost compounding simulation
         compounding_factor = 1.0 + (inference.expected_loops * 0.1)
-        
+
         return TokenPrediction(
             prompt_tokens=base_tokens,
             predicted_completion_tokens=completion_tokens,
@@ -70,7 +68,7 @@ class SyntheticTraceGenerator:
     @staticmethod
     def generate(features: PromptFeatures, inference: WorkflowInference, tokens: TokenPrediction) -> List[ExecutionStep]:
         trace = []
-        
+
         trace.append(ExecutionStep(
             step_type="user_input",
             description="Prompt Received",
@@ -78,7 +76,7 @@ class SyntheticTraceGenerator:
             latency_ms=10.0,
             token_source="heuristic"
         ))
-        
+
         for i in range(inference.expected_loops):
             trace.append(ExecutionStep(
                 step_type="llm_call",
@@ -87,7 +85,7 @@ class SyntheticTraceGenerator:
                 latency_ms=850.0,
                 token_source="prediction"
             ))
-            
+
             if i < inference.expected_tools:
                 trace.append(ExecutionStep(
                     step_type="tool_execution",
@@ -96,7 +94,7 @@ class SyntheticTraceGenerator:
                     latency_ms=300.0,
                     token_source="prediction"
                 ))
-                
+
         return trace
 
 class ObservabilityEngine:
@@ -104,7 +102,7 @@ class ObservabilityEngine:
     def evaluate(trace: List[ExecutionStep]) -> Dict[str, Any]:
         total_latency = sum(s.latency_ms for s in trace)
         total_tokens = sum(s.tokens for s in trace)
-        
+
         return {
             "total_latency_ms": total_latency,
             "total_tokens_used": total_tokens,
@@ -118,7 +116,7 @@ class CausalDiscoveryEngine:
         # Simulated DoWhy/EconML causal effect calculation
         # In a full implementation, this runs actual causal inference on the trace.
         tool_count = sum(1 for s in trace if s.step_type == "tool_execution")
-        
+
         return {
             "treatment": "tool_usage",
             "outcome": "latency",
@@ -135,8 +133,8 @@ class PromptOptimizationEngine:
         return prompt + "\n\n# OPTIMIZATION: Output your final answer in concise JSON format."
 
 class AnalysisPipeline:
-    @classmethod
-    def run(cls, raw_prompt: str) -> AnalysisReport:
+    @staticmethod
+    def run(raw_prompt: str) -> AnalysisReport:
         features = PromptFeatureExtractor.extract(raw_prompt)
         inference = WorkflowInferenceEngine.infer(features)
         token_pred = TokenPredictionEngine.predict(features, inference)
@@ -144,7 +142,7 @@ class AnalysisPipeline:
         obs_metrics = ObservabilityEngine.evaluate(trace)
         causal_data = CausalDiscoveryEngine.analyze(trace)
         opt_prompt = PromptOptimizationEngine.optimize(raw_prompt, causal_data)
-        
+
         return AnalysisReport(
             original_prompt=raw_prompt,
             features=features,

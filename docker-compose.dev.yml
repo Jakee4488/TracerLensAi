@@ -18,7 +18,7 @@ services:
   tracerlensai-app:
     build:
       context: .
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
     image: tracerlensai-dev:latest
     container_name: tracerlensai-dev
     ports:

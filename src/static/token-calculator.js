@@ -145,7 +145,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     risk_level: report.inference?.risk_level || "low",
                     token_velocity: Math.round(report.observability_metrics?.total_tokens_used / (report.observability_metrics?.total_latency_ms / 1000 || 1)) + " tokens/sec",
                     latency_bottleneck: report.observability_metrics?.bottleneck || "none"
-                }
+                },
+                compounding_chart: report.compounding_chart || []
             };
 
             const causalData = {

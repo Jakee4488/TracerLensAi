@@ -1,4 +1,3 @@
-import os
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,7 +28,7 @@ def health_check():
 async def analyze_prompt_endpoint(request: AnalyzePromptRequest):
     if not request.prompt.strip():
         raise HTTPException(status_code=422, detail="Prompt cannot be empty")
-        
+
     try:
         report = AnalysisPipeline.run(request.prompt)
         return report

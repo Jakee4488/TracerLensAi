@@ -11,19 +11,18 @@ COMPONENT_IMAGE = "us-central1-docker.pkg.dev/{{PROJECT_ID}}/causal-mlops-repo/c
 def extract_data_op(project_id: str, dataset_id: str, table_id: str) -> dsl.Dataset:
     """Extracts the latest execution traces from BigQuery."""
     from google.cloud import bigquery
-    import pandas as pd
-    
+
     client = bigquery.Client(project=project_id)
     query = f"SELECT prompt_size, tool_usage_count, loops_count, total_tokens FROM `{project_id}.{dataset_id}.{table_id}` LIMIT 10000"
-    
+
     df = client.query(query).to_dataframe()
-    
+
     # Save output dataset
     # dsl.Dataset is a file path where we can write our data
     import tempfile
     path = tempfile.mktemp(suffix=".csv")
     df.to_csv(path, index=False)
-    
+
     return path
 
 @dsl.component(
@@ -33,19 +32,18 @@ def causal_discovery_op(dataset: dsl.Input[dsl.Dataset]) -> dsl.Artifact:
     """Performs Causal Discovery using the PC algorithm (causal-learn)."""
     import subprocess
     import sys
-    import shutil
     import tempfile
 
     # Call the script that we packaged into the image
     output_dag_path = tempfile.mktemp(suffix=".txt")
-    
+
     subprocess.run([
-        sys.executable, 
-        "/app/discovery/main.py", 
-        "--dataset", dataset.path, 
+        sys.executable,
+        "/app/discovery/main.py",
+        "--dataset", dataset.path,
         "--output", output_dag_path
     ], check=True)
-    
+
     return output_dag_path
 
 @dsl.component(
@@ -57,9 +55,9 @@ def causal_inference_op(dataset: dsl.Input[dsl.Dataset], dag: dsl.Input[dsl.Arti
     import sys
 
     subprocess.run([
-        sys.executable, 
-        "/app/inference/main.py", 
-        "--dataset", dataset.path, 
+        sys.executable,
+        "/app/inference/main.py",
+        "--dataset", dataset.path,
         "--dag", dag.path,
         "--output_uri", output_json_uri
     ], check=True)
@@ -76,22 +74,23 @@ def causal_pipeline(
 ):
     # Step A
     extract_task = extract_data_op(
-        project_id=project_id, 
-        dataset_id=dataset_id, 
+        project_id=project_id,
+        dataset_id=dataset_id,
         table_id=table_id
     )
-    
+
     # Step B
     discovery_task = causal_discovery_op(
         dataset=extract_task.output
     )
-    
+
     # Step C
-    inference_task = causal_inference_op(
+    causal_inference_op(
         dataset=extract_task.output,
         dag=discovery_task.output,
         output_json_uri=output_gcs_uri
     )
+
 
 if __name__ == "__main__":
     compiler.Compiler().compile(

@@ -1,10 +1,7 @@
 import argparse
 import pandas as pd
-import dowhy
 from dowhy import CausalModel
 import json
-import ast
-import numpy as np
 from google.cloud import storage
 
 def main():
@@ -15,12 +12,10 @@ def main():
     args = parser.parse_args()
 
     df = pd.read_csv(args.dataset)
-    
-    # Read DAG columns
-    with open(args.dag, "r") as f:
-        lines = f.read().strip().split("---")
-        # Just getting columns back for logging purposes
-        columns = lines[1].strip().split(",") if len(lines) > 1 else []
+
+    # Read DAG columns (Currently unused as graph is hardcoded)
+    # with open(args.dag, "r") as f:
+    #     lines = f.read().strip().split("---")
 
     # In DoWhy, we can provide a GML graph. For this example, we construct a known simple DAG
     # based on the prompt's SCM specification, assuming PC discovered it correctly.
@@ -41,10 +36,10 @@ def main():
     """
 
     results = {}
-    
+
     # Target: total_tokens. Treatments: prompt_size, tool_usage_count, loops_count
     treatments = ["prompt_size", "tool_usage_count", "loops_count"]
-    
+
     for treatment in treatments:
         model = CausalModel(
             data=df,
@@ -52,13 +47,13 @@ def main():
             outcome="total_tokens",
             graph=causal_graph
         )
-        
+
         identified_estimand = model.identify_effect(proceed_when_unidentifiable=True)
         estimate = model.estimate_effect(
             identified_estimand,
             method_name="backdoor.linear_regression"
         )
-        
+
         results[treatment] = float(estimate.value)
         print(f"Causal Effect of {treatment} on total_tokens: {estimate.value}")
 
@@ -81,6 +76,7 @@ def main():
     else:
         with open(args.output_uri, "w") as f:
             json.dump(coefficients, f, indent=2)
+
 
 if __name__ == "__main__":
     main()

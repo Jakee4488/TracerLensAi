@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel
+from typing import List, Dict, Any
 
 class PromptFeatures(BaseModel):
     raw_prompt: str
