@@ -11,6 +11,7 @@ This project provides a robust architecture for deploying LLM-powered customer s
 *   **Agentic Graph Engine**: A customizable Python-based orchestrator that manages conversational state, parses intents, and dynamically invokes external mock tools (e.g., `fetch_user_profile`, `check_order_status`).
 *   **Business Policy Enforcement**: Strict heuristic and ML-based routing policies that instantly escalate high-severity interactions to human agents.
 *   **Enterprise Observability**: Integrated structured JSON logging for precise BigQuery ingestion, capturing token counts, latency, and costs per invocation loop.
+*   **Token Compounding Engine**: Advanced mathematical projection of token costs across sequential loops. [See the Token Calculation Docs](docs/token_calculation.md).
 *   **Keyless CI/CD & Security**: Implements GKE Workload Identity and GitHub Actions OIDC federation, entirely eliminating the need for long-lived service account JSON keys.
 *   **Dockerized Local Dev**: Hot-reloadable local Docker Compose environment matching production execution characteristics.
 

@@ -108,3 +108,9 @@ SELECT
 FROM `your_project.agent_orchestrator_logs.stdout`
 GROUP BY jsonPayload.model
 ```
+
+### Token Compounding Engine
+
+The platform features an advanced observability engine that predicts token usage costs based on sequential agent loop histories. Because context size increases sequentially in multi-turn architectures, we use an arithmetic progression formula (`N(N−1)/2`) to compute compounding costs.
+
+For a detailed explanation of the math, projection metrics, and risk analysis, please refer to the [Token Calculation and Compounding Analysis](token_calculation.md) guide.
