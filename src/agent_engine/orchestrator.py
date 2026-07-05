@@ -36,11 +36,40 @@ class AgentOrchestrator:
         trace = []
         prompt_tokens, prompt_fallback = count_tokens(prompt, client=self.fallback_manager.client)
 
+        # Pre-flight Causal Token Prediction
+        import aiohttp
+        import os
+        api_url = os.environ.get("CAUSAL_CALCULATOR_API_URL")
+        predicted_tokens = None
+        if api_url:
+            try:
+                # Heuristic estimation for tools/loops to feed the causal model
+                expected_tools = 2 if "search" in prompt.lower() or "find" in prompt.lower() else 0
+                expected_loops = 2 if expected_tools > 0 else 1
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{api_url}/predict_tokens",
+                        json={
+                            "prompt_size": prompt_tokens,
+                            "expected_tool_usage": expected_tools,
+                            "expected_loops": expected_loops
+                        },
+                        timeout=2.0
+                    ) as resp:
+                        if resp.status == 200:
+                            pred_data = await resp.json()
+                            predicted_tokens = pred_data.get("predicted_tokens")
+                            logger.info(f"Causal token prediction: {predicted_tokens} tokens")
+            except Exception as e:
+                logger.warning(f"Failed to reach Causal Calculator API: {e}")
+
         # Trace User Message
         trace.append({
             "step_type": "user_input",
             "description": "User Message Received",
             "tokens": prompt_tokens,
+            "predicted_tokens": predicted_tokens,
             "latency_ms": 0.0,
             "token_source": "heuristic" if prompt_fallback else "vertex",
             "token_fallback_used": prompt_fallback,

@@ -27,3 +27,15 @@ variable "github_repo" {
   type        = string
   default     = "my-org/enterprise-agent-support"
 }
+
+variable "causal_artifact_repo_name" {
+  description = "Artifact Registry name for Causal MLOps"
+  type        = string
+  default     = "causal-mlops-repo"
+}
+
+variable "causal_artifacts_bucket" {
+  description = "GCS bucket name for Causal MLOps artifacts"
+  type        = string
+  default     = "tracerlens-causal-artifacts"
+}

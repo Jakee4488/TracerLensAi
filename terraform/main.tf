@@ -11,10 +11,6 @@ terraform {
     }
   }
 
-  backend "gcs" {
-    bucket = "tf-state-project-a566ac8f-a95c-4b33-88a"
-    prefix = "terraform/state"
-  }
 }
 
 provider "google" {
