@@ -14,6 +14,7 @@ class VertexAIClient:
     def __init__(self, project_id: str, location: str):
         self.project_id = project_id
         self.location = location
+        self.default_model_name = "gemini-2.5-flash"
         self.models = {}
 
         if HAVE_VERTEX:
@@ -24,6 +25,27 @@ class VertexAIClient:
                 "gemini-1.5-flash-002": GenerativeModel("gemini-1.5-flash-002"),
                 "gemini-1.5-pro-002": GenerativeModel("gemini-1.5-pro-002")
             }
+
+    def count_tokens_for_model(self, text: str, model_name: str) -> int:
+        if not HAVE_VERTEX:
+            raise RuntimeError("Vertex AI SDK is not available in this environment.")
+
+        if model_name not in self.models:
+            raise ValueError(f"Model {model_name} not supported/initialized.")
+
+        model = self.models[model_name]
+        response = model.count_tokens(text)
+
+        if hasattr(response, "total_tokens"):
+            return int(response.total_tokens)
+        if hasattr(response, "totalTokenCount"):
+            return int(response.totalTokenCount)
+        if isinstance(response, dict):
+            for key in ("total_tokens", "totalTokenCount", "token_count"):
+                if key in response:
+                    return int(response[key])
+
+        return int(response)
 
     async def generate_response(
         self,

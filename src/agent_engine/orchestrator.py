@@ -4,6 +4,7 @@ import time
 from typing import Dict, Any
 
 from src.ai_gateway.fallback_manager import FallbackManager
+from src.ai_gateway.tokenizer_helper import count_tokens
 from src.agent_engine.tools import TOOL_REGISTRY
 from src.agent_engine.policies import RoutingPolicy
 
@@ -33,13 +34,16 @@ class AgentOrchestrator:
         """
         logger.info(f"Processing inquiry for user {user_id}: {prompt}")
         trace = []
+        prompt_tokens, prompt_fallback = count_tokens(prompt, client=self.fallback_manager.client)
 
         # Trace User Message
         trace.append({
             "step_type": "user_input",
             "description": "User Message Received",
-            "tokens": len(prompt.split()),  # Rough estimation for prompt tokens
-            "latency_ms": 0.0
+            "tokens": prompt_tokens,
+            "latency_ms": 0.0,
+            "token_source": "heuristic" if prompt_fallback else "vertex",
+            "token_fallback_used": prompt_fallback,
         })
 
         # Step 1: LLM Generation
@@ -52,7 +56,11 @@ class AgentOrchestrator:
             "step_type": "llm_call",
             "description": f"LLM Generation ({response.provider}: {response.model_name})",
             "tokens": response.prompt_tokens + response.completion_tokens,
-            "latency_ms": response.latency_ms
+            "latency_ms": response.latency_ms,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "token_source": "gateway",
+            "token_fallback_used": response.provider != "vertex-ai",
         })
 
         # Step 2: Tool Execution loop (simplified)
@@ -64,21 +72,36 @@ class AgentOrchestrator:
                     t_start = time.time()
                     tool_result = await TOOL_REGISTRY[func_name](**tool_call.get("args", {}))
                     t_latency = (time.time() - t_start) * 1000
+                    tool_result_text = json.dumps(tool_result)
+                    tool_tokens, tool_fallback = count_tokens(
+                        tool_result_text,
+                        client=self.fallback_manager.client,
+                    )
 
                     trace.append({
                         "step_type": "tool_call",
                         "description": f"Tool Execution: {func_name}",
-                        "tokens": len(str(tool_result).split()),  # Mock token calculation
-                        "latency_ms": t_latency
+                        "tokens": tool_tokens,
+                        "latency_ms": t_latency,
+                        "token_source": "heuristic" if tool_fallback else "vertex",
+                        "token_fallback_used": tool_fallback,
                     })
 
-                    response.content += f"\n[Tool {func_name} executed. Result: {json.dumps(tool_result)}]"
+                    response.content += (
+                        f"\n<tool_call name=\"{func_name}\">{tool_result_text}</tool_call>"
+                    )
 
+            reprompt_tokens, reprompt_fallback = count_tokens(
+                response.content,
+                client=self.fallback_manager.client,
+            )
             trace.append({
                 "step_type": "re_prompt",
                 "description": "Re-prompt with Tool Results",
-                "tokens": len(response.content.split()),  # Mock
-                "latency_ms": 0.0
+                "tokens": reprompt_tokens,
+                "latency_ms": 0.0,
+                "token_source": "heuristic" if reprompt_fallback else "vertex",
+                "token_fallback_used": reprompt_fallback,
             })
 
         # Step 3: Policy Enforcement

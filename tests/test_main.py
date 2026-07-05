@@ -19,7 +19,7 @@ def test_process_inquiry(mock_get_agent):
         "response": "Hello from mock agent",
         "escalated": False,
         "metrics": {"latency_ms": 100, "prompt_tokens": 10, "completion_tokens": 10},
-        "trace": [{"description": "Mocked Step", "latency_ms": 50, "tokens": 10, "step_type": "response"}]
+        "trace": [{"description": "Mocked Step", "latency_ms": 50, "tokens": 10, "step_type": "response", "token_source": "gateway", "token_fallback_used": False}]
     }
     mock_get_agent.return_value = mock_agent
 
@@ -36,6 +36,7 @@ def test_process_inquiry(mock_get_agent):
     assert data["response"] == "Hello from mock agent"
     assert data["escalated"] is False
     assert len(data["trace"]) == 1
+    assert data["trace"][0]["token_source"] == "gateway"
     
     # Ensure the orchestrator was called with the right parameters
     mock_agent.process_inquiry.assert_called_once_with(

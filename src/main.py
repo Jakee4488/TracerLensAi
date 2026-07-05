@@ -41,16 +41,10 @@ class InquiryRequest(BaseModel):
     user_id: str
     prompt: str
 
-class DecisionStep(BaseModel):
-    step_type: str
-    description: str
-    tokens: int
-    latency_ms: float
-
 class InquiryResponse(BaseModel):
     response: str
     escalated: bool
-    trace: List[DecisionStep]
+    trace: List[Dict[str, Any]]
     metrics: Dict[str, Any]
 
 class EvaluateRequest(BaseModel):
