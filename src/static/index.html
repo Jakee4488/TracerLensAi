@@ -19,7 +19,12 @@
                 <button class="menu-btn" id="toggle-sidebar">☰</button>
                 <span class="logo-text">TracerLensAi</span>
             </div>
-            <button class="new-chat-btn">
+            <div class="nav-links">
+                <ul>
+                <li id="nav-chat" class="active">🧮 Token Calculator</li>
+                <li id="nav-ai-agent" aria-controls="graph-panel prompt-analysis-panel">⚡ AI Agent Optimiser</li>
+            </ul></div>
+            <button class="new-chat-btn" style="margin-top: auto;">
                 <span class="plus-icon">+</span> New chat
             </button>
             <div class="history-list">
@@ -33,15 +38,34 @@
         <main class="chat-container">
             <header class="chat-header">
                 <div class="header-title">
-                    GCP Agent <span class="status-dot"></span>
+                    Token Calculator <span class="status-dot"></span>
                 </div>
-                <button
-                    class="toggle-graph-btn"
-                    id="toggle-graph"
-                    type="button"
-                    aria-controls="graph-panel prompt-analysis-panel"
-                    aria-expanded="false"
-                >Workflow Optimiser</button>
+            </header>
+
+            <div class="messages-area" id="messages-area">
+                <!-- Evaluations will be appended here -->
+                <div class="message ai">
+                    <div class="avatar ai-avatar"></div>
+                    <div class="content">
+                        <p>Hi, I am TracerLensAi's Token Calculator. Enter a prompt below to evaluate its expected token usage across an agentic workflow trace.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-pill">
+                    <button class="attach-btn">+</button>
+                    <textarea id="chat-input" placeholder="Enter prompt to calculate expected token usage..." rows="1"></textarea>
+                    <button class="send-btn" id="send-btn">➔</button>
+                </div>
+                <div class="disclaimer dashboard-disclaimer">Token calculations are simulated dry-run predictions and may differ from live model usage.</div>
+            </div>
+        </main>
+
+        <!-- Standalone Prompt Optimiser Area -->
+        <main class="prompt-container" id="prompt-container" style="display: none;">
+            <header class="chat-header">
+                <div class="header-title">Prompt Optimiser Engine</div>
             </header>
 
             <section class="prompt-analysis-panel" id="prompt-analysis-panel" aria-labelledby="prompt-analysis-title">
@@ -92,155 +116,136 @@
                     </div>
                 </div>
             </section>
-
-            <div class="messages-area" id="messages-area">
-                <!-- Messages will be appended here -->
-                <div class="message ai">
-                    <div class="avatar ai-avatar"></div>
-                    <div class="content">
-                        <p>Hi, I am TracerLensAi, your AI Observability and Workflow Optimization Engine. How can I help you today?</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="input-area">
-                <div class="input-pill">
-                    <button class="attach-btn">+</button>
-                    <textarea id="chat-input" placeholder="Ask anything" rows="1"></textarea>
-                    <button class="send-btn" id="send-btn">➔</button>
-                </div>
-                <div class="disclaimer">TracerLensAi may display inaccurate info, so double-check its responses.</div>
-            </div>
         </main>
 
-        <!-- Workflow Optimiser Panel -->
-        <aside class="graph-panel" id="graph-panel">
-            <div class="graph-header">
-                <h3>Workflow Optimiser</h3>
-                <button class="close-btn" id="close-graph">✕</button>
-            </div>
 
-            <div id="node-tooltip" class="node-tooltip" style="display: none;"></div>
 
-            <div class="wo-layout-container">
-                <div class="wo-layout-left">
-                    <section class="workflow-chat-panel" id="workflow-chat-panel">
-                <div class="workflow-chat-header">
-                    <h4>Workflow Trace Chat</h4>
-                    <span id="workflow-trace-status">No trace yet</span>
-                </div>
-                <div class="workflow-messages-area" id="workflow-messages-area">
-                    <div class="workflow-empty-state">Send a workflow prompt to generate a trace for optimisation.</div>
-                </div>
-                <div class="workflow-input-row">
-                    <textarea id="workflow-chat-input" rows="2" placeholder="Describe the agentic workflow to simulate"></textarea>
-                    <button type="button" id="workflow-send-btn">Send</button>
-                </div>
-            </section>
-                </div>
-                <div class="wo-layout-right">
-            <div class="token-usage-panel">
-                <h4>Session Token Usage</h4>
-                <div class="token-row">
-                    <span>Prompt Tokens</span>
-                    <span id="prompt-tokens-total">0</span>
-                </div>
-                <div class="token-row">
-                    <span>Completion Tokens</span>
-                    <span id="completion-tokens-total">0</span>
-                </div>
-                <div class="token-row total">
-                    <span>Total Tokens</span>
-                    <span id="total-tokens">0</span>
+        <!-- AI Agent Optimiser Panel -->
+        <main id="workflow-chat-panel" class="prompt-container" style="display: none;">
+            <div class="prompt-analysis-header">
+                <div>
+                    <h1>AI Agent Workflow Optimiser</h1>
+                    <p>End-to-end trace evaluation, prompt streamlining, and deep architectural analysis.</p>
                 </div>
             </div>
 
-            <button class="evaluate-btn" id="optimise-btn">⚡ Optimise Workflow</button>
+            <form class="prompt-analysis-form" id="ai-agent-form">
+                <label for="workflow-chat-input">Prompt or Task Description</label>
+                <textarea id="workflow-chat-input" rows="3" placeholder="Enter a task to streamline, trace, and optimise..."></textarea>
+                <button type="submit" id="workflow-send-btn" class="primary-btn">Trace & Optimise</button>
+            </form>
 
-            <!-- Workflow Optimiser Results -->
-            <div class="wo-results" id="wo-results" style="display: none; opacity: 0;">
+            <div class="analysis-results" id="wo-results" style="display: none;">
+                
+                <div class="wo-two-column-grid" style="margin-top: 0;">
+                    <!-- Baseline Metrics -->
+                    <div class="wo-section glass-panel">
+                        <h4>Original Baseline Metrics</h4>
+                        <div class="metrics-grid">
+                            <div class="metric-tile glass-tile">
+                                <span class="metric-label">Base Cost</span>
+                                <strong id="ai-base-cost" class="metric-value">-</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Streamlined Prompt -->
+                    <div class="wo-section glass-panel">
+                        <div class="flex-header">
+                            <h4>Streamlined Prompt</h4>
+                            <span class="score-label">Score: <strong id="ai-opt-score" class="highlight-success">-</strong></span>
+                        </div>
+                        <textarea id="ai-opt-prompt" readonly rows="4" class="modern-textarea"></textarea>
+                    </div>
+                </div>
 
                 <!-- Projection Summary -->
-                <div class="wo-projection-card">
+                <div class="wo-projection-card glass-panel" style="margin-top: 1.25rem;">
                     <h4>Token Projection</h4>
                     <div class="wo-formula-row">
                         <code class="wo-formula" id="wo-formula"></code>
                     </div>
-                    <div class="wo-stats-grid">
-                        <div class="wo-stat">
-                            <span>Est. Total</span>
-                            <strong id="wo-est-total">-</strong>
+                    <div class="metrics-grid">
+                        <div class="metric-tile glass-tile">
+                            <span class="metric-label">Est. Total</span>
+                            <strong id="wo-est-total" class="metric-value">-</strong>
                         </div>
-                        <div class="wo-stat">
-                            <span>Cost Mult.</span>
-                            <strong id="wo-cost-mult">-</strong>
+                        <div class="metric-tile glass-tile">
+                            <span class="metric-label">Cost Mult.</span>
+                            <strong id="wo-cost-mult" class="metric-value highlight-warning">-</strong>
                         </div>
-                        <div class="wo-stat">
-                            <span>History</span>
-                            <strong id="wo-comp-hist">-</strong>
+                        <div class="metric-tile glass-tile">
+                            <span class="metric-label">History</span>
+                            <strong id="wo-comp-hist" class="metric-value highlight-purple">-</strong>
                         </div>
-                        <div class="wo-stat">
-                            <span>Risk</span>
-                            <strong><span class="wo-risk-badge" id="wo-risk-badge">-</span></strong>
+                        <div class="metric-tile glass-tile">
+                            <span class="metric-label">Risk</span>
+                            <strong><span class="wo-risk-badge badge-base" id="wo-risk-badge">-</span></strong>
                         </div>
                     </div>
                 </div>
 
-                <!-- Assumptions -->
-                <div class="wo-assumptions">
-                    <h4>Assumptions</h4>
-                    <table class="wo-assumptions-table">
-                        <tr><td>Expected Loops (N)</td><td id="wo-loops">-</td></tr>
-                        <tr><td>Base Prompt (P)</td><td id="wo-base-p">-</td></tr>
-                        <tr><td>Avg Model Output (O<sub>avg</sub>)</td><td id="wo-avg-o">-</td></tr>
-                        <tr><td>Avg Tool Output (T<sub>avg</sub>)</td><td id="wo-avg-t">-</td></tr>
-                    </table>
-                </div>
 
-                <!-- Compounding Chart -->
-                <div class="wo-chart-container">
-                    <h4>Token Compounding per Step</h4>
-                    <canvas id="wo-chart"></canvas>
-                </div>
-
-                <!-- Optimisation Tips -->
-                <div class="wo-section">
-                    <h4>Optimisation Tips</h4>
-                    <ul class="wo-tips-list" id="wo-tips-list"></ul>
-                </div>
-
-                <!-- Optimised Workflow Steps -->
-                <div class="wo-section">
-                    <h4>Optimised Workflow</h4>
-                    <ol class="wo-workflow-steps" id="wo-workflow-steps"></ol>
-                </div>
-
-                <!-- Golden Dataset Plan -->
-                <div class="wo-section">
-                    <h4>Golden Dataset Plan</h4>
-                    <ol class="wo-golden-plan" id="wo-golden-plan"></ol>
-                </div>
-
-                <!-- Piped Prompt Analysis -->
-                <div class="wo-section" id="wo-prompt-analysis" style="display: none;">
-                    <h4>Prompt Analysis</h4>
-                    <div class="wo-pa-score-row">
-                        <span>Efficiency Score</span>
-                        <strong id="wo-pa-score">-</strong>
+                <div class="wo-two-column-grid">
+                    <!-- Assumptions -->
+                    <div class="wo-assumptions glass-panel">
+                        <h4>Assumptions</h4>
+                        <table class="wo-assumptions-table modern-table">
+                            <tr><td>Expected Loops (N)</td><td id="wo-loops">-</td></tr>
+                            <tr><td>Base Prompt (P)</td><td id="wo-base-p">-</td></tr>
+                            <tr><td>Avg Model Output (O<sub>avg</sub>)</td><td id="wo-avg-o">-</td></tr>
+                            <tr class="no-border"><td>Avg Tool Output (T<sub>avg</sub>)</td><td id="wo-avg-t">-</td></tr>
+                        </table>
                     </div>
-                    <label>Optimised Prompt</label>
-                    <textarea id="wo-pa-prompt" readonly rows="4"></textarea>
+
+                    <!-- Compounding Chart -->
+                    <div class="wo-chart-container glass-panel">
+                        <h4>Token Compounding per Step</h4>
+                        <div class="canvas-wrapper">
+                            <canvas id="wo-chart"></canvas>
+                        </div>
+                    </div>
                 </div>
 
+                <div class="disclaimer dashboard-disclaimer">Token calculations are simulated dry-run predictions and may differ from live model usage.</div>
+
+
             </div>
-                </div>
-            </div>
-        </aside>
+        </main>
 
     </div>
 
-    <script src="/static/workflow-optimizer.js"></script>
+    <script src="/static/token-calculator.js"></script>
     <script src="/static/prompt-analysis.js"></script>
-    <script src="/static/chat.js"></script>
+    <script src="/static/workflow-optimizer.js"></script>
+    <script>
+        // App Navigation Logic
+        document.addEventListener("DOMContentLoaded", () => {
+            const navChat = document.getElementById("nav-chat");
+            const navAiAgent = document.getElementById("nav-ai-agent");
+            
+            const chatContainer = document.querySelector(".chat-container");
+            const aiAgentContainer = document.getElementById("workflow-chat-panel") || document.getElementById("ai-agent-container");
+
+            function showChat() {
+                navChat.classList.add("active");
+                navAiAgent.classList.remove("active");
+                
+                chatContainer.style.display = "flex";
+                aiAgentContainer.style.display = "none";
+            }
+
+            function showAiAgent() {
+                navAiAgent.classList.add("active");
+                navChat.classList.remove("active");
+                
+                chatContainer.style.display = "none";
+                aiAgentContainer.style.display = "block";
+            }
+
+            navChat.addEventListener("click", showChat);
+            navAiAgent.addEventListener("click", showAiAgent);
+        });
+    </script>
 </body>
 </html>
