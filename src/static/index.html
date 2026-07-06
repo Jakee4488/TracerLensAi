@@ -8,7 +8,59 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <style>
+        .top-controls {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+        }
+        .ios-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 30px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-switch .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #d1d1d6;
+            transition: .3s;
+            border-radius: 30px;
+        }
+        .toggle-switch .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .toggle-switch input:checked + .slider {
+            background-color: #0fb8a3;
+        }
+        .toggle-switch input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+    </style>
 </head>
 <body>
     <div class="app-container">
@@ -20,16 +72,15 @@
                 <span class="logo-text">TracerLensAi</span>
             </div>
             <div class="nav-links">
-                <ul>
-                <li id="nav-chat" class="active">🧮 Token Calculator</li>
-            </ul></div>
+                <div id="nav-chat" class="nav-item active">🧮 Causal Agent</div>
+            </div>
             <button class="new-chat-btn" style="margin-top: auto;">
                 <span class="plus-icon">+</span> New chat
             </button>
             <div class="history-list">
-                <div class="history-item">Recent workflows</div>
-                <div class="history-item">Escalation test #42</div>
-                <div class="history-item">Order status inquiry</div>
+                <div class="history-title" style="padding: 0.8rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">Recent workflows</div>
+                <div class="history-item clickable-history">[Placeholder Chat 1]</div>
+                <div class="history-item clickable-history">[Placeholder Chat 2]</div>
             </div>
         </aside>
 
@@ -37,7 +88,23 @@
         <main class="chat-container">
             <header class="chat-header">
                 <div class="header-title">
-                    Token Calculator <span class="status-dot"></span>
+                    Causal Agent <span class="status-dot"></span>
+                </div>
+                <div class="top-controls">
+                    <label class="ios-toggle">
+                        <span class="label-text">Dark Mode</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="dark-mode-toggle" checked>
+                            <span class="slider"></span>
+                        </div>
+                    </label>
+                    <label class="ios-toggle">
+                        <span class="label-text">Causal Reasoning</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="causal-toggle">
+                            <span class="slider"></span>
+                        </div>
+                    </label>
                 </div>
             </header>
 
@@ -46,7 +113,7 @@
                 <div class="message ai">
                     <div class="avatar ai-avatar"></div>
                     <div class="content">
-                        <p>Hi, I am TracerLensAi's Token Calculator. Enter a prompt below to evaluate its expected token usage across an agentic workflow trace.</p>
+                        <p>Hi, I am TracerLensAi's Causal Agent. Enter a prompt below to evaluate its expected causal graph across an agentic workflow trace.</p>
                     </div>
                 </div>
             </div>
@@ -54,17 +121,17 @@
             <div class="input-area">
                 <div class="input-pill">
                     <button class="attach-btn">+</button>
-                    <textarea id="chat-input" placeholder="Enter prompt to calculate expected token usage..." rows="1"></textarea>
+                    <textarea id="chat-input" placeholder="Enter prompt to evaluate causal agent workflow..." rows="1"></textarea>
                     <button class="send-btn" id="send-btn">➔</button>
                 </div>
-                <div class="disclaimer dashboard-disclaimer">Token calculations are simulated dry-run predictions and may differ from live model usage.</div>
+                <div class="disclaimer dashboard-disclaimer">Agent evaluations are simulated dry-run predictions.</div>
             </div>
         </main>
 
         <!-- Standalone Prompt Optimiser Area -->
     </div>
 
-    <script src="/static/token-calculator.js"></script>
+    <script src="/static/causal-agent.js"></script>
 
 </body>
 </html>

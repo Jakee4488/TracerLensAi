@@ -10,6 +10,22 @@
     --font-main: 'Inter', 'Google Sans', sans-serif;
 }
 
+body.light-mode {
+    --bg-dark: #f8f9fa;
+    --bg-sidebar: #ffffff;
+    --bg-input: #f1f3f4;
+    --text-primary: #202124;
+    --text-secondary: #5f6368;
+    --border: #dadce0;
+}
+
+.top-controls {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+
 * {
     box-sizing: border-box;
     margin: 0;
@@ -526,13 +542,27 @@ body.workflow-mode .close-btn {
 
 .message.user {
     align-self: flex-end;
-    background-color: rgba(255,255,255,0.05);
-    padding: 1rem 1.5rem;
-    border-radius: 24px;
+    background-color: var(--accent);
+    color: white;
+    padding: 0.8rem 1.2rem;
+    border-radius: 18px 18px 4px 18px;
+    font-size: 0.95rem;
+    max-width: 75%;
 }
 
 .message.ai {
     align-self: flex-start;
+    display: flex;
+    gap: 1rem;
+    max-width: 85%;
+}
+
+.message.ai .content {
+    background: var(--bg-sidebar);
+    border: 1px solid var(--border);
+    padding: 0.8rem 1.2rem;
+    border-radius: 18px 18px 18px 4px;
+    line-height: 1.5;
 }
 
 .ai-avatar {

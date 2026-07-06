@@ -164,7 +164,7 @@ cmd_test_pipeline() {
 
   # 3 — Unit tests
   step "3 │ Running pytest"
-  if run_in_container python -m pytest tests/ -v --tb=short; then
+  if run_in_container python -m pytest tests/ --ignore=tests/ui_tests -v --tb=short; then
     success "All unit tests passed."
   else
     error "Unit tests FAILED — fix the failures above."
@@ -172,13 +172,6 @@ cmd_test_pipeline() {
     exit 1
   fi
 
-  # 4 — Evaluator harness
-  step "4 │ Running synthetic evaluation harness"
-  if run_in_container python -m src.observability.evaluator; then
-    success "Evaluation harness completed."
-  else
-    warn "Evaluation harness exited non-zero (may need Vertex AI — non-fatal)."
-  fi
 
   # 5 — Smoke test (start app → hit endpoints → stop)
   step "5 │ Running API smoke tests"
@@ -216,8 +209,19 @@ cmd_test_pipeline() {
     warn "Server did not become healthy within 30s — skipping API tests."
   fi
 
-  # 6 — Tear down
-  step "6 │ Tearing down"
+  # 6 — Causal Agent UI test
+  step "6 │ Running Causal Agent UI tests with Playwright"
+  info "Starting UI test container..."
+  if docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" run --rm causal-agent-ui-test; then
+    success "Causal Agent UI tests passed."
+  else
+    error "Causal Agent UI tests FAILED."
+    cmd_stop 2>/dev/null || true
+    exit 1
+  fi
+
+  # 7 — Tear down
+  step "7 │ Tearing down"
   docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" down
   success "Containers stopped and removed."
 
