@@ -21,9 +21,9 @@ def test_causal_agent_chat_interaction(page: Page):
     # Click send
     page.click("#send-btn")
 
-    # Verify that a new evaluation card appears in the messages area
-    eval_cards = page.locator("#messages-area .evaluation-card")
+    # Verify that a new AI message appears in the messages area
+    ai_messages = page.locator("#messages-area .message.ai")
     
-    # Wait until there is at least 1 evaluation card
-    expect(eval_cards).to_have_count(1, timeout=10000)
+    # Wait until there are at least 2 AI messages (1 welcome + 1 response)
+    expect(ai_messages).to_have_count(2, timeout=10000)
 

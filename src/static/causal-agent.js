@@ -1,3 +1,5 @@
+let sessionTotalTokens = 0;
+
 document.addEventListener("DOMContentLoaded", () => {
     const chatInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
@@ -74,6 +76,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const causalToggle = document.getElementById("causal-toggle");
         const isCausalReasoningEnabled = causalToggle ? causalToggle.checked : false;
+        
+        const modelSelect = document.getElementById("model-select");
+        const selectedModel = modelSelect ? modelSelect.value : "gemini-1.5-flash-001";
 
         try {
             const analysisResponse = await fetch("/analyze-prompt", {
@@ -81,11 +86,21 @@ document.addEventListener("DOMContentLoaded", () => {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ 
                     prompt: text,
-                    causal_reasoning: isCausalReasoningEnabled
+                    causal_reasoning: isCausalReasoningEnabled,
+                    model_name: selectedModel
                 })
             });
             const report = await analysisResponse.json();
             
+            // Update Token Tally
+            if (report.total_token_count) {
+                sessionTotalTokens += report.total_token_count;
+                const badge = document.getElementById("token-tally-badge");
+                if (badge) {
+                    badge.innerText = `${sessionTotalTokens.toLocaleString()} tokens used`;
+                }
+            }
+
             document.getElementById(loadingId).remove();
 
             let aiContent = `<p style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${escapeHtml(report.response || "No response received.")}</p>`;
