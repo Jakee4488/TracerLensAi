@@ -98,11 +98,6 @@ document.addEventListener("DOMContentLoaded", () => {
                             </div>
                         </div>
 
-                        <div class="visual-block">
-                            <h5 style="margin-top: 0; margin-bottom: 1rem; color: #e3e3e3;">Token Compounding per Step</h5>
-                            <canvas id="${chartCanvasId}" style="width:100%; height:180px;"></canvas>
-                        </div>
-
                         <div class="visual-block trace-graph-block" style="max-height: 250px; overflow-y: auto;">
                             <h5 style="margin-top: 0; margin-bottom: 1rem; color: #e3e3e3;">Trace Graph</h5>
                             <canvas id="${graphCanvasId}" style="width:100%;"></canvas>
@@ -145,8 +140,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     risk_level: report.inference?.risk_level || "low",
                     token_velocity: Math.round(report.observability_metrics?.total_tokens_used / (report.observability_metrics?.total_latency_ms / 1000 || 1)) + " tokens/sec",
                     latency_bottleneck: report.observability_metrics?.bottleneck || "none"
-                },
-                compounding_chart: report.compounding_chart || []
+                }
             };
 
             const causalData = {
@@ -187,14 +181,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             // Render Graphs
-            const chartCanvas = document.getElementById(chartCanvasId);
-            if (chartCanvas) {
-                const rect = chartCanvas.parentElement.getBoundingClientRect();
-                chartCanvas.width = rect.width;
-                chartCanvas.height = 180;
-                renderCompoundingChart(chartCanvas, optData.compounding_chart || []);
-            }
-
             const graphCanvas = document.getElementById(graphCanvasId);
             if (graphCanvas) {
                 const rect = graphCanvas.parentElement.getBoundingClientRect();
@@ -209,8 +195,20 @@ document.addEventListener("DOMContentLoaded", () => {
             scrollToBottom();
 
         } catch (error) {
-            document.getElementById(loadingId).innerHTML = `<span style="color: #ff5252">Error calculating token usage. Try again.</span>`;
             console.error(error);
+            const loader = document.getElementById(loadingId);
+            if (loader) {
+                loader.innerHTML = `<span style="color: #ff5252">Error calculating token usage: ${error.message}</span>`;
+            } else {
+                const results = document.getElementById(resultsId);
+                if (results) {
+                    const errorDiv = document.createElement("div");
+                    errorDiv.style.color = "#ff5252";
+                    errorDiv.style.marginTop = "1rem";
+                    errorDiv.innerText = "Error rendering graph: " + error.message;
+                    results.appendChild(errorDiv);
+                }
+            }
         }
     }
 
@@ -300,70 +298,6 @@ document.addEventListener("DOMContentLoaded", () => {
         `);
 
         return parts.join("");
-    }
-
-    // ── Compounding Chart (Canvas) ──────────────────────────────────────────
-    function renderCompoundingChart(canvas, chartData) {
-        if (!chartData.length) return;
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        const padding = { top: 20, right: 20, bottom: 30, left: 45 };
-        const chartW = canvas.width - padding.left - padding.right;
-        const chartH = canvas.height - padding.top - padding.bottom;
-
-        const maxCumulative = Math.max(...chartData.map((d) => d.cumulative), 1);
-        const barWidth = Math.max(15, Math.min(40, chartW / chartData.length - 8));
-        const totalBarsWidth = chartData.length * (barWidth + 8);
-        const startX = padding.left + (chartW - totalBarsWidth) / 2;
-
-        // Y-axis labels
-        ctx.fillStyle = "#9aa0a6";
-        ctx.font = "10px Inter, sans-serif";
-        ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-        for (let i = 0; i <= 4; i++) {
-            const val = Math.round((maxCumulative / 4) * i);
-            const y = padding.top + chartH - (chartH / 4) * i;
-            ctx.fillText(val.toLocaleString(), padding.left - 8, y);
-            // Grid line
-            ctx.strokeStyle = "rgba(68, 71, 70, 0.4)";
-            ctx.lineWidth = 0.5;
-            ctx.beginPath();
-            ctx.moveTo(padding.left, y);
-            ctx.lineTo(canvas.width - padding.right, y);
-            ctx.stroke();
-        }
-
-        chartData.forEach((d, i) => {
-            const x = startX + i * (barWidth + 8);
-            const baseH = (d.input_tokens / maxCumulative) * chartH;
-            const histH = (d.history_tokens / maxCumulative) * chartH;
-            const outH = (d.output_tokens / maxCumulative) * chartH;
-            const bottomY = padding.top + chartH;
-
-            // Input tokens (base) — blue
-            ctx.fillStyle = "#4285f4";
-            ctx.beginPath();
-            ctx.roundRect(x, bottomY - baseH, barWidth, baseH, [0, 0, 4, 4]);
-            ctx.fill();
-
-            // History compounding — purple (stacked above)
-            ctx.fillStyle = "#9b72cb";
-            ctx.fillRect(x, bottomY - baseH - histH, barWidth, histH);
-
-            // Output tokens — green (stacked above)
-            ctx.fillStyle = "#00ff88";
-            ctx.beginPath();
-            ctx.roundRect(x, bottomY - baseH - histH - outH, barWidth, outH, [4, 4, 0, 0]);
-            ctx.fill();
-
-            // X-axis label
-            ctx.fillStyle = "#9aa0a6";
-            ctx.font = "9px Inter, sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText(`Step ${d.step}`, x + barWidth / 2, bottomY + 16);
-        });
     }
 
     // ── Inline Trace Graph ──────────────────────────────────────────────────

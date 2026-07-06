@@ -117,11 +117,16 @@ class CausalDiscoveryEngine:
         # In a full implementation, this runs actual causal inference on the trace.
         tool_count = sum(1 for s in trace if s.step_type == "tool_execution")
 
+        if tool_count > 0:
+            rec = f"Tool usage causally adds 150 tokens per invocation ({tool_count} detected). Consider combining tools to reduce token compounding."
+        else:
+            rec = "No tool usage detected in this trace. Token compounding is minimal."
+
         return {
             "treatment": "tool_usage",
-            "outcome": "latency",
-            "average_treatment_effect": tool_count * 250.0,
-            "recommendation": "Tool usage causally adds 250ms per invocation. Consider combining tools."
+            "outcome": "token_usage",
+            "average_treatment_effect": tool_count * 150.0,
+            "recommendation": rec
         }
 
 class PromptOptimizationEngine:
@@ -129,7 +134,7 @@ class PromptOptimizationEngine:
     def optimize(prompt: str, causal_data: Dict[str, Any]) -> str:
         # Re-write the prompt to optimize the identified causal drivers
         if causal_data["average_treatment_effect"] > 0:
-            return prompt + "\n\n# OPTIMIZATION: Please combine your tool calls into a single bulk request to reduce latency."
+            return prompt + "\n\n# OPTIMIZATION: Please combine your tool calls into a single bulk request to reduce token usage."
         return prompt + "\n\n# OPTIMIZATION: Output your final answer in concise JSON format."
 
 class AnalysisPipeline:

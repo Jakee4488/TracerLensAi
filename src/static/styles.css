@@ -513,6 +513,10 @@ body.workflow-mode .close-btn {
     width: 100%;
 }
 
+.messages-area > * {
+    flex-shrink: 0;
+}
+
 .message {
     display: flex;
     gap: 1rem;
