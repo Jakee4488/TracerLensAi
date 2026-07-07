@@ -31,7 +31,8 @@ services:
     # Mount source code for live editing (overrides the COPY in Dockerfile)
     volumes:
       - ./src:/app/src:ro
-      - ~/.config/gcloud:/home/tracerlensaiuser/.config/gcloud:ro
+      - ./data:/app/data
+      - ${APPDATA}/gcloud:/home/tracerlensaiuser/.config/gcloud:ro
 
     # Load environment from .env file (create from .env.example)
     env_file:
@@ -40,6 +41,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=development
+      - GOOGLE_APPLICATION_CREDENTIALS=/home/tracerlensaiuser/.config/gcloud/application_default_credentials.json
+      - GOOGLE_CLOUD_PROJECT=icarus-agent-26
+      - GOOGLE_CLOUD_LOCATION=europe-west2
 
     # Health check matching the production readiness probe
     healthcheck:
@@ -63,7 +67,7 @@ services:
       - ./tests:/app/tests:ro
       - ./pytest.ini:/app/pytest.ini:ro
       - ./.flake8:/app/.flake8:ro
-      - ~/.config/gcloud:/home/tracerlensaiuser/.config/gcloud:ro
+      - ${APPDATA}/gcloud:/home/tracerlensaiuser/.config/gcloud:ro
     env_file:
       - .env
     environment:

@@ -1,9 +1,11 @@
 let sessionTotalTokens = 0;
+let currentChatId = null;
 
 document.addEventListener("DOMContentLoaded", () => {
     const chatInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
     const messagesArea = document.getElementById("messages-area");
+    const historyList = document.querySelector(".history-list");
     
     // Configure marked to use highlight.js for code blocks
     if (typeof marked !== 'undefined') {
@@ -33,8 +35,91 @@ document.addEventListener("DOMContentLoaded", () => {
 
     sendBtn.addEventListener("click", sendMessage);
 
-    // Global state for canvas resizing
-    const canvasInstances = {};
+    async function loadHistoryList() {
+        try {
+            const resp = await fetch("/api/chats");
+            const chats = await resp.json();
+            
+            // Rebuild history list preserving the title
+            historyList.innerHTML = '<div class="history-title" style="padding: 0.8rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">Recent workflows</div>';
+            
+            chats.forEach(chat => {
+                const item = document.createElement("div");
+                item.className = "history-item clickable-history";
+                item.innerText = chat.title || "New Chat";
+                item.addEventListener("click", () => loadChat(chat.id));
+                historyList.appendChild(item);
+            });
+        } catch (error) {
+            console.error("Failed to load history list:", error);
+        }
+    }
+
+    async function loadChat(chatId) {
+        try {
+            const resp = await fetch(`/api/chats/${chatId}`);
+            if (!resp.ok) throw new Error("Chat not found");
+            const chatData = await resp.json();
+            
+            currentChatId = chatData.id;
+            sessionTotalTokens = chatData.total_tokens || 0;
+            
+            const badge = document.getElementById("token-tally-badge");
+            if (badge) {
+                badge.innerText = `${sessionTotalTokens.toLocaleString()} tokens used`;
+            }
+            
+            messagesArea.innerHTML = "";
+            
+            chatData.messages.forEach(msg => {
+                if (msg.role === 'user') {
+                    messagesArea.innerHTML += `
+                        <div class="message user">
+                            <p style="margin: 0;">${escapeHtml(msg.content)}</p>
+                        </div>
+                    `;
+                } else {
+                    let parsedResponse = "";
+                    if (typeof marked !== 'undefined' && msg.content) {
+                        parsedResponse = marked.parse(msg.content);
+                    } else {
+                        parsedResponse = escapeHtml(msg.content || "No response received.");
+                    }
+                    let aiContent = `<div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsedResponse}</div>`;
+
+                    if (msg.causal_steps && msg.causal_steps.length > 0) {
+                        aiContent += `
+                        <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-input); border-radius: 8px; border-left: 4px solid #9b72cb;">
+                            <h6 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 0.9rem;">🤖 Causal Reasoning Steps:</h6>
+                            <ul style="margin: 0; padding-left: 1.5rem; font-size: 0.85rem; color: var(--text-secondary);">
+                                ${msg.causal_steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}
+                            </ul>
+                        </div>`;
+                    }
+
+                    messagesArea.innerHTML += `
+                    <div class="message ai">
+                        <div class="avatar ai-avatar"></div>
+                        <div class="content">
+                            ${aiContent}
+                        </div>
+                    </div>
+                    `;
+                }
+            });
+            scrollToBottom();
+            
+            // Highlight active chat in sidebar
+            if (window.innerWidth <= 768) {
+                document.getElementById("sidebar").classList.add("collapsed");
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    // Load initial history on page load
+    loadHistoryList();
 
     async function sendMessage() {
         const text = chatInput.value.trim();
@@ -43,13 +128,26 @@ document.addEventListener("DOMContentLoaded", () => {
         // Clear input
         chatInput.value = "";
         chatInput.style.height = "auto";
+        
+        // If it's the first message of a session, create a chat ID
+        if (!currentChatId) {
+            try {
+                const initResp = await fetch("/api/chats", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: text.substring(0, 30) + (text.length > 30 ? "..." : "") })
+                });
+                const initData = await initResp.json();
+                currentChatId = initData.id;
+                // Refresh sidebar to show new chat
+                loadHistoryList();
+            } catch (err) {
+                console.error("Failed to init chat session", err);
+            }
+        }
 
         const uniqueId = Date.now();
         const loadingId = `loading-${uniqueId}`;
-        const resultsId = `results-${uniqueId}`;
-        const chartCanvasId = `chart-${uniqueId}`;
-        const graphCanvasId = `graph-${uniqueId}`;
-        const textualAnalysisId = `textualAnalysis-${uniqueId}`;
 
         // Append User Message
         const userHtml = `
@@ -78,7 +176,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const isCausalReasoningEnabled = causalToggle ? causalToggle.checked : false;
         
         const modelSelect = document.getElementById("model-select");
-        const selectedModel = modelSelect ? modelSelect.value : "gemini-1.5-flash-001";
+        const selectedModel = modelSelect ? modelSelect.value : "gemini-2.5-flash";
 
         try {
             const analysisResponse = await fetch("/analyze-prompt", {
@@ -87,7 +185,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify({ 
                     prompt: text,
                     causal_reasoning: isCausalReasoningEnabled,
-                    model_name: selectedModel
+                    model_name: selectedModel,
+                    chat_id: currentChatId
                 })
             });
             const report = await analysisResponse.json();
@@ -103,7 +202,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
             document.getElementById(loadingId).remove();
 
-            let aiContent = `<p style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${escapeHtml(report.response || "No response received.")}</p>`;
+            let parsedResponse = "";
+            if (typeof marked !== 'undefined' && report.response) {
+                parsedResponse = marked.parse(report.response);
+            } else {
+                parsedResponse = escapeHtml(report.response || "No response received.");
+            }
+            let aiContent = `<div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsedResponse}</div>`;
 
             if (report.causal_reasoning_steps) {
                 aiContent += `
@@ -145,6 +250,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     function escapeHtml(unsafe) {
+        if (typeof unsafe !== 'string') return '';
         return unsafe
              .replace(/&/g, "&amp;")
              .replace(/</g, "&lt;")
@@ -153,8 +259,6 @@ document.addEventListener("DOMContentLoaded", () => {
              .replace(/'/g, "&#039;");
     }
 
-    // ── Legacy Graph Functions Removed ──────────────────────────────────────
-
     // Sidebar Toggle
     document.getElementById("toggle-sidebar").addEventListener("click", () => {
         document.getElementById("sidebar").classList.toggle("collapsed");
@@ -162,6 +266,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // New Chat Action
     document.querySelector(".new-chat-btn").addEventListener("click", () => {
+        currentChatId = null;
+        sessionTotalTokens = 0;
+        const badge = document.getElementById("token-tally-badge");
+        if (badge) {
+            badge.innerText = `0 tokens used`;
+        }
+        
         messagesArea.innerHTML = `
             <div class="message ai">
                 <div class="avatar ai-avatar"></div>
@@ -170,20 +281,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 </div>
             </div>
         `;
-    });
-
-    // Click on sample/recent workflows
-    document.querySelectorAll(".clickable-history").forEach(item => {
-        item.addEventListener("click", () => {
-            let promptText = item.innerText;
-            if (promptText.includes("Placeholder Chat 1")) {
-                promptText = "I want to cancel my account, your service is terrible. I will sue.";
-            } else if (promptText.includes("Placeholder Chat 2")) {
-                promptText = "Hi, what is the status of my order 999?";
-            }
-            chatInput.value = promptText;
-            sendMessage();
-        });
     });
 
     // Dark Mode Toggle
