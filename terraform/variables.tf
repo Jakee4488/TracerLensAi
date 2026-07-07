@@ -1,7 +1,7 @@
 variable "project_id" {
   description = "The GCP project ID"
   type        = string
-  default     = "enterprise-agent-demo"
+  default     = "icarus-agent-26"
 }
 
 variable "region" {
@@ -25,5 +25,5 @@ variable "causal_artifacts_bucket" {
 variable "github_repo" {
   description = "GitHub repository for Workload Identity Federation (format: owner/repo)"
   type        = string
-  default     = "my-org/enterprise-agent-support"
+  default     = "Jakee4488/TracerLensAi"
 }

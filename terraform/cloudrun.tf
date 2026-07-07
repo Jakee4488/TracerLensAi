@@ -5,7 +5,7 @@ resource "google_cloud_run_service" "tracerlensai_app" {
   template {
     spec {
       containers {
-        image = "gcr.io/${var.project_id}/tracerlensai-app:latest"
+        image = "us-docker.pkg.dev/cloudrun/container/hello" # Dummy image for initial provisioning
         
         env {
           name  = "GOOGLE_CLOUD_PROJECT"
@@ -22,6 +22,12 @@ resource "google_cloud_run_service" "tracerlensai_app" {
   traffic {
     percent         = 100
     latest_revision = true
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].spec[0].containers[0].image,
+    ]
   }
 }
 
