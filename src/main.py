@@ -39,7 +39,7 @@ if "GOOGLE_CREDENTIALS_JSON" in os.environ:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
 
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "icarus-agent-26")
-region = os.getenv("GOOGLE_CLOUD_LOCATION", os.getenv("GOOGLE_CLOUD_REGION", "europe-west2"))
+region = os.getenv("GOOGLE_CLOUD_LOCATION", os.getenv("GOOGLE_CLOUD_REGION", "us-central1"))
 
 client = genai.Client(
     vertexai=True,

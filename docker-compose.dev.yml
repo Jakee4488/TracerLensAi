@@ -41,7 +41,7 @@ services:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=development
       - GOOGLE_CLOUD_PROJECT=icarus-agent-26
-      - GOOGLE_CLOUD_LOCATION=europe-west2
+      - GOOGLE_CLOUD_LOCATION=us-central1
 
     # Health check matching the production readiness probe
     healthcheck:

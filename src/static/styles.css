@@ -128,7 +128,7 @@ body.workflow-mode .close-btn {
 }
 
 .new-chat-btn:hover {
-    background-color: rgba(255,255,255,0.05);
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 .nav-links {
@@ -151,7 +151,7 @@ body.workflow-mode .close-btn {
 }
 
 .nav-item:hover {
-    background: rgba(255,255,255,0.05);
+    background: rgba(255, 255, 255, 0.05);
     color: var(--text-primary);
 }
 
@@ -172,7 +172,7 @@ body.workflow-mode .close-btn {
 }
 
 .history-item:hover {
-    background-color: rgba(255,255,255,0.05);
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 /* Main Chat */
@@ -345,7 +345,7 @@ body.workflow-mode .close-btn {
     padding-left: 1.1rem;
 }
 
-.analysis-text-content li + li {
+.analysis-text-content li+li {
     margin-top: 0.35rem;
 }
 
@@ -476,7 +476,7 @@ body.workflow-mode .close-btn {
     line-height: 1.45;
 }
 
-#optimization-tips li + li {
+#optimization-tips li+li {
     margin-top: 0.35rem;
 }
 
@@ -504,11 +504,11 @@ body.workflow-mode .close-btn {
     height: 8px;
     background-color: #00ff88;
     border-radius: 50%;
-    box-shadow: 0 0 10px rgba(0,255,136,0.5);
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
 }
 
 .toggle-graph-btn {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
     color: var(--text-primary);
     border: none;
     padding: 0.5rem 1rem;
@@ -529,7 +529,7 @@ body.workflow-mode .close-btn {
     width: 100%;
 }
 
-.messages-area > * {
+.messages-area>* {
     flex-shrink: 0;
 }
 
@@ -562,84 +562,8 @@ body.workflow-mode .close-btn {
     border: 1px solid var(--border);
     padding: 0.8rem 1.2rem;
     border-radius: 18px 18px 18px 4px;
-    line-height: 1.6;
+    line-height: 1.5;
 }
-
-/* Markdown formatting in AI messages */
-.message.ai .content h1,
-.message.ai .content h2,
-.message.ai .content h3,
-.message.ai .content h4 {
-    margin-top: 1.2rem;
-    margin-bottom: 0.6rem;
-    font-weight: 600;
-    color: var(--text-primary);
-}
-
-.message.ai .content h1 { font-size: 1.35rem; }
-.message.ai .content h2 { font-size: 1.2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
-.message.ai .content h3 { font-size: 1.1rem; }
-
-.message.ai .content p {
-    margin-bottom: 0.8rem;
-}
-
-.message.ai .content p:last-child {
-    margin-bottom: 0;
-}
-
-.message.ai .content ul,
-.message.ai .content ol {
-    margin-bottom: 1rem;
-    padding-left: 1.5rem;
-}
-
-.message.ai .content li {
-    margin-bottom: 0.4rem;
-}
-
-.message.ai .content strong {
-    font-weight: 600;
-    color: #fff;
-}
-
-body.light-mode .message.ai .content strong {
-    color: #000;
-}
-
-.message.ai .content pre {
-    background: #0b0c0d;
-    padding: 1rem;
-    border-radius: 8px;
-    overflow-x: auto;
-    margin: 1rem 0;
-    border: 1px solid var(--border);
-}
-
-body.light-mode .message.ai .content pre {
-    background: #f1f3f4;
-}
-
-.message.ai .content code {
-    font-family: 'Consolas', 'Monaco', monospace;
-    font-size: 0.9em;
-    background: rgba(255, 255, 255, 0.1);
-    padding: 0.15rem 0.35rem;
-    border-radius: 4px;
-    color: #e3e3e3;
-}
-
-body.light-mode .message.ai .content code {
-    background: rgba(0, 0, 0, 0.05);
-    color: #202124;
-}
-
-.message.ai .content pre code {
-    background: transparent;
-    padding: 0;
-    color: inherit;
-}
-
 
 .ai-avatar {
     width: 30px;
@@ -678,7 +602,7 @@ body.light-mode .message.ai .content code {
 }
 
 .attach-btn:hover {
-    background-color: rgba(255,255,255,0.05);
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 textarea {
@@ -1083,9 +1007,9 @@ canvas {
     line-height: 1.5;
 }
 
-.wo-tips-list li + li,
-.wo-workflow-steps li + li,
-.wo-golden-plan li + li {
+.wo-tips-list li+li,
+.wo-workflow-steps li+li,
+.wo-golden-plan li+li {
     margin-top: 0.3rem;
 }
 
@@ -1148,11 +1072,15 @@ canvas {
 }
 
 @keyframes bounce {
-    0%, 80%, 100% { 
+
+    0%,
+    80%,
+    100% {
         transform: scale(0);
         opacity: 0.3;
-    } 
-    40% { 
+    }
+
+    40% {
         transform: scale(1.0);
         opacity: 1;
     }
@@ -1169,7 +1097,7 @@ canvas {
     font-size: 12px;
     pointer-events: none;
     z-index: 1000;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     max-width: 250px;
     white-space: pre-wrap;
 }
@@ -1301,9 +1229,17 @@ canvas {
     font-weight: 600;
 }
 
-.highlight-warning { color: #f59e0b; }
-.highlight-purple { color: #b388ff; }
-.highlight-success { color: #00ff88; }
+.highlight-warning {
+    color: #f59e0b;
+}
+
+.highlight-purple {
+    color: #b388ff;
+}
+
+.highlight-success {
+    color: #00ff88;
+}
 
 .badge-base {
     display: inline-block;
@@ -1375,7 +1311,9 @@ canvas {
     margin-bottom: 0.75rem;
 }
 
-.flex-header h4 { margin-bottom: 0; }
+.flex-header h4 {
+    margin-bottom: 0;
+}
 
 .score-label {
     font-size: 0.85rem;
