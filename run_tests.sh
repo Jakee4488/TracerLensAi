@@ -234,6 +234,40 @@ cmd_test_pipeline() {
   echo ""
 }
 
+# ── Command: COMMIT ─────────────────────────────────────────────────────────────
+cmd_commit() {
+  local commit_msg="${1:-}"
+  if [ -z "$commit_msg" ]; then
+    error "Commit message is required. Usage: ./run_tests.sh --commit 'message'"
+    exit 1
+  fi
+  
+  info "Running test pipeline before commit..."
+  cmd_test_pipeline
+  
+  step "Git Commit Guard"
+  echo -e "${CYAN}Files changed:${RESET}"
+  git status --short
+  echo ""
+  echo -e "${CYAN}Diff stats:${RESET}"
+  git diff --stat
+  echo ""
+  
+  git add .
+  git commit -m "$commit_msg"
+  success "Changes committed."
+  
+  read -p "Push to remote repository now? [y/N] " -n 1 -r
+  echo ""
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    info "Pushing to remote..."
+    git push
+    success "Pushed to remote."
+  else
+    info "Skipped push."
+  fi
+}
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 show_help() {
   echo ""
@@ -244,6 +278,7 @@ show_help() {
   echo "  ./run_tests.sh --start       Start dev server with hot-reload"
   echo "  ./run_tests.sh --stop        Stop the running dev server"
   echo "  ./run_tests.sh --build-only  Build the Docker image only"
+  echo "  ./run_tests.sh --commit 'msg' Commit and push if tests pass"
   echo "  ./run_tests.sh --clean       Remove containers, images, and volumes"
   echo "  ./run_tests.sh --help        Show this help text"
   echo ""
@@ -267,6 +302,11 @@ main() {
       check_prerequisites
       cmd_build
       ;;
+    --commit)
+      check_prerequisites
+      cmd_commit "${2:-}"
+      shift
+      ;;
     --clean)
       cmd_clean
       ;;
@@ -286,4 +326,4 @@ main() {
   esac
 }
 
-main "${1:-}"
+main "$@"
