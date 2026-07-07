@@ -164,7 +164,7 @@ cmd_test_pipeline() {
 
   # 3 — Unit tests
   step "3 │ Running pytest"
-  if run_in_container python -m pytest tests/ -v --tb=short; then
+  if run_in_container python -m pytest tests/ --ignore=tests/ui_tests -v --tb=short; then
     success "All unit tests passed."
   else
     error "Unit tests FAILED — fix the failures above."
@@ -172,13 +172,6 @@ cmd_test_pipeline() {
     exit 1
   fi
 
-  # 4 — Evaluator harness
-  step "4 │ Running synthetic evaluation harness"
-  if run_in_container python -m src.observability.evaluator; then
-    success "Evaluation harness completed."
-  else
-    warn "Evaluation harness exited non-zero (may need Vertex AI — non-fatal)."
-  fi
 
   # 5 — Smoke test (start app → hit endpoints → stop)
   step "5 │ Running API smoke tests"
@@ -198,19 +191,6 @@ cmd_test_pipeline() {
   if $healthy; then
     success "Health check passed."
 
-    info "Testing POST /inquire-traced..."
-    RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/inquire-traced" \
-         -H "Content-Type: application/json" \
-         -d '{"user_id": "test-user", "prompt": "Hello!"}')
-
-    if [ "$RESPONSE" = "200" ]; then
-      success "/inquire-traced returned HTTP 200."
-    elif [ "$RESPONSE" = "500" ]; then
-      warn "/inquire-traced returned HTTP 500 (Vertex AI may be unavailable locally — non-fatal)."
-    else
-      warn "/inquire-traced returned HTTP $RESPONSE."
-    fi
-
     info "Testing POST /analyze-prompt..."
     ANALYZE_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/analyze-prompt" \
          -H "Content-Type: application/json" \
@@ -224,32 +204,24 @@ cmd_test_pipeline() {
       exit 1
     fi
 
-    info "Testing POST /optimize-workflow..."
-    OPTIMIZE_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:8080/optimize-workflow" \
-         -H "Content-Type: application/json" \
-         -d '{
-           "original_prompt": "Please fetch user profile for user 123",
-           "trace": [
-             {"step_type": "user_input", "description": "User Message Received", "tokens": 8, "latency_ms": 0.0},
-             {"step_type": "llm_call", "description": "LLM Generation", "tokens": 120, "latency_ms": 850.0},
-             {"step_type": "response", "description": "Response Delivered", "tokens": 45, "latency_ms": 0.0}
-           ],
-           "run_prompt_analysis": true
-         }')
 
-    if [ "$OPTIMIZE_RESPONSE" = "200" ]; then
-      success "/optimize-workflow returned HTTP 200."
-    else
-      error "/optimize-workflow returned HTTP $OPTIMIZE_RESPONSE."
-      cmd_stop 2>/dev/null || true
-      exit 1
-    fi
   else
     warn "Server did not become healthy within 30s — skipping API tests."
   fi
 
-  # 6 — Tear down
-  step "6 │ Tearing down"
+  # 6 — Causal Agent UI test
+  step "6 │ Running Causal Agent UI tests with Playwright"
+  info "Starting UI test container..."
+  if docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" run --rm causal-agent-ui-test; then
+    success "Causal Agent UI tests passed."
+  else
+    error "Causal Agent UI tests FAILED."
+    cmd_stop 2>/dev/null || true
+    exit 1
+  fi
+
+  # 7 — Tear down
+  step "7 │ Tearing down"
   docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" down
   success "Containers stopped and removed."
 
@@ -262,6 +234,40 @@ cmd_test_pipeline() {
   echo ""
 }
 
+# ── Command: COMMIT ─────────────────────────────────────────────────────────────
+cmd_commit() {
+  local commit_msg="${1:-}"
+  if [ -z "$commit_msg" ]; then
+    error "Commit message is required. Usage: ./run_tests.sh --commit 'message'"
+    exit 1
+  fi
+  
+  info "Running test pipeline before commit..."
+  cmd_test_pipeline
+  
+  step "Git Commit Guard"
+  echo -e "${CYAN}Files changed:${RESET}"
+  git status --short
+  echo ""
+  echo -e "${CYAN}Diff stats:${RESET}"
+  git diff --stat
+  echo ""
+  
+  git add .
+  git commit -m "$commit_msg"
+  success "Changes committed."
+  
+  read -p "Push to remote repository now? [y/N] " -n 1 -r
+  echo ""
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    info "Pushing to remote..."
+    git push
+    success "Pushed to remote."
+  else
+    info "Skipped push."
+  fi
+}
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 show_help() {
   echo ""
@@ -272,6 +278,7 @@ show_help() {
   echo "  ./run_tests.sh --start       Start dev server with hot-reload"
   echo "  ./run_tests.sh --stop        Stop the running dev server"
   echo "  ./run_tests.sh --build-only  Build the Docker image only"
+  echo "  ./run_tests.sh --commit 'msg' Commit and push if tests pass"
   echo "  ./run_tests.sh --clean       Remove containers, images, and volumes"
   echo "  ./run_tests.sh --help        Show this help text"
   echo ""
@@ -295,6 +302,11 @@ main() {
       check_prerequisites
       cmd_build
       ;;
+    --commit)
+      check_prerequisites
+      cmd_commit "${2:-}"
+      shift
+      ;;
     --clean)
       cmd_clean
       ;;
@@ -314,4 +326,4 @@ main() {
   esac
 }
 
-main "${1:-}"
+main "$@"

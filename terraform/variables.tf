@@ -10,16 +10,16 @@ variable "region" {
   default     = "europe-west2"
 }
 
-variable "cluster_name" {
-  description = "Name of the GKE Autopilot cluster"
+variable "causal_artifact_repo_name" {
+  description = "Artifact Registry name for Causal MLOps"
   type        = string
-  default     = "agentic-orchestrator-cluster"
+  default     = "causal-mlops-repo"
 }
 
-variable "network_name" {
-  description = "The name of the VPC network"
+variable "causal_artifacts_bucket" {
+  description = "GCS bucket name for Causal MLOps artifacts"
   type        = string
-  default     = "agent-vpc"
+  default     = "tracerlens-causal-artifacts"
 }
 
 variable "github_repo" {

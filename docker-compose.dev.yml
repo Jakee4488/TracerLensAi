@@ -18,7 +18,7 @@ services:
   tracerlensai-app:
     build:
       context: .
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
     image: tracerlensai-dev:latest
     container_name: tracerlensai-dev
     ports:
@@ -31,7 +31,7 @@ services:
     # Mount source code for live editing (overrides the COPY in Dockerfile)
     volumes:
       - ./src:/app/src:ro
-      - ~/.config/gcloud:/home/tracerlensaiuser/.config/gcloud:ro
+      - ./data:/app/data
 
     # Load environment from .env file (create from .env.example)
     env_file:
@@ -40,6 +40,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=development
+      - GOOGLE_CLOUD_PROJECT=icarus-agent-26
+      - GOOGLE_CLOUD_LOCATION=us-central1
 
     # Health check matching the production readiness probe
     healthcheck:
@@ -63,11 +65,26 @@ services:
       - ./tests:/app/tests:ro
       - ./pytest.ini:/app/pytest.ini:ro
       - ./.flake8:/app/.flake8:ro
-      - ~/.config/gcloud:/home/tracerlensaiuser/.config/gcloud:ro
     env_file:
       - .env
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=test
     # Default: run the full test suite.  Overridden per-step in run_tests.sh
-    command: python -m pytest tests/ -v --tb=short
+    command: python -m pytest tests/ --ignore=tests/ui_tests -v --tb=short
+
+  # ── Causal Agent UI Test Runner ───────────────────────────────────────────
+  causal-agent-ui-test:
+    image: mcr.microsoft.com/playwright/python:v1.44.0-jammy
+    container_name: tracerlensai-causal-ui-test
+    profiles:
+      - ui-test
+    volumes:
+      - ./tests/ui_tests:/app/tests/ui_tests:ro
+      - ./requirements.txt:/app/requirements.txt:ro
+    working_dir: /app
+    depends_on:
+      tracerlensai-app:
+        condition: service_healthy
+    command: >
+      bash -c "pip install -r requirements.txt && python -m pytest tests/ui_tests/test_ui.py -v --tb=short"

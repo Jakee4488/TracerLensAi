@@ -2,7 +2,7 @@
 # ci.yml — Pull Request CI
 #
 # Triggers: every pull_request targeting main
-# Jobs    : lint + unit tests + evaluator smoke test
+# Jobs    : run_tests.sh test
 # Purpose : Gate PRs — must pass before merge is allowed
 # =============================================================================
 name: "CI — Pull Request Checks"
@@ -12,77 +12,24 @@ on:
     branches:
       - main
 
-# Cancel any in-progress run for the same PR to save minutes
 concurrency:
   group: ci-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  # ─────────────────────────────────────────────────────────────────────────
-  lint:
-    name: "Lint (flake8)"
+  test_pipeline:
+    name: "Full Test Pipeline"
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install lint dependencies
-        run: pip install flake8
-
-      - name: Run flake8
-        run: flake8 src/
-
-  # ─────────────────────────────────────────────────────────────────────────
-  test:
-    name: "Unit Tests (pytest)"
-    runs-on: ubuntu-latest
-    needs: lint
     env:
       GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
       GOOGLE_CLOUD_REGION:  ${{ vars.GOOGLE_CLOUD_REGION }}
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
+      - name: Create .env file for run_tests.sh
+        run: |
+          echo "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}" > .env
+          echo "GOOGLE_CLOUD_REGION=${GOOGLE_CLOUD_REGION}" >> .env
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run pytest
-        run: python -m pytest tests/ -v --tb=short
-
-  # ─────────────────────────────────────────────────────────────────────────
-  evaluator-smoke:
-    name: "Evaluator Smoke Test"
-    runs-on: ubuntu-latest
-    needs: test
-    env:
-      GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
-      GOOGLE_CLOUD_REGION:  ${{ vars.GOOGLE_CLOUD_REGION }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run evaluator harness (offline/rule-based path)
-        # Note: Vertex AI will be unavailable in CI — evaluator falls back
-        # to rule-based routing which is what we are validating here.
-        run: python -m src.observability.evaluator
+      - name: Run Test Pipeline
+        run: ./run_tests.sh test
