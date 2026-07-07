@@ -175,6 +175,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const causalToggle = document.getElementById("causal-toggle");
         const isCausalReasoningEnabled = causalToggle ? causalToggle.checked : false;
         
+        const webSearchToggle = document.getElementById("web-search-toggle");
+        const isWebSearchEnabled = webSearchToggle ? webSearchToggle.checked : false;
+
         const modelSelect = document.getElementById("model-select");
         const selectedModel = modelSelect ? modelSelect.value : "gemini-2.5-flash";
 
@@ -185,6 +188,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 body: JSON.stringify({ 
                     prompt: text,
                     causal_reasoning: isCausalReasoningEnabled,
+                    web_search: isWebSearchEnabled,
                     model_name: selectedModel,
                     chat_id: currentChatId
                 })

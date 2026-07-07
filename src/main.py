@@ -86,6 +86,7 @@ class PromptRequest(BaseModel):
     """Request body for the main analysis endpoint."""
     prompt: str
     causal_reasoning: bool = False
+    web_search: bool = False
     model_name: str = "gemini-2.5-flash"
     chat_id: Optional[str] = None
 
@@ -126,10 +127,14 @@ def analyze_prompt(req: PromptRequest):
 
     # ── Call Gemini ──────────────────────────────────────────────────────
     try:
-        # Enable Code Execution so the model can write + run Python
-        config = types.GenerateContentConfig(
-            tools=[types.Tool(code_execution=types.ToolCodeExecution())],
-        )
+        # Select tools based on toggle state
+        # NOTE: Vertex AI does not allow mixing search + code_execution tools
+        if req.web_search:
+            tools = [types.Tool(google_search=types.GoogleSearch())]
+        else:
+            tools = [types.Tool(code_execution=types.ToolCodeExecution())]
+
+        config = types.GenerateContentConfig(tools=tools)
 
         response = client.models.generate_content(
             model=req.model_name,
