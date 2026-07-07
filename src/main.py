@@ -5,6 +5,7 @@ including native Code Execution support.
 """
 import os
 from contextlib import asynccontextmanager
+from functools import lru_cache
 
 from google import genai
 from google.genai import types
@@ -38,23 +39,32 @@ if "GOOGLE_CREDENTIALS_JSON" in os.environ:
         f.write(os.environ["GOOGLE_CREDENTIALS_JSON"])
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
 
-project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "icarus-agent-26")
-region = os.getenv("GOOGLE_CLOUD_LOCATION", os.getenv("GOOGLE_CLOUD_REGION", "us-central1"))
+@lru_cache(maxsize=1)
+def get_genai_client():
+    """Create and cache a GenAI client."""
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "icarus-agent-26")
+    region = os.getenv("GOOGLE_CLOUD_LOCATION", os.getenv("GOOGLE_CLOUD_REGION", "us-central1"))
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if gemini_api_key:
+        return genai.Client(api_key=gemini_api_key)
 
-client = genai.Client(
-    vertexai=True,
-    project=project_id,
-    location=region,
-)
+    return genai.Client(
+        vertexai=True,
+        project=project_id,
+        location=region,
+    )
+
 
 # ── Static Files ─────────────────────────────────────────────────────────────
 
 app.mount("/static", StaticFiles(directory="src/static"), name="static")
 
+
 @app.get("/")
 def read_root():
     """Redirect root to the UI."""
     return RedirectResponse(url="/static/index.html")
+
 
 @app.get("/health")
 def health_check():
@@ -134,6 +144,8 @@ def analyze_prompt(req: PromptRequest):
 
     # ── Call Gemini ──────────────────────────────────────────────────────
     try:
+        client = get_genai_client()
+
         # Select tools based on toggle state
         # NOTE: Vertex AI does not allow mixing search + code_execution tools
         if req.web_search:
