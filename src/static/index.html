@@ -1,31 +1,103 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TracerLensAi: AI Agentic Workflow Evaluator</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Google+Sans:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Google+Sans:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <style>
+        .top-controls {
+            display: flex;
+            gap: 1.5rem;
+            align-items: center;
+        }
+
+        .ios-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 30px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-switch .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #d1d1d6;
+            transition: .3s;
+            border-radius: 30px;
+        }
+
+        .toggle-switch .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle-switch input:checked+.slider {
+            background-color: #0fb8a3;
+        }
+
+        .toggle-switch input:checked+.slider:before {
+            transform: translateX(20px);
+        }
+    </style>
 </head>
+
 <body>
     <div class="app-container">
-        
+
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <button class="menu-btn" id="toggle-sidebar">☰</button>
                 <span class="logo-text">TracerLensAi</span>
             </div>
-            <button class="new-chat-btn">
+            <div class="nav-links">
+                <div id="nav-chat" class="nav-item active">🧮 Causal Agent</div>
+            </div>
+            <button class="new-chat-btn" style="margin-top: auto;">
                 <span class="plus-icon">+</span> New chat
             </button>
             <div class="history-list">
-                <div class="history-item">Recent workflows</div>
-                <div class="history-item">Escalation test #42</div>
-                <div class="history-item">Order status inquiry</div>
+                <div class="history-title"
+                    style="padding: 0.8rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">
+                    Recent workflows</div>
+                <div class="history-item clickable-history">[Placeholder Chat 1]</div>
+                <div class="history-item clickable-history">[Placeholder Chat 2]</div>
             </div>
         </aside>
 
@@ -33,72 +105,48 @@
         <main class="chat-container">
             <header class="chat-header">
                 <div class="header-title">
-                    GCP Agent <span class="status-dot"></span>
+                    Causal Agent <span class="status-dot"></span>
+                    <span id="token-tally-badge"
+                        style="margin-left: 1rem; background: rgba(255,255,255,0.1); padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.8rem; font-weight: 500; color: #86efac;">0
+                        tokens used</span>
                 </div>
-                <button
-                    class="toggle-graph-btn"
-                    id="toggle-graph"
-                    type="button"
-                    aria-controls="graph-panel prompt-analysis-panel"
-                    aria-expanded="false"
-                >Workflow Optimiser</button>
+                <div class="top-controls">
+                    <select id="model-select"
+                        style="background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.6rem; font-size: 0.85rem; outline: none; cursor: pointer;">
+                        <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
+                        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                    </select>
+                    <label class="ios-toggle">
+                        <span class="label-text">Dark Mode</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="dark-mode-toggle" checked>
+                            <span class="slider"></span>
+                        </div>
+                    </label>
+                    <label class="ios-toggle" style="display: none;">
+                        <span class="label-text">Causal Reasoning</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="causal-toggle">
+                            <span class="slider"></span>
+                        </div>
+                    </label>
+                    <label class="ios-toggle">
+                        <span class="label-text">Web Search</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="web-search-toggle">
+                            <span class="slider"></span>
+                        </div>
+                    </label>
+                </div>
             </header>
 
-            <section class="prompt-analysis-panel" id="prompt-analysis-panel" aria-labelledby="prompt-analysis-title">
-                <div class="prompt-analysis-header">
-                    <div>
-                        <h1 id="prompt-analysis-title">Prompt Optimiser</h1>
-                        <p>Token efficiency, workflow simulation, and optimised prompt output.</p>
-                    </div>
-                    <span class="analysis-status" id="analysis-status">Ready</span>
-                </div>
-
-                <form class="prompt-analysis-form" id="prompt-analysis-form">
-                    <label for="prompt-analysis-input">Raw prompt</label>
-                    <textarea id="prompt-analysis-input" rows="4" placeholder="Paste a raw prompt for analysis"></textarea>
-                    <button type="submit" id="prompt-analysis-submit">Optimise prompt</button>
-                </form>
-
-                <div class="analysis-results" id="prompt-analysis-results" hidden>
-                    <div class="analysis-metrics">
-                        <div class="metric-tile">
-                            <span>Efficiency</span>
-                            <strong id="analysis-efficiency-score">-</strong>
-                        </div>
-                        <div class="metric-tile">
-                            <span>Workflow Nodes</span>
-                            <strong id="analysis-node-count">-</strong>
-                        </div>
-                        <div class="metric-tile">
-                            <span>Tips</span>
-                            <strong id="analysis-tip-count">-</strong>
-                        </div>
-                    </div>
-
-                    <div class="analysis-workflow-shell">
-                        <svg id="prompt-workflow-graph" role="img" aria-label="Simulated prompt workflow graph"></svg>
-                    </div>
-
-                    <div class="analysis-output-grid">
-                        <section class="analysis-output-section">
-                            <h2>Recommendations</h2>
-                            <ul id="optimization-tips"></ul>
-                        </section>
-
-                        <section class="analysis-output-section">
-                            <h2>Optimised Prompt</h2>
-                            <textarea id="optimized-prompt-output" readonly rows="7"></textarea>
-                        </section>
-                    </div>
-                </div>
-            </section>
-
             <div class="messages-area" id="messages-area">
-                <!-- Messages will be appended here -->
+                <!-- Evaluations will be appended here -->
                 <div class="message ai">
                     <div class="avatar ai-avatar"></div>
                     <div class="content">
-                        <p>Hi, I am TracerLensAi, your AI Observability and Workflow Optimization Engine. How can I help you today?</p>
+                        <p>Hi, I am TracerLensAi's Causal Agent. Enter a prompt below to evaluate its expected causal
+                            graph across an agentic workflow trace.</p>
                     </div>
                 </div>
             </div>
@@ -106,141 +154,19 @@
             <div class="input-area">
                 <div class="input-pill">
                     <button class="attach-btn">+</button>
-                    <textarea id="chat-input" placeholder="Ask anything" rows="1"></textarea>
+                    <textarea id="chat-input" placeholder="Enter prompt to evaluate causal agent workflow..."
+                        rows="1"></textarea>
                     <button class="send-btn" id="send-btn">➔</button>
                 </div>
-                <div class="disclaimer">TracerLensAi may display inaccurate info, so double-check its responses.</div>
+                <div class="disclaimer dashboard-disclaimer">Agent evaluations are simulated dry-run predictions.</div>
             </div>
         </main>
 
-        <!-- Workflow Optimiser Panel -->
-        <aside class="graph-panel" id="graph-panel">
-            <div class="graph-header">
-                <h3>Workflow Optimiser</h3>
-                <button class="close-btn" id="close-graph">✕</button>
-            </div>
-
-            <div id="node-tooltip" class="node-tooltip" style="display: none;"></div>
-
-            <div class="wo-layout-container">
-                <div class="wo-layout-left">
-                    <section class="workflow-chat-panel" id="workflow-chat-panel">
-                <div class="workflow-chat-header">
-                    <h4>Workflow Trace Chat</h4>
-                    <span id="workflow-trace-status">No trace yet</span>
-                </div>
-                <div class="workflow-messages-area" id="workflow-messages-area">
-                    <div class="workflow-empty-state">Send a workflow prompt to generate a trace for optimisation.</div>
-                </div>
-                <div class="workflow-input-row">
-                    <textarea id="workflow-chat-input" rows="2" placeholder="Describe the agentic workflow to simulate"></textarea>
-                    <button type="button" id="workflow-send-btn">Send</button>
-                </div>
-            </section>
-                </div>
-                <div class="wo-layout-right">
-            <div class="token-usage-panel">
-                <h4>Session Token Usage</h4>
-                <div class="token-row">
-                    <span>Prompt Tokens</span>
-                    <span id="prompt-tokens-total">0</span>
-                </div>
-                <div class="token-row">
-                    <span>Completion Tokens</span>
-                    <span id="completion-tokens-total">0</span>
-                </div>
-                <div class="token-row total">
-                    <span>Total Tokens</span>
-                    <span id="total-tokens">0</span>
-                </div>
-            </div>
-
-            <button class="evaluate-btn" id="optimise-btn">⚡ Optimise Workflow</button>
-
-            <!-- Workflow Optimiser Results -->
-            <div class="wo-results" id="wo-results" style="display: none; opacity: 0;">
-
-                <!-- Projection Summary -->
-                <div class="wo-projection-card">
-                    <h4>Token Projection</h4>
-                    <div class="wo-formula-row">
-                        <code class="wo-formula" id="wo-formula"></code>
-                    </div>
-                    <div class="wo-stats-grid">
-                        <div class="wo-stat">
-                            <span>Est. Total</span>
-                            <strong id="wo-est-total">-</strong>
-                        </div>
-                        <div class="wo-stat">
-                            <span>Cost Mult.</span>
-                            <strong id="wo-cost-mult">-</strong>
-                        </div>
-                        <div class="wo-stat">
-                            <span>History</span>
-                            <strong id="wo-comp-hist">-</strong>
-                        </div>
-                        <div class="wo-stat">
-                            <span>Risk</span>
-                            <strong><span class="wo-risk-badge" id="wo-risk-badge">-</span></strong>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Assumptions -->
-                <div class="wo-assumptions">
-                    <h4>Assumptions</h4>
-                    <table class="wo-assumptions-table">
-                        <tr><td>Expected Loops (N)</td><td id="wo-loops">-</td></tr>
-                        <tr><td>Base Prompt (P)</td><td id="wo-base-p">-</td></tr>
-                        <tr><td>Avg Model Output (O<sub>avg</sub>)</td><td id="wo-avg-o">-</td></tr>
-                        <tr><td>Avg Tool Output (T<sub>avg</sub>)</td><td id="wo-avg-t">-</td></tr>
-                    </table>
-                </div>
-
-                <!-- Compounding Chart -->
-                <div class="wo-chart-container">
-                    <h4>Token Compounding per Step</h4>
-                    <canvas id="wo-chart"></canvas>
-                </div>
-
-                <!-- Optimisation Tips -->
-                <div class="wo-section">
-                    <h4>Optimisation Tips</h4>
-                    <ul class="wo-tips-list" id="wo-tips-list"></ul>
-                </div>
-
-                <!-- Optimised Workflow Steps -->
-                <div class="wo-section">
-                    <h4>Optimised Workflow</h4>
-                    <ol class="wo-workflow-steps" id="wo-workflow-steps"></ol>
-                </div>
-
-                <!-- Golden Dataset Plan -->
-                <div class="wo-section">
-                    <h4>Golden Dataset Plan</h4>
-                    <ol class="wo-golden-plan" id="wo-golden-plan"></ol>
-                </div>
-
-                <!-- Piped Prompt Analysis -->
-                <div class="wo-section" id="wo-prompt-analysis" style="display: none;">
-                    <h4>Prompt Analysis</h4>
-                    <div class="wo-pa-score-row">
-                        <span>Efficiency Score</span>
-                        <strong id="wo-pa-score">-</strong>
-                    </div>
-                    <label>Optimised Prompt</label>
-                    <textarea id="wo-pa-prompt" readonly rows="4"></textarea>
-                </div>
-
-            </div>
-                </div>
-            </div>
-        </aside>
-
+        <!-- Standalone Prompt Optimiser Area -->
     </div>
 
-    <script src="/static/workflow-optimizer.js"></script>
-    <script src="/static/prompt-analysis.js"></script>
-    <script src="/static/chat.js"></script>
+    <script src="/static/causal-agent.js"></script>
+
 </body>
+
 </html>

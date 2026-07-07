@@ -1,0 +1,22 @@
+replicaCount: 1
+
+image:
+  repository: gcr.io/your-project-id/tracerlensai-app
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+env:
+  GOOGLE_CLOUD_PROJECT: "your-project-id"
+  GOOGLE_CLOUD_REGION: "us-central1"

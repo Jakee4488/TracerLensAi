@@ -1,169 +1,218 @@
+"""TracerLensAi - AI Agentic Workflow Evaluator Backend.
+
+Uses the google-genai SDK with Vertex AI backend for Gemini model access,
+including native Code Execution support.
+"""
 import os
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from contextlib import asynccontextmanager
+from functools import lru_cache
+
+from google import genai
+from google.genai import types
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import Optional, List
 
-from src.observability.logger import setup_logger, log_agent_metrics
-from src.ai_gateway.vertex_client import VertexAIClient
-from src.ai_gateway.fallback_manager import FallbackManager
-from src.agent_engine.orchestrator import AgentOrchestrator
-from src.observability.optimization_engine import evaluate_workflow
-from src.observability.prompt_analysis import analyze_prompt
-from src.observability.workflow_optimizer import optimize_workflow
+from src.database import (
+    init_db, get_chats, get_chat, create_chat,
+    add_message, update_chat_tokens, update_chat_title,
+)
 
-app = FastAPI(title="TracerLensAi: AI Agentic Workflow Evaluator")
-logger = setup_logger()
+# ── App Lifecycle ────────────────────────────────────────────────────────────
 
-# Mount static files
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize database on startup."""
+    init_db()
+    yield
+
+app = FastAPI(title="TracerLensAi", lifespan=lifespan)
+
+# ── Google GenAI Client (Vertex AI backend) ──────────────────────────────────
+
+if "GOOGLE_CREDENTIALS_JSON" in os.environ:
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, 'w') as f:
+        f.write(os.environ["GOOGLE_CREDENTIALS_JSON"])
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+
+@lru_cache(maxsize=1)
+def get_genai_client():
+    """Create and cache a GenAI client."""
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "icarus-agent-26")
+    region = os.getenv("GOOGLE_CLOUD_LOCATION", os.getenv("GOOGLE_CLOUD_REGION", "us-central1"))
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    if gemini_api_key:
+        return genai.Client(api_key=gemini_api_key)
+
+    return genai.Client(
+        vertexai=True,
+        project=project_id,
+        location=region,
+    )
+
+
+# ── Static Files ─────────────────────────────────────────────────────────────
+
 app.mount("/static", StaticFiles(directory="src/static"), name="static")
 
-# Dependency Initialization
-project_id = os.environ.get("GOOGLE_CLOUD_PROJECT", "default-project")
-location = os.environ.get("GOOGLE_CLOUD_REGION", "europe-west2")
 
-_agent = None
+@app.get("/")
+def read_root():
+    """Redirect root to the UI."""
+    return RedirectResponse(url="/static/index.html")
 
-def get_agent() -> AgentOrchestrator:
-    global _agent
-    if _agent is None:
-        try:
-            client = VertexAIClient(project_id, location)
-            fallback_mgr = FallbackManager(client)
-            _agent = AgentOrchestrator(fallback_mgr)
-        except Exception as e:
-            logger.error(f"Failed to initialize AgentOrchestrator: {e}")
-            raise RuntimeError("Agent failed to initialize.")
-    return _agent
-
-class InquiryRequest(BaseModel):
-    user_id: str
-    prompt: str
-
-class DecisionStep(BaseModel):
-    step_type: str
-    description: str
-    tokens: int
-    latency_ms: float
-
-class InquiryResponse(BaseModel):
-    response: str
-    escalated: bool
-    trace: List[DecisionStep]
-    metrics: Dict[str, Any]
-
-class EvaluateRequest(BaseModel):
-    original_prompt: str
-    ideal_steps: int
-    trace: List[Dict[str, Any]]
-
-
-class PromptAnalysisRequest(BaseModel):
-    prompt: str
-
-
-class PromptWorkflowNode(BaseModel):
-    id: str
-    label: str
-    stage: str
-    description: str
-    tokens: int
-    latency_ms: float
-    position: Dict[str, int]
-
-
-class PromptAnalysisResponse(BaseModel):
-    original_prompt: str
-    simulated_workflow_nodes: List[PromptWorkflowNode]
-    efficiency_score: int
-    optimization_tips: List[str]
-    optimized_prompt: str
-
-
-class WorkflowOptimizeRequest(BaseModel):
-    original_prompt: str
-    trace: List[Dict[str, Any]]
-    expected_loops: int | None = None
-    run_prompt_analysis: bool = True
-
-
-@app.get("/", response_class=HTMLResponse)
-async def read_root():
-    return FileResponse("src/static/index.html")
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    """Health probe for Docker / K8s."""
+    return {"status": "ok"}
+
+# ── Chat History API ─────────────────────────────────────────────────────────
+
+class NewChatRequest(BaseModel):
+    """Request body to create a new chat session."""
+    title: str = "New Chat"
+
+@app.get("/api/chats")
+def api_get_chats():
+    """Return all chat sessions for the sidebar."""
+    return get_chats()
+
+@app.get("/api/chats/{chat_id}")
+def api_get_chat(chat_id: str):
+    """Return a single chat with its full message history."""
+    chat = get_chat(chat_id)
+    if chat:
+        return chat
+    return {"error": "Chat not found"}
+
+@app.post("/api/chats")
+def api_create_chat(req: NewChatRequest):
+    """Create a new empty chat session."""
+    chat_id = create_chat(req.title)
+    return {"id": chat_id, "title": req.title}
 
 
-@app.post("/analyze-prompt", response_model=PromptAnalysisResponse)
-async def analyze_prompt_endpoint(request: PromptAnalysisRequest):
-    if not request.prompt.strip():
-        raise HTTPException(status_code=422, detail="Prompt cannot be empty")
-    return analyze_prompt(request.prompt)
+# ── Analyze Prompt Endpoint ──────────────────────────────────────────────────
 
+class PromptRequest(BaseModel):
+    """Request body for the main analysis endpoint."""
+    prompt: str
+    causal_reasoning: bool = False
+    web_search: bool = False
+    model_name: str = "gemini-2.5-flash"
+    chat_id: Optional[str] = None
 
-@app.post("/optimize-workflow")
-async def optimize_workflow_endpoint(request: WorkflowOptimizeRequest):
-    if not request.original_prompt.strip():
-        raise HTTPException(status_code=422, detail="Original prompt cannot be empty")
-    if not request.trace:
-        raise HTTPException(status_code=422, detail="Trace cannot be empty")
+@app.post("/analyze-prompt")
+def analyze_prompt(req: PromptRequest):
+    """Generate a response from Gemini, optionally with causal reasoning.
 
-    prompt_analysis_result = None
-    if request.run_prompt_analysis:
-        prompt_analysis_result = analyze_prompt(request.original_prompt)
+    If a chat_id is provided, the conversation history is prepended as context
+    and both the user prompt and AI response are persisted to the database.
+    Code Execution is enabled so Gemini can write and run Python code.
+    """
+    causal_steps: List[str] = []
 
-    return optimize_workflow(
-        original_prompt=request.original_prompt,
-        trace=request.trace,
-        expected_loops=request.expected_loops,
-        prompt_analysis=prompt_analysis_result,
+    # ── Build conversation context from history ──────────────────────────
+    history_lines: List[str] = []
+    chat_record = None
+    if req.chat_id:
+        chat_record = get_chat(req.chat_id)
+        if chat_record:
+            for msg in chat_record.get("messages", []):
+                role_label = "User" if msg["role"] == "user" else "AI"
+                history_lines.append(f"{role_label}: {msg['content']}")
+
+            # Persist the new user message
+            add_message(req.chat_id, "user", req.prompt)
+
+            # Auto-title the chat from the first message
+            if len(chat_record.get("messages", [])) == 0:
+                short_title = (req.prompt[:30] + "...") if len(req.prompt) > 30 else req.prompt
+                update_chat_title(req.chat_id, short_title)
+
+    context_str = "\n".join(history_lines)
+    full_prompt = (
+        f"Previous conversation history:\n{context_str}\n\nUser: {req.prompt}"
+        if context_str
+        else req.prompt
     )
 
-@app.post("/inquire-traced", response_model=InquiryResponse)
-async def process_inquiry(request: InquiryRequest):
+    # ── Call Gemini ──────────────────────────────────────────────────────
     try:
-        agent = get_agent()
-        result = await agent.process_inquiry(
-            user_id=request.user_id,
-            prompt=request.prompt,
-            session_history=[]
+        client = get_genai_client()
+
+        # Select tools based on toggle state
+        # NOTE: Vertex AI does not allow mixing search + code_execution tools
+        if req.web_search:
+            tools = [types.Tool(google_search=types.GoogleSearch())]
+        else:
+            tools = [types.Tool(code_execution=types.ToolCodeExecution())]
+
+        config = types.GenerateContentConfig(tools=tools)
+
+        response = client.models.generate_content(
+            model=req.model_name,
+            contents=full_prompt,
+            config=config,
+        )
+        response_text = response.text or ""
+        usage = response.usage_metadata
+        token_count = (
+            (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
+            if usage
+            else 0
         )
 
-        # Log metrics
-        metrics = result.get("metrics", {})
-        metrics["escalated"] = result["escalated"]
-        log_agent_metrics(request.user_id, request.prompt, metrics)
+        # ── Causal Reasoning (second call) ───────────────────────────────
+        if req.causal_reasoning:
+            causal_prompt = (
+                "Analyze the following request using causal inference. "
+                "Identify potential confounders, propose a structural causal model, "
+                "and estimate treatment effects. Output 3 to 5 concise steps. "
+                f"Format each as a bullet point. Request: {req.prompt}"
+            )
+            causal_resp = client.models.generate_content(
+                model=req.model_name,
+                contents=causal_prompt,
+                config=config,
+            )
+            causal_steps = [
+                line.strip()
+                for line in (causal_resp.text or "").split("\n")
+                if line.strip()
+            ]
+            c_usage = causal_resp.usage_metadata
+            if c_usage:
+                token_count += (c_usage.prompt_token_count or 0) + (c_usage.candidates_token_count or 0)
 
-        return InquiryResponse(
-            response=result["response"],
-            escalated=result["escalated"],
-            trace=result.get("trace", []),
-            metrics=metrics
-        )
+        # ── Persist AI response ──────────────────────────────────────────
+        if req.chat_id:
+            add_message(
+                req.chat_id, "ai", response_text,
+                causal_steps if req.causal_reasoning else None,
+            )
+            update_chat_tokens(req.chat_id, token_count)
+
     except Exception as e:
-        logger.error(f"Error processing inquiry: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        response_text = f"Error calling Vertex AI: {str(e)}"
+        token_count = 0
 
-@app.post("/evaluate-trace")
-async def evaluate_trace(request: EvaluateRequest):
-    try:
-        agent = get_agent()
-        # In a real setup, we might use the agent's LLM to evaluate.
-        # For this, we call the optimization engine function.
-        evaluation = await evaluate_workflow(
-            client=agent.fallback_manager.client,
-            trace=request.trace,
-            original_prompt=request.original_prompt,
-            ideal_steps=request.ideal_steps
+    # ── Build JSON response ──────────────────────────────────────────────
+    response_data = {
+        "status": "success",
+        "response": response_text,
+        "total_token_count": token_count,
+    }
+
+    if req.causal_reasoning:
+        response_data["causal_reasoning_steps"] = (
+            causal_steps if causal_steps
+            else ["Failed to generate causal reasoning steps."]
         )
-        return evaluation
-    except Exception as e:
-        logger.error(f"Error evaluating trace: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    return response_data

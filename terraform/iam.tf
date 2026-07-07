@@ -32,13 +32,15 @@ resource "google_service_account_iam_member" "workload_identity_binding" {
 
 # (Optional) Workload Identity Federation for GitHub Actions
 resource "google_iam_workload_identity_pool" "github_pool" {
-  workload_identity_pool_id = "github-actions-pool"
+  project                   = var.project_id
+  workload_identity_pool_id = "github-actions-pool-v2"
   display_name              = "GitHub Actions Pool"
 }
 
 resource "google_iam_workload_identity_pool_provider" "github_provider" {
+  project                            = var.project_id
   workload_identity_pool_id          = google_iam_workload_identity_pool.github_pool.workload_identity_pool_id
-  workload_identity_pool_provider_id = "github-actions-provider"
+  workload_identity_pool_provider_id = "github-actions-provider-v2"
   display_name                       = "GitHub Actions Provider"
 
   attribute_mapping = {
