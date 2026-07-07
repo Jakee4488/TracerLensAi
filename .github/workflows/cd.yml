@@ -16,9 +16,9 @@ on:
           - gke
 
 env:
-  PROJECT_ID: ${{ vars.GOOGLE_CLOUD_PROJECT }}
-  REGION: ${{ vars.GOOGLE_CLOUD_REGION }}
-  IMAGE_NAME: gcr.io/${{ vars.GOOGLE_CLOUD_PROJECT }}/tracerlensai-app
+  PROJECT_ID: 'icarus-agent-26'
+  REGION: 'europe-west2'
+  IMAGE_NAME: gcr.io/icarus-agent-26/tracerlensai-app
 
 jobs:
   deploy:
