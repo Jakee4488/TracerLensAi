@@ -4,6 +4,7 @@ resource "google_cloud_run_service" "tracerlensai_app" {
 
   template {
     spec {
+      service_account_name = google_service_account.app_sa.email
       containers {
         image = "us-docker.pkg.dev/cloudrun/container/hello" # Dummy image for initial provisioning
         
