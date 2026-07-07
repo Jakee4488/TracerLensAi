@@ -1,7 +1,7 @@
 import sqlite3
 import uuid
 import json
-from datetime import datetime
+
 from typing import List, Dict, Optional
 import os
 
@@ -11,10 +11,10 @@ DB_PATH = os.path.join(DB_DIR, "app.db")
 def init_db():
     if not os.path.exists(DB_DIR):
         os.makedirs(DB_DIR, exist_ok=True)
-        
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS chats (
             id TEXT PRIMARY KEY,
@@ -23,7 +23,7 @@ def init_db():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,7 +35,7 @@ def init_db():
             FOREIGN KEY(chat_id) REFERENCES chats(id)
         )
     """)
-    
+
     conn.commit()
     conn.close()
 
@@ -66,11 +66,11 @@ def get_chat(chat_id: str) -> Optional[Dict]:
     if not chat:
         conn.close()
         return None
-    
+
     cursor.execute("SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC", (chat_id,))
     messages = cursor.fetchall()
     conn.close()
-    
+
     chat_dict = dict(chat)
     chat_dict['messages'] = []
     for msg in messages:
@@ -78,7 +78,7 @@ def get_chat(chat_id: str) -> Optional[Dict]:
         if msg_dict['causal_steps']:
             msg_dict['causal_steps'] = json.loads(msg_dict['causal_steps'])
         chat_dict['messages'].append(msg_dict)
-        
+
     return chat_dict
 
 def update_chat_tokens(chat_id: str, added_tokens: int):
