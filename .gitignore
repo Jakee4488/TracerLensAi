@@ -68,7 +68,12 @@ terraform.rc
 # Docker Compose developer overrides
 docker-compose.override.yml
 
+
 # Local test scripts (optional)
 test_vertex.py
 
 logs/
+
+data/
+app.db
+*.db

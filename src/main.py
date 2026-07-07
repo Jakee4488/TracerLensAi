@@ -31,6 +31,13 @@ app = FastAPI(title="TracerLensAi", lifespan=lifespan)
 
 # ── Google GenAI Client (Vertex AI backend) ──────────────────────────────────
 
+if "GOOGLE_CREDENTIALS_JSON" in os.environ:
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".json")
+    with os.fdopen(fd, 'w') as f:
+        f.write(os.environ["GOOGLE_CREDENTIALS_JSON"])
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "icarus-agent-26")
 region = os.getenv("GOOGLE_CLOUD_LOCATION", os.getenv("GOOGLE_CLOUD_REGION", "europe-west2"))
 
