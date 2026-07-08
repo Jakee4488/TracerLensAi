@@ -77,7 +77,7 @@ jobs:
         run: |
           echo "GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" > .env
           echo "GOOGLE_CLOUD_REGION=${{ env.REGION }}" >> .env
-          pip install google-agents-cli
+          pip install uv google-agents-cli
           echo "Deploying the ADK Agent to Agent Runtime..."
           chmod +x deploy_to_gcp.sh
           ./deploy_to_gcp.sh --target agent-runtime
