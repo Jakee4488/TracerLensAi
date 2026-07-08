@@ -31,7 +31,6 @@ services:
     # Mount source code for live editing (overrides the COPY in Dockerfile)
     volumes:
       - ./src:/app/src:ro
-      - ./data:/app/data
 
     # Load environment from .env file (create from .env.example)
     env_file:
@@ -87,4 +86,4 @@ services:
       tracerlensai-app:
         condition: service_healthy
     command: >
-      bash -c "pip install -r requirements.txt && python -m pytest tests/ui_tests/test_ui.py -v --tb=short"
+      bash -c "grep -v 'google-agents-cli' requirements.txt > req-ui.txt && pip install -r req-ui.txt && python -m pytest tests/ui_tests/test_ui.py -v --tb=short"

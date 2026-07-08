@@ -34,8 +34,8 @@ The entire application lives here. There are no sub-packages — the backend is 
 
 ```text
 src/
-├── main.py                          # FastAPI backend
-├── database.py                      # SQLite persistence layer
+├── main.py                          # FastAPI backend proxy
+├── agent.py                         # ADK Agent Logic
 └── static/                          # Frontend assets
     ├── index.html                   # Main UI shell
     ├── causal-agent.js              # Client-side chat logic
@@ -44,8 +44,8 @@ src/
 
 | File | Role |
 |---|---|
-| `main.py` | The single FastAPI entrypoint. Defines all API endpoints (`/health`, `/api/chats`, `/analyze-prompt`), the GenAI client factory, Pydantic request models, and the Gemini integration logic. |
-| `database.py` | A lightweight SQLite persistence layer. Manages two tables: `chats` (sessions with token counts) and `messages` (user/AI messages with optional causal reasoning steps). |
+| `main.py` | The single FastAPI entrypoint. Acts as a lightweight proxy that forwards `/analyze-prompt` requests to the Vertex AI Agent Engine. |
+| `agent.py` | Implements the Agent Development Kit (ADK) logic, registers tools, and relies on the platform Memory Bank for persistence. |
 | `static/index.html` | The HTML shell with a two-panel layout: a collapsible sidebar (navigation + history) and the main chat area (header controls, messages, input). |
 | `static/causal-agent.js` | All client-side logic: sending messages, creating chat sessions, loading history, rendering AI responses as Markdown with syntax highlighting, and managing UI state (dark mode, token badge). |
 | `static/styles.css` | The full CSS design system using custom properties. Defines dark and light mode palettes, responsive breakpoints (sidebar collapses at ≤768px), animations (typing indicator), and all component styles. |
@@ -94,7 +94,7 @@ terraform/
 | Workflow | Trigger | Action |
 |---|---|---|
 | `ci.yml` | Pull request → `main` | Runs `./run_tests.sh test` (flake8 + pytest) |
-| `cd.yml` | Push to `main` or manual dispatch | Build Docker → Push to GCR → Deploy to Cloud Run (or GKE) |
+| `cd.yml` | Push to `main` or manual dispatch | Deploy ADK Agent to Agent Runtime and/or Build Docker → Push to GCR → Deploy Proxy to Cloud Run |
 | `uptime.yml` | Every 5 minutes (cron) | Pings `/health`, updates `uptime.json` badge |
 
 ---
@@ -103,14 +103,13 @@ terraform/
 
 ```text
 tests/
-├── conftest.py                      # Pytest fixtures (test client, temp DB)
+├── conftest.py                      # Pytest fixtures (test client)
 ├── test_main.py                     # API endpoint tests
-├── test_database.py                 # Database function tests
 └── ui_tests/
     └── test_ui.py                   # Playwright browser tests
 ```
 
-Tests use a monkeypatched SQLite database in a temporary directory for full isolation.
+Tests use the `TestClient` for isolated endpoint testing.
 
 ---
 
@@ -132,7 +131,7 @@ Only used if deploying to GKE instead of Cloud Run. The `cd.yml` workflow and `d
 | File | Purpose |
 |---|---|
 | `Dockerfile` | Multi-stage build: Stage 1 installs Python deps, Stage 2 creates a non-root runtime with graphviz. Runs `uvicorn` on port 8080. |
-| `docker-compose.dev.yml` | Three services: `tracerlensai-app` (hot-reload dev), `test-runner` (pytest), `causal-agent-ui-test` (Playwright). |
+| `docker-compose.dev.yml` | Services: `tracerlensai-app` (hot-reload dev proxy), `test-runner` (pytest), `causal-agent-ui-test` (Playwright). |
 | `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, pytest, flake8, playwright. |
 | `run_tests.sh` | Docker-based automation: `test`, `--start`, `--stop`, `--clean`, `--commit`. |
 | `deploy_to_gcp.sh` | Manual fallback: builds, pushes, deploys to Cloud Run or GKE. |

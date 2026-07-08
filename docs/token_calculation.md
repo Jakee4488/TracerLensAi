@@ -2,9 +2,15 @@
 
 When designing and operating agentic workflows, understanding how tokens compound across multiple turns is critical for both cost management and latency optimization. TracerLensAi employs a mathematical model to accurately project token usage based on execution traces.
 
+## The Impact of the Memory Bank
+
+With the migration to the **Gemini Enterprise Agent Platform**, TracerLensAi now utilizes the native **Memory Bank** rather than manual SQLite-based context injection. 
+
+While the Memory Bank abstracts away the manual retrieval of conversation history, the underlying mathematical compounding of tokens still applies when the agent retrieves and reasons over long conversational histories. 
+
 ## The Compounding Formula
 
-The core of the token calculation model uses the following compounding formula. This model informs the architectural decisions behind TracerLensAi's multi-turn context management and is used to predict costs for agentic workflows:
+The core of the token calculation model uses the following compounding formula to predict costs for agentic workflows when full history is injected:
 
 ```
 E_total ≈ N · P + N(N−1)/2 · (O_avg + T_avg)
@@ -23,6 +29,8 @@ Where the variables are defined as follows:
 In an agentic loop, the LLM doesn't just read the base prompt and tools once. Every time the agent makes a decision, calls a tool, and receives a response, that entire interaction (the model's output `O_avg` and the tool's response `T_avg`) is appended to the conversational history.
 
 In the subsequent loop, the LLM must process the base prompt _plus_ the history of loop 1. In loop 3, it processes the base prompt _plus_ the history of loop 1 _and_ loop 2. This creates an arithmetic progression of context size, which is represented mathematically by the `N(N−1)/2` triangular number formula.
+
+*Note: The Agent Platform's Memory Bank may mitigate this exponential growth by employing semantic vector search to only retrieve the most relevant subset of history, effectively breaking the strict triangular progression for very long sessions.*
 
 ## Breakdown of Metrics
 
