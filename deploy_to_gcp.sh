@@ -45,7 +45,7 @@ elif [ "$TARGET" = "agent-runtime" ]; then
     echo "Deploying to Gemini Enterprise Agent Platform..."
     # The agents-cli requires the agent payload to be scaffolded and authenticated.
     # In a real environment, you'd run `agents-cli login` or use WIF in CI/CD.
-    agents-cli deploy --project ${PROJECT_ID} --region ${REGION} --deployment-target tracerlensai-agent
+    agents-cli deploy --project ${PROJECT_ID} --region ${REGION} --deployment-target agent_runtime
 else
     echo "Unknown target: $TARGET"
     exit 1
