@@ -1,0 +1,19 @@
+{
+  "hosting": {
+    "public": "src/static",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "run": {
+          "serviceId": "tracerlensai-app",
+          "region": "europe-west2"
+        }
+      }
+    ]
+  }
+}

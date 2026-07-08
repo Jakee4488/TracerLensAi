@@ -12,7 +12,7 @@
         href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <link rel="stylesheet" href="/styles.css?v=2">
     <style>
         .top-controls {
             display: flex;
@@ -165,8 +165,27 @@
         <!-- Standalone Prompt Optimiser Area -->
     </div>
 
-    <script src="/static/causal-agent.js"></script>
+    <script src="/causal-agent.js"></script>
 
+    <!-- Firebase SDK Configuration -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyAHUmpsoO9veaAjAlwYLRyCiguJ1iisb-k",
+            authDomain: "icarus-agent-26.firebaseapp.com",
+            projectId: "icarus-agent-26",
+            storageBucket: "icarus-agent-26.firebasestorage.app",
+            messagingSenderId: "463466170878",
+            appId: "1:463466170878:web:f94935748b3f12f15298af",
+            measurementId: "G-47JZT25Q8S"
+        };
+        
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+    </script>
 </body>
 
 </html>
