@@ -73,7 +73,7 @@ jobs:
             --set env.GOOGLE_CLOUD_REGION=${{ env.REGION }}
 
       - name: Deploy to Agent Platform
-        if: ${{ github.event.inputs.target == 'agent-runtime' || (github.event_name == 'push' && vars.DEFAULT_TARGET == 'agent-runtime') }}
+        if: ${{ github.event.inputs.target == 'agent-runtime' || github.event_name == 'push' }}
         run: |
           pip install google-agents-cli
           echo "Deploying the ADK Agent to Agent Runtime..."
