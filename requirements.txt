@@ -13,4 +13,5 @@ pytest-playwright==0.4.3
 
 # Google GenAI SDK (used by agent engine natively)
 google-genai>=1.12.0
+google-auth>=2.29.0
 google-agents-cli>=0.1.0
