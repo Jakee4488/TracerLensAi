@@ -1,40 +1,62 @@
 # TracerLensAi
 
-Welcome to **TracerLensAi**, a cloud-native, production-ready AI orchestration platform built specifically for Google Cloud Platform (GCP).
+🌐 **[Live Application](https://tracerlensai.com/)** · ![Build](https://github.com/Jakee4488/TracerLensAi/actions/workflows/cd.yml/badge.svg) · ![Uptime](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Jakee4488/TracerLensAi/main/.github/badges/uptime.json)
 
-This project provides a robust architecture for deploying LLM-powered customer support agents capable of tool usage, intent classification, multi-model fallback routing, and strict human-in-the-loop escalation policies.
+**TracerLensAi** is a cloud-native AI chat interface powered by Google Gemini. It provides an interactive workspace for evaluating agentic workflows with causal reasoning, live code execution, and web search — all backed by a production-grade GCP deployment pipeline.
 
-## 🌟 Key Features
+---
 
-- **Native GCP Architecture**: Designed from the ground up to leverage GCP managed services including GKE, Vertex AI, Artifact Registry, Cloud Storage, and BigQuery.
-- **Multi-Model Abstraction Layer**: An `ai_gateway` module that cleanly separates the LLM provider SDK from the core logic, featuring automatic fallback mechanisms (e.g., from Gemini 1.5 Flash to Pro) if rate limits or API errors occur.
-- **Agentic Graph Engine**: A customizable Python-based orchestrator that manages conversational state, parses intents, and dynamically invokes external mock tools (e.g., `fetch_user_profile`, `check_order_status`).
-- **Business Policy Enforcement**: Strict heuristic and ML-based routing policies that instantly escalate high-severity interactions to human agents.
-- **Enterprise Observability**: Integrated structured JSON logging for precise BigQuery ingestion, capturing token counts, latency, and costs per invocation loop.
-- **Token Compounding Engine**: Advanced mathematical projection of token costs across sequential loops. [See the Token Calculation Docs](docs/token_calculation.md).
-- **Keyless CI/CD & Security**: Implements GKE Workload Identity and GitHub Actions OIDC federation, entirely eliminating the need for long-lived service account JSON keys.
-- **Dockerized Local Dev**: Hot-reloadable local Docker Compose environment matching production execution characteristics.
+## ✨ Features
+
+| Feature | Description |
+|---|---|
+| **Gemini Integration** | Direct access to `gemini-2.5-flash` and `gemini-2.5-pro` via the `google-genai` SDK with Vertex AI backend |
+| **Code Execution** | Gemini can write and run Python code inline using the native Code Execution tool |
+| **Web Search** | Toggle Google Search grounding to give Gemini real-time internet access |
+| **Causal Reasoning** | Optional second-pass analysis that identifies confounders, proposes structural causal models, and estimates treatment effects |
+| **Multi-Model Selection** | Switch between Gemini models from the UI header dropdown |
+| **Chat Persistence** | Full conversation history stored in SQLite with per-chat token tracking |
+| **Dark / Light Mode** | iOS-style toggle for dark and light themes |
+| **Keyless CI/CD** | GitHub Actions deploys to Cloud Run via Workload Identity Federation — zero long-lived keys |
+| **Firebase Hosting** | Static frontend served globally via CDN with automatic SSL and custom domain (`tracerlensai.com`) |
+
+---
+
+## 🔄 How It Works
+
+```
+┌─────────────┐     POST /analyze-prompt      ┌──────────────────┐
+│             │ ──────────────────────────────▶ │                  │
+│  👤 User    │                                │  🔥 Firebase     │
+│  Browser    │ ◀────────────────────────────── │  Hosting (CDN)   │
+│             │     Rendered Markdown + Code    │                  │
+└─────────────┘                                └────────┬─────────┘
+                                                        │ Rewrite Proxy
+                                                        ▼
+                                               ┌──────────────────┐
+                                               │                  │
+                                               │  ⚙️ FastAPI       │
+                                               │  (Cloud Run)     │
+                                               │                  │
+                                               └───┬──────────┬───┘
+                                                   │          │
+                                          Load     │          │  generate_content()
+                                          History  │          │
+                                                   ▼          ▼
+                                            ┌──────────┐ ┌──────────┐
+                                            │ 🗄️ SQLite │ │ 🤖 Gemini │
+                                            │  (Chat   │ │ (Vertex  │
+                                            │   Store) │ │   AI)    │
+                                            └──────────┘ └──────────┘
+```
+
+**Flow:** User sends a prompt → Firebase Hosting serves the static UI and proxies the API call to Cloud Run → FastAPI loads chat history from SQLite, calls Gemini with full context → Gemini returns a response with token usage → FastAPI persists the message and returns JSON → The frontend parses Markdown, highlights code blocks, and updates the token counter.
 
 ---
 
 ## 📂 Repository Structure
 
-```text
-.
-├── terraform/                   # GCP Infrastructure as Code (VPC, GKE, IAM, Storage)
-├── src/                         # Core Python Application
-│   ├── ai_gateway/              # LLM Abstraction & Fallback logic
-│   ├── agent_engine/            # Orchestrator, Tools, and Routing Policies
-│   ├── observability/           # Logging configuration and synthetic evaluation
-│   └── main.py                  # FastAPI Entrypoint
-├── deploy/                      # Containerization (Dockerfile) & Helm Charts
-├── docs/                        # Advanced Developer Documentation
-├── .github/workflows/           # CI/CD Pipeline Definitions (ci.yml, deploy.yml)
-├── docker-compose.dev.yml       # Local development Docker Compose definition
-├── run_tests.sh                 # Docker-based test, lint, and hot-reload runner
-├── build_deploy.sh              # Emergency/manual GCP deploy fallback script
-└── .env.example                 # Template for local dev environment configurations
-```
+For a detailed breakdown of every directory and file, see the [Repository Structure Guide](docs/repository_structure.md).
 
 ---
 
@@ -42,95 +64,85 @@ This project provides a robust architecture for deploying LLM-powered customer s
 
 ### Prerequisites
 
-1.  **Docker & Docker Compose**: Install Docker Desktop on your machine.
-2.  **GCP Account**: An active GCP Project with Vertex AI APIs enabled.
-3.  **Tools**: Install `gcloud` CLI, `terraform`, `kubectl`, and `helm` (only needed for infrastructure setup or manual deployments).
+1. **Docker & Docker Compose** — Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+2. **GCP Account** — A project with [Vertex AI APIs enabled](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com).
+3. **Optional Tools** — `gcloud` CLI, `terraform` (only for infrastructure changes).
 
----
+### Local Development
 
-### Local Development & Testing
+1. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env — set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, and optionally GEMINI_API_KEY
+   ```
 
-All local development and verification is done **inside Docker** using `run_tests.sh` to ensure exact parity with production.
+2. **Run the full test pipeline:**
+   ```bash
+   chmod +x run_tests.sh
+   ./run_tests.sh test
+   ```
+   This builds the Docker image, runs `flake8` linting, `pytest` unit tests, and health-check smoke tests.
 
-1.  **Configure Environment**:
-    Copy the template environment file to `.env`:
+3. **Start the hot-reload dev server:**
+   ```bash
+   ./run_tests.sh --start
+   ```
+   The app will be live at `http://localhost:8080` with automatic reload on file changes.
 
-    ```bash
-    cp .env.example .env
-    ```
+4. **Stop the dev server:**
+   ```bash
+   ./run_tests.sh --stop
+   ```
 
-    Open `.env` and fill in your `GOOGLE_CLOUD_PROJECT` and credentials if needed.
-
-2.  **Run the Test Pipeline**:
-    Execute the test runner script to run the complete build, lint, pytest, and evaluator harness test suite inside containers:
-
-    ```bash
-    chmod +x run_tests.sh
-    ./run_tests.sh
-    ```
-
-    This script will:
-    - Build the local development Docker image.
-    - Run `flake8` linting on `/src`.
-    - Run `pytest` unit tests.
-    - Run the Vertex AI synthetic evaluation harness.
-    - Start the containerized service and verify health endpoints.
-    - Clean up all temporary Docker resources automatically.
-
-3.  **Run the Hot-Reload Dev Server**:
-    To develop interactively with live code reload:
-
-    ```bash
-    ./run_tests.sh --start
-    ```
-
-    The application will start on `http://localhost:8080`. Any changes to files in `./src` will trigger an automatic application reload.
-
-4.  **Stop the Dev Server**:
-    When finished developing:
-
-    ```bash
-    ./run_tests.sh --stop
-    ```
-
-5.  **Clean Docker Resources**:
-    To wipe all containers, local images, and compose volumes:
-    ```bash
-    ./run_tests.sh --clean
-    ```
+5. **Clean all Docker resources:**
+   ```bash
+   ./run_tests.sh --clean
+   ```
 
 ---
 
 ## 🚀 Deployment & CI/CD
 
-Deployment is fully automated and orchestrated via GitHub Actions CI/CD workflows.
+### Automated Deployment (Primary)
 
-### 1. Automated (Primary) Deployments
+| Trigger | Workflow | Action |
+|---|---|---|
+| Pull Request → `main` | `ci.yml` | Lint + test gate (must pass before merge) |
+| Push / Merge → `main` | `cd.yml` | Build → Push to GCR → Deploy to Cloud Run |
+| Manual dispatch | `cd.yml` | Choose `cloudrun` or `gke` target from GitHub Actions UI |
 
-- **Lint & Test Gating**: Every Pull Request targeting `main` triggers `.github/workflows/ci.yml` to lint and test the code.
-- **Staging Deploy**: Merges into the `main` branch trigger `.github/workflows/deploy.yml` to build, tag (`latest` + Git SHA), push to GCP Artifact Registry, and deploy to the GKE Staging environment.
-- **Production Deploy**: Pushing a git release tag matching `v[0-9]+.*` (e.g., `v1.2.0`) triggers deployment to GKE Production (subject to manual approval gates in GitHub Environments).
+Authentication is fully keyless via **Workload Identity Federation** (OIDC). No service account JSON keys are stored anywhere.
 
-### 2. Manual Deploy Fallback
+### Firebase Hosting (Frontend)
 
-If the CI/CD pipeline is unavailable, you can manually build, push, and deploy to GCP using `build_deploy.sh`.
+The static frontend is deployed separately to Firebase Hosting:
+```bash
+firebase deploy --only hosting --project icarus-agent-26
+```
+
+Firebase Hosting serves static files globally via CDN and proxies API requests to Cloud Run via the rewrite rules in `firebase.json`.
+
+### Manual Fallback Script
+
+If CI/CD is unavailable:
+```bash
+# Deploy to Cloud Run
+./deploy_to_gcp.sh --target cloudrun
+
+# Deploy to GKE (alternative)
+./deploy_to_gcp.sh --target gke
+```
 
 > [!WARNING]
-> Manual deployment should only be used as a last resort/escape hatch. Always prefer standard branch merges for deployments.
-
-- **Dry Run (Verify actions first)**:
-  ```bash
-  chmod +x build_deploy.sh
-  ./build_deploy.sh --dry-run
-  ```
-- **Execute Deployment**:
-  ```bash
-  ./build_deploy.sh
-  ```
-  _(Requires local `gcloud` authentication and container cluster access)._
+> Manual deployment should only be used as a last resort. Always prefer standard branch merges.
 
 ---
 
 ## 📚 Documentation
 
-For an in-depth look at modifying the agent state graph, adding new LLM providers, local Docker architecture, and managing the Workload Identity CI/CD setup, please refer to the [Advanced Developer Guide](docs/developer_guide.md).
+| Document | Description |
+|---|---|
+| [Developer Guide](docs/developer_guide.md) | Architecture deep-dive, full API reference, function-level docs for every source file |
+| [Repository Structure](docs/repository_structure.md) | Detailed breakdown of every directory and file in the codebase |
+| [Deployment Guide](docs/deployment_guide.md) | Step-by-step deployment methods and infrastructure provisioning |
+| [Advanced Deployment](docs/advanced_deployment.md) | Terraform, WIF, Firebase Hosting, and Cloud Run architecture details |

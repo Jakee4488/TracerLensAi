@@ -1,0 +1,58 @@
+# =============================================================================
+# uptime.yml — Health Check & Uptime Badge
+#
+# Runs every 5 minutes, pings the live app health endpoint, and updates
+# a JSON badge file that shields.io reads to display the uptime status.
+# =============================================================================
+name: "Uptime Monitor"
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Every 5 minutes
+  workflow_dispatch:        # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: "Health Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ping Health Endpoint
+        id: health
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://tracerlensai.com/health || echo "000")
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "status=up" >> $GITHUB_OUTPUT
+            echo "color=brightgreen" >> $GITHUB_OUTPUT
+            echo "message=operational" >> $GITHUB_OUTPUT
+          else
+            echo "status=down" >> $GITHUB_OUTPUT
+            echo "color=red" >> $GITHUB_OUTPUT
+            echo "message=down ($HTTP_CODE)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Badge JSON
+        run: |
+          mkdir -p .github/badges
+          cat > .github/badges/uptime.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "status",
+            "message": "${{ steps.health.outputs.message }}",
+            "color": "${{ steps.health.outputs.color }}"
+          }
+          EOF
+
+      - name: Commit Badge Update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/badges/uptime.json
+          git diff --staged --quiet || git commit -m "chore: update uptime badge [skip ci]"
+          git push

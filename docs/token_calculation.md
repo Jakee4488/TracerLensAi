@@ -4,7 +4,7 @@ When designing and operating agentic workflows, understanding how tokens compoun
 
 ## The Compounding Formula
 
-The core of the token calculation engine (located in `src/observability/workflow_optimizer.py`) relies on the following compounding formula:
+The core of the token calculation model uses the following compounding formula. This model informs the architectural decisions behind TracerLensAi's multi-turn context management and is used to predict costs for agentic workflows:
 
 ```
 E_total ≈ N · P + N(N−1)/2 · (O_avg + T_avg)
