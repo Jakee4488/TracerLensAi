@@ -23,6 +23,8 @@
 ---
 
 ## 🔄 How It Works
+<img width="1912" height="946" alt="image" src="https://github.com/user-attachments/assets/0b80699b-f328-4912-a4e5-906889c5df87" />
+
 
 ```
 ┌─────────────┐      POST /analyze-prompt      ┌──────────────────────┐
