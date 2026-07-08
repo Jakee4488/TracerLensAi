@@ -41,6 +41,11 @@ elif [ "$TARGET" = "gke" ]; then
         --set image.tag=latest \
         --set env.GOOGLE_CLOUD_PROJECT=${PROJECT_ID} \
         --set env.GOOGLE_CLOUD_REGION=${REGION}
+elif [ "$TARGET" = "agent-runtime" ]; then
+    echo "Deploying to Gemini Enterprise Agent Platform..."
+    # The agents-cli requires the agent payload to be scaffolded and authenticated.
+    # In a real environment, you'd run `agents-cli login` or use WIF in CI/CD.
+    agents-cli deploy --project ${PROJECT_ID} --region ${REGION}
 else
     echo "Unknown target: $TARGET"
     exit 1
