@@ -61,6 +61,7 @@ jobs:
             --region ${{ env.REGION }} \
             --project ${{ env.PROJECT_ID }} \
             --service-account agent-app-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
+            --set-env-vars AGENT_ENGINE_ENDPOINT=${{ vars.AGENT_ENGINE_ENDPOINT }} \
             --allow-unauthenticated
 
       - name: Deploy to GKE
