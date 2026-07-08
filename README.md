@@ -25,29 +25,29 @@
 ## 🔄 How It Works
 
 ```
-┌─────────────┐     POST /analyze-prompt      ┌──────────────────┐
-│             │ ──────────────────────────────▶ │                  │
-│  👤 User    │                                │  🔥 Firebase     │
-│  Browser    │ ◀────────────────────────────── │  Hosting (CDN)   │
-│             │     Rendered Markdown + Code    │                  │
-└─────────────┘                                └────────┬─────────┘
-                                                        │ Rewrite Proxy
-                                                        ▼
-                                               ┌──────────────────┐
-                                               │                  │
-                                               │  ⚙️ FastAPI       │
-                                               │  (Cloud Run)     │
-                                               │                  │
-                                               └───┬──────────┬───┘
-                                                   │          │
-                                          Load     │          │  generate_content()
-                                          History  │          │
-                                                   ▼          ▼
-                                            ┌──────────┐ ┌──────────┐
-                                            │ 🗄️ SQLite │ │ 🤖 Gemini │
-                                            │  (Chat   │ │ (Vertex  │
-                                            │   Store) │ │   AI)    │
-                                            └──────────┘ └──────────┘
+┌─────────────┐      POST /analyze-prompt      ┌──────────────────────┐
+│             │ ──────────────────────────────▶│                      │
+│ User        │                                │ Firebase             │
+│ Browser     │ ◀───────────────────────────── │ Hosting (CDN)        │
+│             │    Rendered Markdown + Code    │                      │
+└─────────────┘                                └───────────┬──────────┘
+                                                           │ Rewrite Proxy
+                                                           ▼
+                                               ┌──────────────────────┐
+                                               │                      │
+                                               │ FastAPI              │
+                                               │ (Cloud Run)          │
+                                               │                      │
+                                               └───┬──────────────┬───┘
+                                                   │              │
+                                          Load     │              │ generate_content()
+                                          History  │              │
+                                                   ▼              ▼
+                                              ┌──────────┐   ┌──────────┐
+                                              │ SQLite   │   │ Gemini   │
+                                              │ (Chat    │   │ (Vertex  │
+                                              │ Store)   │   │ AI)      │
+                                              └──────────┘   └──────────┘
 ```
 
 **Flow:** User sends a prompt → Firebase Hosting serves the static UI and proxies the API call to Cloud Run → FastAPI loads chat history from SQLite, calls Gemini with full context → Gemini returns a response with token usage → FastAPI persists the message and returns JSON → The frontend parses Markdown, highlights code blocks, and updates the token counter.
