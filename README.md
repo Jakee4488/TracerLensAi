@@ -67,6 +67,7 @@ For a detailed breakdown of every directory and file, see the [Repository Struct
 ### Prerequisites
 
 1. **Docker & Docker Compose** — Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
 2. **GCP Account** — A project with [Vertex AI APIs enabled](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com).
 3. **Optional Tools** — `gcloud` CLI, `terraform` (only for infrastructure changes).
 
@@ -78,12 +79,14 @@ For a detailed breakdown of every directory and file, see the [Repository Struct
    # Edit .env — set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, and optionally GEMINI_API_KEY
    ```
 
+
 2. **Run the full test pipeline:**
    ```bash
    chmod +x run_tests.sh
    ./run_tests.sh test
    ```
    This builds the Docker image, runs `flake8` linting, `pytest` unit tests, and health-check smoke tests.
+
 
 3. **Start the hot-reload dev server:**
    ```bash
@@ -96,10 +99,12 @@ For a detailed breakdown of every directory and file, see the [Repository Struct
    ./run_tests.sh --stop
    ```
 
+
 5. **Clean all Docker resources:**
    ```bash
    ./run_tests.sh --clean
    ```
+
 
 ---
 
