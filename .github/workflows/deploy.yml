@@ -69,7 +69,7 @@ jobs:
       - name: Deploy to Cloud Run Functions
         if: ${{ github.event.inputs.target == 'cloudrun-functions' || (github.event_name == 'push' && vars.DEFAULT_TARGET == 'cloudrun-functions') }}
         run: |
-          gcloud functions deploy tracerlensai-app \
+          gcloud functions deploy tracerlensai-fn \
             --gen2 \
             --runtime=python312 \
             --region=${{ env.REGION }} \

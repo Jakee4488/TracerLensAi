@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
 
 TARGET="cloudrun"
 
@@ -38,9 +39,10 @@ if [ "$TARGET" = "cloudrun" ]; then
         --allow-unauthenticated
 elif [ "$TARGET" = "cloudrun-functions" ]; then
     echo "Deploying to Cloud Run Functions..."
-    gcloud functions deploy tracerlensai-app \
+    gcloud functions deploy tracerlensai-fn \
         --gen2 \
         --runtime=python312 \
+        --memory=1024MB \
         --region=${REGION} \
         --source=. \
         --entry-point=proxy_app \
@@ -55,9 +57,7 @@ elif [ "$TARGET" = "gke" ]; then
         --set env.GOOGLE_CLOUD_PROJECT=${PROJECT_ID} \
         --set env.GOOGLE_CLOUD_REGION=${REGION}
 elif [ "$TARGET" = "agent-runtime" ]; then
-    echo "Evaluating and Deploying to Gemini Enterprise Agent Platform..."
-    # Evaluate the agent before deploying
-    agents-cli eval
+    echo "Deploying to Gemini Enterprise Agent Platform..."
     agents-cli deploy --project ${PROJECT_ID} --region ${REGION} --deployment-target agent_runtime
 else
     echo "Unknown target: $TARGET"

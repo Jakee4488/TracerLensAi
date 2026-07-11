@@ -16,7 +16,7 @@ from typing import Optional
 app = FastAPI(title="TracerLensAi Proxy")
 
 # ── Static Files ─────────────────────────────────────────────────────────────
-app.mount("/static", StaticFiles(directory="src/static"), name="static")
+app.mount("/static", StaticFiles(directory="proxy/static"), name="static")
 
 @app.get("/")
 def read_root():
@@ -40,11 +40,11 @@ class PromptRequest(BaseModel):
 
 @app.post("/analyze-prompt")
 async def analyze_prompt(req: PromptRequest):
-    """Proxy the request to the Vertex AI Agent Engine."""
+    """Proxy the request to the Vertex AI Agent Engine (streaming)."""
 
-    agent_engine_url = os.getenv("AGENT_ENGINE_ENDPOINT")
+    agent_engine_base = os.getenv("AGENT_ENGINE_ENDPOINT")
 
-    if not agent_engine_url:
+    if not agent_engine_base:
         # Mock response for local development if Agent Runtime is not configured
         return {
             "status": "success",
@@ -52,6 +52,10 @@ async def analyze_prompt(req: PromptRequest):
             "total_token_count": 10,
             "causal_reasoning_steps": ["Causal reasoning mocked in proxy."] if req.causal_reasoning else []
         }
+
+    # Derive the streaming endpoint from the base query URL
+    # e.g. .../reasoningEngines/ID:query  →  .../reasoningEngines/ID:streamQuery
+    stream_url = agent_engine_base.replace(":query", ":streamQuery")
 
     # Use Application Default Credentials (ADC) for Vertex AI auth
     try:
@@ -67,34 +71,63 @@ async def analyze_prompt(req: PromptRequest):
         "Content-Type": "application/json"
     }
 
-    # Vertex AI Reasoning Engine expects payload wrapped in {"input": {...}}
+    # ADK AdkApp only registers stream_query (no sync "query" method)
     payload = {
+        "class_method": "stream_query",
         "input": {
-            "query": req.prompt,
+            "message": req.prompt,
+            "user_id": "default-user",
             "session_id": req.chat_id or "default-session",
-            "causal_reasoning": req.causal_reasoning,
-            "web_search": req.web_search,
-            "model_name": req.model_name
         }
     }
 
+    collected_text = []
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(agent_engine_url, json=payload, headers=headers, timeout=120.0)
-            resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream("POST", stream_url, json=payload, headers=headers) as resp:
+                print(f"DEBUG: status_code={resp.status_code}")
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    raise HTTPException(status_code=resp.status_code, detail=f"Agent Engine error: {body.decode()}")
+                
+                body_bytes = await resp.aread()
+                print(f"DEBUG: body_bytes={body_bytes}")
+                
+                import io
+                lines = io.BytesIO(body_bytes).readlines()
+                for line_bytes in lines:
+                    line = line_bytes.decode('utf-8').strip()
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        import json as _json
+                        print(f"DEBUG LINE: {line}")
+                        event = _json.loads(line)
+                        # ADK streams events; grab text from content parts
+                        parts = (event.get("content") or {}).get("parts") or []
+                        for part in parts:
+                            if isinstance(part, dict) and part.get("text"):
+                                collected_text.append(part["text"])
+                        # Also handle top-level "output" key
+                        if event.get("output"):
+                            collected_text.append(str(event["output"]))
+                    except Exception:
+                        # Plain text line
+                        collected_text.append(line)
 
-            agent_data = resp.json()
-
-            # The Reasoning Engine wraps the response under "output"
-            output = agent_data.get("output", agent_data)
-
-            return {
-                "status": "success",
-                "response": output.get("response", output.get("text", str(output))),
-                "total_token_count": output.get("token_count", output.get("usage", {}).get("total_tokens", 0)),
-                "causal_reasoning_steps": output.get("causal_steps", [])
-            }
+        return {
+            "status": "success",
+            "response": "".join(collected_text) or "(no response)",
+            "total_token_count": 0,
+            "causal_reasoning_steps": []
+        }
     except httpx.HTTPStatusError as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=e.response.status_code, detail=f"Agent Engine error: {e.response.text}")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+

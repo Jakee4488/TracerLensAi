@@ -103,7 +103,12 @@ document.addEventListener("DOMContentLoaded", () => {
                     chat_id: currentChatId
                 })
             });
+            
             const report = await analysisResponse.json();
+
+            if (!analysisResponse.ok) {
+                throw new Error(report.detail || "Unknown error occurred on the backend.");
+            }
 
             // Update Token Tally
             if (report.total_token_count) {
