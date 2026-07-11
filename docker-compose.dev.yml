@@ -21,16 +21,18 @@ services:
       dockerfile: Dockerfile
     image: tracerlensai-dev:latest
     container_name: tracerlensai-dev
+    user: "root"
     ports:
       - "8080:8080"
 
     # Override the production CMD with hot-reload for development
     command: >
-      uvicorn src.main:app --host 0.0.0.0 --port 8080 --reload --reload-dir /app/src
+      uvicorn src.fast_api_app:app --host 0.0.0.0 --port 8080 --reload --reload-dir /app/src
 
     # Mount source code for live editing (overrides the COPY in Dockerfile)
     volumes:
       - ./src:/app/src:ro
+      - ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
 
     # Load environment from .env file (create from .env.example)
     env_file:
@@ -41,6 +43,8 @@ services:
       - ENVIRONMENT=development
       - GOOGLE_CLOUD_PROJECT=icarus-agent-26
       - GOOGLE_CLOUD_LOCATION=us-central1
+      - GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json
+      - PYTHONPATH=/home/tracerlensaiuser/.local/lib/python3.12/site-packages:/app
 
     # Health check matching the production readiness probe
     healthcheck:

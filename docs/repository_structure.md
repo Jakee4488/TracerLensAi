@@ -10,45 +10,55 @@ For a high-level overview of the project, see the [README](../README.md).
 
 ```text
 TracerLensAi/
-├── src/                             # Core Application
-├── terraform/                       # GCP Infrastructure as Code
-├── .github/                         # CI/CD Pipelines & Badges
-├── tests/                           # Test Suite
-├── helm/                            # Optional GKE Helm Charts
+├── .github/                         # CI/CD Pipelines
 ├── docs/                            # Documentation
-├── Dockerfile                       # Container build definition
-├── docker-compose.dev.yml           # Local development environment
-├── requirements.txt                 # Python dependencies
-├── run_tests.sh                     # Dev/test automation script
+├── helm/                            # Helm charts for GKE
+├── proxy/                           # FastAPI proxy & static frontend
+├── src/                             # Core Agent logic (ADK)
+├── terraform/                       # GCP Infrastructure as Code
+├── test-agent/                      # Secondary agent scaffold project
+├── tests/                           # Test Suite
+├── .env.example                     # Environment variable template
+├── agents-cli-manifest.yaml         # Config for Gemini Enterprise Agent Platform
+├── deploy_agent.py                  # Legacy manual reasoning engine deployment
 ├── deploy_to_gcp.sh                 # Manual deployment fallback
+├── docker-compose.dev.yml           # Local development environment
+├── Dockerfile                       # Container build definition for Agent
+├── Dockerfile.proxy                 # Container build definition for Proxy
 ├── firebase.json                    # Firebase Hosting configuration
-├── .firebaserc                      # Firebase project binding
-└── .env.example                     # Environment variable template
+├── main.py                          # Cloud Run Functions entrypoint
+└── requirements.txt                 # Python dependencies
 ```
 
 ---
 
-## `src/` — Core Application
+## `src/` & `proxy/` — Core Application & Gateway
 
-The entire application lives here. There are no sub-packages — the backend is intentionally kept flat for simplicity.
+The application is split into the core agent logic (`src/`) and a lightweight proxy server (`proxy/`).
 
 ```text
 src/
-├── main.py                          # FastAPI backend proxy
 ├── agent.py                         # ADK Agent Logic
+├── fast_api_app.py                  # FastAPI implementation for the Agent
+├── function.py                      # Cloud Run Functions adapter
+└── app_utils/                       # Helper utilities (telemetry, typing, etc.)
+
+proxy/
+├── main.py                          # FastAPI backend proxy serving as a gateway
 └── static/                          # Frontend assets
     ├── index.html                   # Main UI shell
     ├── causal-agent.js              # Client-side chat logic
-    └── styles.css                   # Design system (dark/light mode)
+    └── styles.css                   # Design system
 ```
 
 | File | Role |
 |---|---|
-| `main.py` | The single FastAPI entrypoint. Acts as a lightweight proxy that forwards `/analyze-prompt` requests to the Vertex AI Agent Engine. |
-| `agent.py` | Implements the Agent Development Kit (ADK) logic, registers tools, and relies on the platform Memory Bank for persistence. |
-| `static/index.html` | The HTML shell with a two-panel layout: a collapsible sidebar (navigation + history) and the main chat area (header controls, messages, input). |
-| `static/causal-agent.js` | All client-side logic: sending messages, creating chat sessions, loading history, rendering AI responses as Markdown with syntax highlighting, and managing UI state (dark mode, token badge). |
-| `static/styles.css` | The full CSS design system using custom properties. Defines dark and light mode palettes, responsive breakpoints (sidebar collapses at ≤768px), animations (typing indicator), and all component styles. |
+| `proxy/main.py` | The FastAPI entrypoint that acts as a lightweight proxy, forwarding `/analyze-prompt` requests to the Vertex AI Agent Engine. |
+| `src/agent.py` | Implements the Agent Development Kit (ADK) logic, registers tools, and relies on the platform Memory Bank for persistence. |
+| `src/function.py` | Adapter to run the application as a Cloud Run Function. |
+| `proxy/static/index.html` | The HTML shell with a two-panel layout: a collapsible sidebar and the main chat area. |
+| `proxy/static/causal-agent.js` | Client-side logic for chat sessions, rendering Markdown, and managing UI state. |
+| `proxy/static/styles.css` | CSS design system for dark/light mode, animations, and component styles. |
 
 ---
 
@@ -85,7 +95,7 @@ terraform/
 .github/
 ├── workflows/
 │   ├── ci.yml                       # PR gate — lint & test
-│   ├── cd.yml                       # Continuous deployment to Cloud Run
+│   ├── deploy.yml                   # Continuous deployment
 │   └── uptime.yml                   # Health check & uptime badge
 └── badges/
     └── uptime.json                  # shields.io badge data
@@ -93,8 +103,8 @@ terraform/
 
 | Workflow | Trigger | Action |
 |---|---|---|
-| `ci.yml` | Pull request → `main` | Runs `./run_tests.sh test` (flake8 + pytest) |
-| `cd.yml` | Push to `main` or manual dispatch | Deploy ADK Agent to Agent Runtime and/or Build Docker → Push to GCR → Deploy Proxy to Cloud Run |
+| `ci.yml` | Pull request → `main` | Runs tests (flake8 + pytest) |
+| `deploy.yml` | Push to `main` or manual dispatch | Deploy ADK Agent to Agent Runtime, Build Docker → Push to GCR, and Deploy Proxy to Cloud Run / Functions / GKE |
 | `uptime.yml` | Every 5 minutes (cron) | Pings `/health`, updates `uptime.json` badge |
 
 ---
@@ -130,12 +140,15 @@ Only used if deploying to GKE instead of Cloud Run. The `cd.yml` workflow and `d
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Multi-stage build: Stage 1 installs Python deps, Stage 2 creates a non-root runtime with graphviz. Runs `uvicorn` on port 8080. |
+| `Dockerfile` | Multi-stage build definition for the core application. |
+| `Dockerfile.proxy` | Multi-stage build definition specifically for the proxy server. |
 | `docker-compose.dev.yml` | Services: `tracerlensai-app` (hot-reload dev proxy), `test-runner` (pytest), `causal-agent-ui-test` (Playwright). |
-| `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, pytest, flake8, playwright. |
-| `run_tests.sh` | Docker-based automation: `test`, `--start`, `--stop`, `--clean`, `--commit`. |
-| `deploy_to_gcp.sh` | Manual fallback: builds, pushes, deploys to Cloud Run or GKE. |
-| `firebase.json` | Firebase Hosting config: serves `src/static/`, rewrites API calls to Cloud Run. |
+| `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, pytest, flake8, playwright, functions-framework. |
+| `main.py` | Cloud Run Functions entrypoint exporting `proxy_app` from `src.function`. |
+| `agents-cli-manifest.yaml` | Configuration for deploying via the Gemini Enterprise Agent Platform. |
+| `deploy_to_gcp.sh` | Manual fallback script: builds, pushes, deploys to Cloud Run, Cloud Run Functions, GKE, or Agent Runtime. |
+| `deploy_agent.py` | Legacy manual reasoning engine deployment script. |
+| `firebase.json` | Firebase Hosting config: serves `proxy/static/`, rewrites API calls to Cloud Run. |
 | `.firebaserc` | Binds Firebase CLI to project `icarus-agent-26`. |
 | `.env.example` | Template for `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION`, `GEMINI_API_KEY`. |
 | `pytest.ini` | Pytest configuration. |
