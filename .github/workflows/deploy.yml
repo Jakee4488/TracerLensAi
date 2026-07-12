@@ -64,10 +64,12 @@ jobs:
         run: pip install uv google-agents-cli
 
       - name: Create .env for deploy_to_gcp.sh
+        # AGENT_ENGINE_ENDPOINT is intentionally not set here: the script
+        # derives it from deployment_metadata.json, which agents-cli keeps
+        # current (the old repo-level var went stale and broke the proxy).
         run: |
           echo "GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" > .env
           echo "GOOGLE_CLOUD_REGION=${{ env.REGION }}" >> .env
-          echo "AGENT_ENGINE_ENDPOINT=${{ vars.AGENT_ENGINE_ENDPOINT }}" >> .env
 
       - name: Deploy
         run: |

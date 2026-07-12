@@ -74,8 +74,15 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
         --project "${PROJECT_ID}"
         --allow-unauthenticated
     )
-    # Point the proxy at the Agent Engine when configured; otherwise the
-    # service keeps whatever AGENT_ENGINE_ENDPOINT it already has.
+    # Point the proxy at the Agent Engine. deployment_metadata.json is kept
+    # current by agents-cli on every agent deploy, so it is the source of
+    # truth; an explicit AGENT_ENGINE_ENDPOINT env var overrides it.
+    if [ -z "${AGENT_ENGINE_ENDPOINT:-}" ] && [ -f deployment_metadata.json ]; then
+        ENGINE_ID=$(sed -n 's/.*"remote_agent_runtime_id": *"\([^"]*\)".*/\1/p' deployment_metadata.json)
+        if [ -n "${ENGINE_ID}" ]; then
+            AGENT_ENGINE_ENDPOINT="https://${REGION}-aiplatform.googleapis.com/v1beta1/${ENGINE_ID}:query"
+        fi
+    fi
     if [ -n "${AGENT_ENGINE_ENDPOINT:-}" ]; then
         DEPLOY_ARGS+=(--update-env-vars "AGENT_ENGINE_ENDPOINT=${AGENT_ENGINE_ENDPOINT}")
     fi
