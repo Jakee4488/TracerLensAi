@@ -1,8 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
-import os
 
-from src.main import app
+from proxy.main import app
 
 @pytest.fixture
 def client():

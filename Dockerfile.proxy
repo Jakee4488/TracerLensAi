@@ -27,8 +27,8 @@ COPY --chown=tracerlensaiuser:tracerlensaiuser --from=builder /root/.local /home
 ENV PATH=/home/tracerlensaiuser/.local/bin:$PATH
 ENV PYTHONPATH="/app:${PYTHONPATH:-}"
 
-# Copy source code
-COPY src/ /app/src/
+# Copy the proxy backend and static UI it serves
+COPY proxy/ /app/proxy/
 
 # Set ownership to non-root user
 RUN chown -R tracerlensaiuser:tracerlensaiuser /app

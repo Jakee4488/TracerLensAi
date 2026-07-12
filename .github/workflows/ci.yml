@@ -1,8 +1,8 @@
 # =============================================================================
 # ci.yml — Pull Request CI
 #
-# Triggers: every pull_request targeting main
-# Jobs    : run_tests.sh test
+# Triggers: every pull_request targeting gemini-agent-platform
+# Jobs    : pytest (backend suite; UI tests excluded — they need a live stack)
 # Purpose : Gate PRs — must pass before merge is allowed
 # =============================================================================
 name: "CI — Pull Request Checks"
@@ -20,16 +20,17 @@ jobs:
   test_pipeline:
     name: "Full Test Pipeline"
     runs-on: ubuntu-latest
-    env:
-      GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
-      GOOGLE_CLOUD_REGION:  ${{ vars.GOOGLE_CLOUD_REGION }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create .env file for run_tests.sh
-        run: |
-          echo "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}" > .env
-          echo "GOOGLE_CLOUD_REGION=${GOOGLE_CLOUD_REGION}" >> .env
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
 
-      - name: Run Test Pipeline
-        run: ./run_tests.sh test
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m pytest tests/ --ignore=tests/ui_tests -v --tb=short
