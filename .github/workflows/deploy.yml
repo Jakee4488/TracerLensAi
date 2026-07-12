@@ -60,7 +60,8 @@ jobs:
           python-version: '3.12'
 
       - name: Install agents-cli
-        run: pip install google-agents-cli
+        # agents-cli shells out to uv when packaging the agent source
+        run: pip install uv google-agents-cli
 
       - name: Create .env for deploy_to_gcp.sh
         run: |
