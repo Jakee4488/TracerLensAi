@@ -53,7 +53,8 @@ IMAGE_NAME="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 # pickle-based package_spec flow — agents-cli is the only supported updater.
 if [ "$ONLY" = "all" ] || [ "$ONLY" = "agent" ]; then
     echo "▶ [1/3] Deploying ADK agent (src/) to Vertex AI Agent Engine..."
-    command -v agents-cli >/dev/null || { echo "agents-cli not found. Install with: pip install google-agents-cli"; exit 1; }
+    command -v agents-cli >/dev/null || { echo "agents-cli not found. Install with: pip install uv google-agents-cli"; exit 1; }
+    command -v uv >/dev/null || { echo "uv not found (agents-cli needs it for packaging). Install with: pip install uv"; exit 1; }
     agents-cli deploy \
         --project "${PROJECT_ID}" \
         --region "${REGION}" \
