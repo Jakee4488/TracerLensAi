@@ -24,6 +24,7 @@ from google.adk.cli.fast_api import get_fast_api_app
 from google.adk.runners import Runner
 from google.cloud import logging as google_cloud_logging
 
+from src.agent import adk_app, root_agent
 from src.app_utils import services
 from src.app_utils.a2a import attach_a2a_routes
 from src.app_utils.reasoning_engine_adapter import (
@@ -54,9 +55,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Runner for the A2A path, sharing the same session/artifact services as the
     # adk_api and reasoning_engine paths (see services.py). Imported here so the
     # agent is built after env/telemetry setup.
-    from src.agent import adk_app
-    from src.agent import agent as root_agent
-
     runner = Runner(
         app=adk_app,
         session_service=services.get_session_service(),

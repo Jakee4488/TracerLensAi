@@ -12,7 +12,6 @@ For a high-level overview of the project, see the [README](../README.md).
 TracerLensAi/
 ├── .github/                         # CI/CD Pipelines
 ├── docs/                            # Documentation
-├── helm/                            # Helm charts for GKE
 ├── proxy/                           # FastAPI proxy & static frontend
 ├── src/                             # Core Agent logic (ADK)
 ├── terraform/                       # GCP Infrastructure as Code
@@ -20,13 +19,11 @@ TracerLensAi/
 ├── tests/                           # Test Suite
 ├── .env.example                     # Environment variable template
 ├── agents-cli-manifest.yaml         # Config for Gemini Enterprise Agent Platform
-├── deploy_agent.py                  # Legacy manual reasoning engine deployment
-├── deploy_to_gcp.sh                 # Manual deployment fallback
+├── deploy_to_gcp.sh                 # One-step deployment: Agent Engine → Cloud Run → Firebase Hosting
 ├── docker-compose.dev.yml           # Local development environment
 ├── Dockerfile                       # Container build definition for Agent
 ├── Dockerfile.proxy                 # Container build definition for Proxy
 ├── firebase.json                    # Firebase Hosting configuration
-├── main.py                          # Cloud Run Functions entrypoint
 └── requirements.txt                 # Python dependencies
 ```
 
@@ -40,7 +37,6 @@ The application is split into the core agent logic (`src/`) and a lightweight pr
 src/
 ├── agent.py                         # ADK Agent Logic
 ├── fast_api_app.py                  # FastAPI implementation for the Agent
-├── function.py                      # Cloud Run Functions adapter
 └── app_utils/                       # Helper utilities (telemetry, typing, etc.)
 
 proxy/
@@ -55,7 +51,6 @@ proxy/
 |---|---|
 | `proxy/main.py` | The FastAPI entrypoint that acts as a lightweight proxy, forwarding `/analyze-prompt` requests to the Vertex AI Agent Engine. |
 | `src/agent.py` | Implements the Agent Development Kit (ADK) logic, registers tools, and relies on the platform Memory Bank for persistence. |
-| `src/function.py` | Adapter to run the application as a Cloud Run Function. |
 | `proxy/static/index.html` | The HTML shell with a two-panel layout: a collapsible sidebar and the main chat area. |
 | `proxy/static/causal-agent.js` | Client-side logic for chat sessions, rendering Markdown, and managing UI state. |
 | `proxy/static/styles.css` | CSS design system for dark/light mode, animations, and component styles. |
@@ -103,8 +98,8 @@ terraform/
 
 | Workflow | Trigger | Action |
 |---|---|---|
-| `ci.yml` | Pull request → `main` | Runs tests (flake8 + pytest) |
-| `deploy.yml` | Push to `main` or manual dispatch | Deploy ADK Agent to Agent Runtime, Build Docker → Push to GCR, and Deploy Proxy to Cloud Run / Functions / GKE |
+| `ci.yml` | Pull request → `gemini-agent-platform` | Runs the backend pytest suite |
+| `deploy.yml` | Push to `gemini-agent-platform` or manual dispatch | One-step pipeline via `deploy_to_gcp.sh`: Agent Engine → Cloud Run proxy → Firebase Hosting (dispatch can target a single stage) |
 | `uptime.yml` | Every 5 minutes (cron) | Pings `/health`, updates `uptime.json` badge |
 
 ---
@@ -123,19 +118,6 @@ Tests use the `TestClient` for isolated endpoint testing.
 
 ---
 
-## `helm/` — Optional GKE Deployment
-
-```text
-helm/tracerlensai/
-├── Chart.yaml                       # Helm chart metadata
-├── values.yaml                      # Configurable values (image, replicas, env)
-└── templates/                       # Kubernetes manifests
-```
-
-Only used if deploying to GKE instead of Cloud Run. The `cd.yml` workflow and `deploy_to_gcp.sh` script both support `--target gke`.
-
----
-
 ## Root Configuration Files
 
 | File | Purpose |
@@ -143,11 +125,9 @@ Only used if deploying to GKE instead of Cloud Run. The `cd.yml` workflow and `d
 | `Dockerfile` | Multi-stage build definition for the core application. |
 | `Dockerfile.proxy` | Multi-stage build definition specifically for the proxy server. |
 | `docker-compose.dev.yml` | Services: `tracerlensai-app` (hot-reload dev proxy), `test-runner` (pytest), `causal-agent-ui-test` (Playwright). |
-| `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, pytest, flake8, playwright, functions-framework. |
-| `main.py` | Cloud Run Functions entrypoint exporting `proxy_app` from `src.function`. |
+| `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, google-adk, agents-cli, pytest, flake8. |
 | `agents-cli-manifest.yaml` | Configuration for deploying via the Gemini Enterprise Agent Platform. |
-| `deploy_to_gcp.sh` | Manual fallback script: builds, pushes, deploys to Cloud Run, Cloud Run Functions, GKE, or Agent Runtime. |
-| `deploy_agent.py` | Legacy manual reasoning engine deployment script. |
+| `deploy_to_gcp.sh` | One-step deployment: Agent Engine (agents-cli) → Cloud Run proxy (Dockerfile.proxy) → Firebase Hosting; `--only agent\|proxy\|hosting` deploys a single stage. |
 | `firebase.json` | Firebase Hosting config: serves `proxy/static/`, rewrites API calls to Cloud Run. |
 | `.firebaserc` | Binds Firebase CLI to project `icarus-agent-26`. |
 | `.env.example` | Template for `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION`, `GEMINI_API_KEY`. |

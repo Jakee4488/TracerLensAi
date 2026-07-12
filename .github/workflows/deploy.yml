@@ -1,3 +1,13 @@
+# =============================================================================
+# deploy.yml — CD: one-step deployment of the TracerLensAi stack
+#
+# Trigger : push to gemini-agent-platform (full pipeline), or manual dispatch
+#           with an optional single stage.
+# Pipeline: deploy_to_gcp.sh →
+#   1. Vertex AI Agent Engine (src/ via agents-cli, in-place update)
+#   2. Cloud Run proxy `tracerlensai-app` (proxy/ via Dockerfile.proxy)
+#   3. Firebase Hosting (proxy/static + rewrites → Cloud Run)
+# =============================================================================
 name: "CD — Deploy to GCP"
 
 on:
@@ -6,32 +16,31 @@ on:
       - gemini-agent-platform
   workflow_dispatch:
     inputs:
-      target:
-        description: 'Deployment Target'
+      stage:
+        description: 'Deployment stage'
         required: true
-        default: 'cloudrun'
+        default: 'all'
         type: choice
         options:
-          - agent-runtime
-          - cloudrun
-          - cloudrun-functions
-          - gke
+          - all
+          - agent
+          - proxy
+          - hosting
 
 env:
   PROJECT_ID: 'icarus-agent-26'
   REGION: 'europe-west2'
-  IMAGE_NAME: gcr.io/icarus-agent-26/tracerlensai-app
 
 jobs:
   deploy:
-    name: "Build and Deploy"
+    name: "Deploy Agent Engine → Cloud Run → Firebase Hosting"
     runs-on: ubuntu-latest
-    
+
     # Required for Workload Identity Federation (OIDC)
     permissions:
       contents: 'read'
       id-token: 'write'
-      
+
     steps:
       - uses: actions/checkout@v4
 
@@ -45,57 +54,25 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Configure Docker
-        run: gcloud auth configure-docker gcr.io --quiet
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-      - name: Build and Push Docker Image
-        if: ${{ github.event.inputs.target == 'cloudrun' || github.event.inputs.target == 'gke' || (github.event_name == 'push' && vars.DEFAULT_TARGET != 'cloudrun-functions') }}
-        run: |
-          docker build -t ${{ env.IMAGE_NAME }}:${{ github.sha }} -t ${{ env.IMAGE_NAME }}:latest .
-          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ env.IMAGE_NAME }}:latest
+      - name: Install agents-cli
+        run: pip install google-agents-cli
 
-      - name: Deploy to Cloud Run Service
-        if: ${{ github.event.inputs.target == 'cloudrun' || (github.event_name == 'push' && vars.DEFAULT_TARGET == 'cloudrun') }}
-        run: |
-          gcloud run deploy tracerlensai-app \
-            --image ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            --region ${{ env.REGION }} \
-            --project ${{ env.PROJECT_ID }} \
-            --service-account agent-app-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --set-env-vars AGENT_ENGINE_ENDPOINT=${{ vars.AGENT_ENGINE_ENDPOINT }} \
-            --allow-unauthenticated
-
-      - name: Deploy to Cloud Run Functions
-        if: ${{ github.event.inputs.target == 'cloudrun-functions' || (github.event_name == 'push' && vars.DEFAULT_TARGET == 'cloudrun-functions') }}
-        run: |
-          gcloud functions deploy tracerlensai-fn \
-            --gen2 \
-            --runtime=python312 \
-            --region=${{ env.REGION }} \
-            --source=. \
-            --entry-point=proxy_app \
-            --trigger-http \
-            --allow-unauthenticated \
-            --project=${{ env.PROJECT_ID }} \
-            --service-account agent-app-sa@${{ env.PROJECT_ID }}.iam.gserviceaccount.com \
-            --set-env-vars AGENT_ENGINE_ENDPOINT=${{ vars.AGENT_ENGINE_ENDPOINT }}
-
-      - name: Deploy to GKE
-        if: ${{ github.event.inputs.target == 'gke' || (github.event_name == 'push' && vars.DEFAULT_TARGET == 'gke') }}
-        run: |
-          gcloud container clusters get-credentials my-cluster --region ${{ env.REGION }} --project ${{ env.PROJECT_ID }}
-          helm upgrade --install tracerlensai ./helm/tracerlensai \
-            --set image.tag=${{ github.sha }} \
-            --set env.GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }} \
-            --set env.GOOGLE_CLOUD_REGION=${{ env.REGION }}
-
-      - name: Deploy to Agent Platform
-        if: ${{ github.event.inputs.target == 'agent-runtime' || github.event_name == 'push' }}
+      - name: Create .env for deploy_to_gcp.sh
         run: |
           echo "GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" > .env
           echo "GOOGLE_CLOUD_REGION=${{ env.REGION }}" >> .env
-          pip install uv google-agents-cli
-          echo "Deploying the ADK Agent to Agent Runtime..."
+          echo "AGENT_ENGINE_ENDPOINT=${{ vars.AGENT_ENGINE_ENDPOINT }}" >> .env
+
+      - name: Deploy
+        run: |
           chmod +x deploy_to_gcp.sh
-          ./deploy_to_gcp.sh --target agent-runtime
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.stage }}" != "all" ]; then
+            ./deploy_to_gcp.sh --only "${{ github.event.inputs.stage }}"
+          else
+            ./deploy_to_gcp.sh
+          fi

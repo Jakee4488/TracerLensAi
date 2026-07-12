@@ -32,6 +32,7 @@ MANIFEST
 
 # Virtual environments
 venv/
+venv2/
 env/
 .venv/
 .env/
@@ -81,3 +82,5 @@ app.db
 # Firebase
 .firebase/
 terraform/firebase-debug.log
+
+test.ipynb

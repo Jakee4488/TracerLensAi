@@ -1,16 +1,39 @@
 #!/bin/bash
+# =============================================================================
+# deploy_to_gcp.sh — One-step deployment of the TracerLensAi stack
+#
+# Deploys the full architecture in order:
+#   1. agent   → Vertex AI Agent Engine (src/ via agents-cli, in-place update)
+#   2. proxy   → Cloud Run service `tracerlensai-app` (proxy/ via Dockerfile.proxy)
+#   3. hosting → Firebase Hosting (proxy/static, rewrites /* → Cloud Run)
+#
+# Usage:
+#   ./deploy_to_gcp.sh                  # deploy all three stages
+#   ./deploy_to_gcp.sh --only agent     # just the Agent Engine
+#   ./deploy_to_gcp.sh --only proxy     # just the Cloud Run proxy
+#   ./deploy_to_gcp.sh --only hosting   # just Firebase Hosting
+#
+# Requires: gcloud (authed), agents-cli, docker, firebase CLI or npx.
+# Reads GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_REGION / AGENT_ENGINE_ENDPOINT
+# from .env.
+# =============================================================================
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
-TARGET="cloudrun"
+ONLY="all"
 
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --target) TARGET="$2"; shift ;;
+        --only) ONLY="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
 done
+
+case "$ONLY" in
+    all|agent|proxy|hosting) ;;
+    *) echo "Invalid --only value: $ONLY (expected agent, proxy, or hosting)"; exit 1 ;;
+esac
 
 if [ -f ".env" ]; then
     source .env
@@ -20,48 +43,54 @@ else
 fi
 
 PROJECT_ID=${GOOGLE_CLOUD_PROJECT}
-REGION=${GOOGLE_CLOUD_REGION:-us-central1}
-IMAGE_NAME="gcr.io/${PROJECT_ID}/tracerlensai-app:latest"
+REGION=${GOOGLE_CLOUD_REGION:-europe-west2}
+SERVICE_NAME="tracerlensai-app"
+IMAGE_NAME="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
-if [ "$TARGET" = "cloudrun" ] || [ "$TARGET" = "gke" ]; then
-    echo "Building and pushing image to Artifact Registry..."
+# ── Stage 1: Agent Engine ────────────────────────────────────────────────────
+# Source-based (deployment_source) update of the engine recorded in
+# deployment_metadata.json. The engine cannot be updated with the SDK's
+# pickle-based package_spec flow — agents-cli is the only supported updater.
+if [ "$ONLY" = "all" ] || [ "$ONLY" = "agent" ]; then
+    echo "▶ [1/3] Deploying ADK agent (src/) to Vertex AI Agent Engine..."
+    command -v agents-cli >/dev/null || { echo "agents-cli not found. Install with: pip install google-agents-cli"; exit 1; }
+    agents-cli deploy \
+        --project "${PROJECT_ID}" \
+        --region "${REGION}" \
+        --no-confirm-project
+fi
+
+# ── Stage 2: Cloud Run proxy ─────────────────────────────────────────────────
+if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
+    echo "▶ [2/3] Deploying proxy (proxy/) to Cloud Run service ${SERVICE_NAME}..."
     gcloud auth configure-docker gcr.io --quiet
-    docker build -t ${IMAGE_NAME} .
-    docker push ${IMAGE_NAME}
-fi
+    docker build -f Dockerfile.proxy -t "${IMAGE_NAME}" .
+    docker push "${IMAGE_NAME}"
 
-if [ "$TARGET" = "cloudrun" ]; then
-    echo "Deploying to Cloud Run..."
-    gcloud run deploy tracerlensai-app \
-        --image ${IMAGE_NAME} \
-        --region ${REGION} \
-        --project ${PROJECT_ID} \
+    DEPLOY_ARGS=(
+        --image "${IMAGE_NAME}"
+        --region "${REGION}"
+        --project "${PROJECT_ID}"
         --allow-unauthenticated
-elif [ "$TARGET" = "cloudrun-functions" ]; then
-    echo "Deploying to Cloud Run Functions..."
-    gcloud functions deploy tracerlensai-fn \
-        --gen2 \
-        --runtime=python312 \
-        --memory=1024MB \
-        --region=${REGION} \
-        --source=. \
-        --entry-point=proxy_app \
-        --trigger-http \
-        --allow-unauthenticated \
-        --project=${PROJECT_ID}
-elif [ "$TARGET" = "gke" ]; then
-    echo "Deploying to GKE..."
-    gcloud container clusters get-credentials my-cluster --region ${REGION} --project ${PROJECT_ID}
-    helm upgrade --install tracerlensai ./helm/tracerlensai \
-        --set image.tag=latest \
-        --set env.GOOGLE_CLOUD_PROJECT=${PROJECT_ID} \
-        --set env.GOOGLE_CLOUD_REGION=${REGION}
-elif [ "$TARGET" = "agent-runtime" ]; then
-    echo "Deploying to Gemini Enterprise Agent Platform..."
-    agents-cli deploy --project ${PROJECT_ID} --region ${REGION} --deployment-target agent_runtime
-else
-    echo "Unknown target: $TARGET"
-    exit 1
+    )
+    # Point the proxy at the Agent Engine when configured; otherwise the
+    # service keeps whatever AGENT_ENGINE_ENDPOINT it already has.
+    if [ -n "${AGENT_ENGINE_ENDPOINT:-}" ]; then
+        DEPLOY_ARGS+=(--update-env-vars "AGENT_ENGINE_ENDPOINT=${AGENT_ENGINE_ENDPOINT}")
+    fi
+    gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_ARGS[@]}"
 fi
 
-echo "Deployment finished."
+# ── Stage 3: Firebase Hosting ────────────────────────────────────────────────
+# Publishes proxy/static and the rewrite rule (firebase.json) that routes
+# /analyze-prompt and every other non-static path to the Cloud Run proxy.
+if [ "$ONLY" = "all" ] || [ "$ONLY" = "hosting" ]; then
+    echo "▶ [3/3] Deploying Firebase Hosting (proxy/static + rewrites)..."
+    if command -v firebase >/dev/null; then
+        firebase deploy --only hosting --project "${PROJECT_ID}" --non-interactive
+    else
+        npx -y firebase-tools deploy --only hosting --project "${PROJECT_ID}" --non-interactive
+    fi
+fi
+
+echo "✅ Deployment finished."
