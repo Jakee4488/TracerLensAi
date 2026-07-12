@@ -82,6 +82,7 @@ async def analyze_prompt(req: PromptRequest):
     }
 
     collected_text = []
+    total_token_count = 0
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream("POST", stream_url, json=payload, headers=headers) as resp:
@@ -89,10 +90,10 @@ async def analyze_prompt(req: PromptRequest):
                 if resp.status_code >= 400:
                     body = await resp.aread()
                     raise HTTPException(status_code=resp.status_code, detail=f"Agent Engine error: {body.decode()}")
-                
+
                 body_bytes = await resp.aread()
                 print(f"DEBUG: body_bytes={body_bytes}")
-                
+
                 import io
                 lines = io.BytesIO(body_bytes).readlines()
                 for line_bytes in lines:
@@ -112,6 +113,14 @@ async def analyze_prompt(req: PromptRequest):
                         # Also handle top-level "output" key
                         if event.get("output"):
                             collected_text.append(str(event["output"]))
+                        # ADK emits usage metadata per event (snake_case or camelCase
+                        # depending on serialization); the last non-zero value wins
+                        # since totals are cumulative for the turn.
+                        usage = event.get("usage_metadata") or event.get("usageMetadata")
+                        if isinstance(usage, dict):
+                            count = usage.get("total_token_count", usage.get("totalTokenCount"))
+                            if isinstance(count, int):
+                                total_token_count = count
                     except Exception:
                         # Plain text line
                         collected_text.append(line)
@@ -119,7 +128,7 @@ async def analyze_prompt(req: PromptRequest):
         return {
             "status": "success",
             "response": "".join(collected_text) or "(no response)",
-            "total_token_count": 0,
+            "total_token_count": total_token_count,
             "causal_reasoning_steps": []
         }
     except httpx.HTTPStatusError as e:
