@@ -1,7 +1,7 @@
 # =============================================================================
 # ci.yml — Pull Request CI
 #
-# Triggers: every pull_request targeting gemini-agent-platform
+# Triggers: every pull_request targeting main
 # Jobs    : pytest (backend suite; UI tests excluded — they need a live stack)
 # Purpose : Gate PRs — must pass before merge is allowed
 # =============================================================================
@@ -10,7 +10,7 @@ name: "CI — Pull Request Checks"
 on:
   pull_request:
     branches:
-      - gemini-agent-platform
+      - main
 
 concurrency:
   group: ci-pr-${{ github.event.pull_request.number }}
