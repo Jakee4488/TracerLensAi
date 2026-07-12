@@ -94,7 +94,7 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             const analysisResponse = await fetch("/analyze-prompt", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...(await authHeaders()) },
                 body: JSON.stringify({
                     prompt: text,
                     causal_reasoning: isCausalReasoningEnabled,
@@ -150,6 +150,9 @@ document.addEventListener("DOMContentLoaded", () => {
             messagesArea.innerHTML += aiMessageHtml;
             scrollToBottom();
 
+            // Refresh the sidebar so a newly started conversation appears
+            loadHistoryList();
+
         } catch (error) {
             console.error(error);
             const loader = document.getElementById(loadingId);
@@ -166,6 +169,102 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function scrollToBottom() {
         messagesArea.scrollTop = messagesArea.scrollHeight;
+    }
+
+    // ── Auth + History ──────────────────────────────────────────────────────
+
+    async function authHeaders() {
+        if (!window.tracerAuth) return {};
+        const token = await window.tracerAuth.getIdToken();
+        return token ? { "Authorization": `Bearer ${token}` } : {};
+    }
+
+    const historyItems = document.getElementById("history-items");
+
+    async function loadHistoryList() {
+        const headers = await authHeaders();
+        if (!headers.Authorization) return;
+        try {
+            const res = await fetch("/history", { headers });
+            if (!res.ok) return;
+            const data = await res.json();
+            renderHistoryList(data.conversations || []);
+        } catch (e) {
+            console.error("Failed to load history:", e);
+        }
+    }
+
+    function renderHistoryList(conversations) {
+        if (!historyItems) return;
+        historyItems.innerHTML = "";
+        if (conversations.length === 0) {
+            historyItems.innerHTML = `<div class="history-item" style="color: var(--text-secondary); font-size: 0.85rem; cursor: default;">No saved workflows yet</div>`;
+            return;
+        }
+        conversations.forEach(conv => {
+            const item = document.createElement("div");
+            item.className = "history-item clickable-history";
+            item.textContent = conv.title;
+            item.title = conv.title;
+            item.addEventListener("click", () => loadConversation(conv.chat_id));
+            historyItems.appendChild(item);
+        });
+    }
+
+    function resetHistorySidebar(message) {
+        if (!historyItems) return;
+        historyItems.innerHTML = `<div class="history-item" style="color: var(--text-secondary); font-size: 0.85rem; cursor: default;">${message}</div>`;
+    }
+
+    async function loadConversation(chatId) {
+        const headers = await authHeaders();
+        if (!headers.Authorization) return;
+        try {
+            const res = await fetch(`/history/${encodeURIComponent(chatId)}`, { headers });
+            if (!res.ok) return;
+            const conv = await res.json();
+
+            currentChatId = conv.chat_id;
+            sessionTotalTokens = conv.total_tokens || 0;
+            const badge = document.getElementById("token-tally-badge");
+            if (badge) {
+                badge.innerText = `${sessionTotalTokens.toLocaleString()} tokens used`;
+            }
+
+            messagesArea.innerHTML = "";
+            (conv.messages || []).forEach(msg => {
+                if (msg.role === "user") {
+                    messagesArea.innerHTML += `
+                        <div class="message user">
+                            <p style="margin: 0;">${escapeHtml(msg.content)}</p>
+                        </div>`;
+                } else {
+                    const parsed = (typeof marked !== 'undefined' && msg.content)
+                        ? marked.parse(msg.content)
+                        : escapeHtml(msg.content || "");
+                    messagesArea.innerHTML += `
+                        <div class="message ai">
+                            <div class="avatar ai-avatar"></div>
+                            <div class="content">
+                                <div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsed}</div>
+                            </div>
+                        </div>`;
+                }
+            });
+            scrollToBottom();
+        } catch (e) {
+            console.error("Failed to load conversation:", e);
+        }
+    }
+
+    if (window.tracerAuth) {
+        window.tracerAuth.onChange((user) => {
+            if (user) {
+                loadHistoryList();
+            } else {
+                resetHistorySidebar("Sign in to see your saved workflows");
+            }
+        });
     }
 
     function escapeHtml(unsafe) {
