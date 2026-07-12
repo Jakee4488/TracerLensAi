@@ -19,3 +19,6 @@ a2a-sdk[http-server]>=0.3.22
 
 google-cloud-logging
 python-dotenv
+
+# Auth + per-user history (proxy)
+firebase-admin>=6.5.0
