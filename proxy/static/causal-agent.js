@@ -1,12 +1,20 @@
 let sessionTotalTokens = 0;
 let currentChatId = null;
 
+// Generate a UUID v4 for session tracking (client-side)
+function generateSessionId() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     const chatInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
     const messagesArea = document.getElementById("messages-area");
-    const historyList = document.querySelector(".history-list");
-    
+
     // Configure marked to use highlight.js for code blocks
     if (typeof marked !== 'undefined') {
         marked.setOptions({
@@ -35,92 +43,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     sendBtn.addEventListener("click", sendMessage);
 
-    async function loadHistoryList() {
-        try {
-            const resp = await fetch("/api/chats");
-            const chats = await resp.json();
-            
-            // Rebuild history list preserving the title
-            historyList.innerHTML = '<div class="history-title" style="padding: 0.8rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">Recent workflows</div>';
-            
-            chats.forEach(chat => {
-                const item = document.createElement("div");
-                item.className = "history-item clickable-history";
-                item.innerText = chat.title || "New Chat";
-                item.addEventListener("click", () => loadChat(chat.id));
-                historyList.appendChild(item);
-            });
-        } catch (error) {
-            console.error("Failed to load history list:", error);
-        }
-    }
-
-    async function loadChat(chatId) {
-        try {
-            const resp = await fetch(`/api/chats/${chatId}`);
-            if (!resp.ok) throw new Error("Chat not found");
-            const chatData = await resp.json();
-            
-            currentChatId = chatData.id;
-            sessionTotalTokens = chatData.total_tokens || 0;
-            
-            const badge = document.getElementById("token-tally-badge");
-            if (badge) {
-                badge.innerText = `${sessionTotalTokens.toLocaleString()} tokens used`;
-            }
-            
-            messagesArea.innerHTML = "";
-            
-            chatData.messages.forEach(msg => {
-                if (msg.role === 'user') {
-                    messagesArea.innerHTML += `
-                        <div class="message user">
-                            <p style="margin: 0;">${escapeHtml(msg.content)}</p>
-                        </div>
-                    `;
-                } else {
-                    let parsedResponse = "";
-                    if (typeof marked !== 'undefined' && msg.content) {
-                        parsedResponse = marked.parse(msg.content);
-                    } else {
-                        parsedResponse = escapeHtml(msg.content || "No response received.");
-                    }
-                    let aiContent = `<div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsedResponse}</div>`;
-
-                    if (msg.causal_steps && msg.causal_steps.length > 0) {
-                        aiContent += `
-                        <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-input); border-radius: 8px; border-left: 4px solid #9b72cb;">
-                            <h6 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 0.9rem;">🤖 Causal Reasoning Steps:</h6>
-                            <ul style="margin: 0; padding-left: 1.5rem; font-size: 0.85rem; color: var(--text-secondary);">
-                                ${msg.causal_steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}
-                            </ul>
-                        </div>`;
-                    }
-
-                    messagesArea.innerHTML += `
-                    <div class="message ai">
-                        <div class="avatar ai-avatar"></div>
-                        <div class="content">
-                            ${aiContent}
-                        </div>
-                    </div>
-                    `;
-                }
-            });
-            scrollToBottom();
-            
-            // Highlight active chat in sidebar
-            if (window.innerWidth <= 768) {
-                document.getElementById("sidebar").classList.add("collapsed");
-            }
-        } catch (error) {
-            console.error(error);
-        }
-    }
-
-    // Load initial history on page load
-    loadHistoryList();
-
     async function sendMessage() {
         const text = chatInput.value.trim();
         if (!text) return;
@@ -128,22 +50,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // Clear input
         chatInput.value = "";
         chatInput.style.height = "auto";
-        
-        // If it's the first message of a session, create a chat ID
+
+        // Generate a session ID on first message
         if (!currentChatId) {
-            try {
-                const initResp = await fetch("/api/chats", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ title: text.substring(0, 30) + (text.length > 30 ? "..." : "") })
-                });
-                const initData = await initResp.json();
-                currentChatId = initData.id;
-                // Refresh sidebar to show new chat
-                loadHistoryList();
-            } catch (err) {
-                console.error("Failed to init chat session", err);
-            }
+            currentChatId = generateSessionId();
         }
 
         const uniqueId = Date.now();
@@ -174,7 +84,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const causalToggle = document.getElementById("causal-toggle");
         const isCausalReasoningEnabled = causalToggle ? causalToggle.checked : false;
-        
+
         const webSearchToggle = document.getElementById("web-search-toggle");
         const isWebSearchEnabled = webSearchToggle ? webSearchToggle.checked : false;
 
@@ -185,7 +95,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const analysisResponse = await fetch("/analyze-prompt", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     prompt: text,
                     causal_reasoning: isCausalReasoningEnabled,
                     web_search: isWebSearchEnabled,
@@ -193,8 +103,13 @@ document.addEventListener("DOMContentLoaded", () => {
                     chat_id: currentChatId
                 })
             });
-            const report = await analysisResponse.json();
             
+            const report = await analysisResponse.json();
+
+            if (!analysisResponse.ok) {
+                throw new Error(report.detail || "Unknown error occurred on the backend.");
+            }
+
             // Update Token Tally
             if (report.total_token_count) {
                 sessionTotalTokens += report.total_token_count;
@@ -214,7 +129,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             let aiContent = `<div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsedResponse}</div>`;
 
-            if (report.causal_reasoning_steps) {
+            if (report.causal_reasoning_steps && report.causal_reasoning_steps.length > 0) {
                 aiContent += `
                 <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-input); border-radius: 8px; border-left: 4px solid #9b72cb;">
                     <h6 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 0.9rem;">🤖 Causal Reasoning Steps:</h6>
@@ -276,7 +191,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (badge) {
             badge.innerText = `0 tokens used`;
         }
-        
+
         messagesArea.innerHTML = `
             <div class="message ai">
                 <div class="avatar ai-avatar"></div>
