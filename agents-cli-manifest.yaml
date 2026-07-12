@@ -1,0 +1,8 @@
+name: "TracerLensAi"
+acli_version: "1.0.0"
+agent_directory: "src"
+region: "europe-west2"
+language: "python"
+create_params:
+  deployment_target: "agent_runtime"
+  session_type: "in_memory"

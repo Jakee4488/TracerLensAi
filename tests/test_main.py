@@ -5,20 +5,16 @@ def test_health_check(client: TestClient):
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
-def test_create_chat(client: TestClient):
-    response = client.post("/api/chats", json={"title": "Test Chat"})
+def test_analyze_prompt_mock(client: TestClient):
+    # This tests the mock behavior when AGENT_ENGINE_ENDPOINT is not set
+    response = client.post("/analyze-prompt", json={
+        "prompt": "Hello",
+        "causal_reasoning": False,
+        "web_search": False,
+        "model_name": "gemini-2.5-flash",
+        "chat_id": None
+    })
     assert response.status_code == 200
     data = response.json()
-    assert "id" in data
-    assert data["title"] == "Test Chat"
-
-def test_get_chats(client: TestClient):
-    # First create a chat
-    client.post("/api/chats", json={"title": "My Chat"})
-    
-    # Then get all chats
-    response = client.get("/api/chats")
-    assert response.status_code == 200
-    chats = response.json()
-    assert len(chats) >= 1
-    assert any(c["title"] == "My Chat" for c in chats)
+    assert data["status"] == "success"
+    assert "Agent Proxy configured." in data["response"]
