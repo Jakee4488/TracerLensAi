@@ -101,4 +101,4 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "hosting" ]; then
     fi
 fi
 
-echo "✅ Deployment finished."
+echo "✅ Deployment finished. Live at https://tracerlensai.com"

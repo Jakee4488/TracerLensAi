@@ -98,8 +98,8 @@ terraform/
 
 | Workflow | Trigger | Action |
 |---|---|---|
-| `ci.yml` | Pull request → `gemini-agent-platform` | Runs the backend pytest suite |
-| `deploy.yml` | Push to `gemini-agent-platform` or manual dispatch | One-step pipeline via `deploy_to_gcp.sh`: Agent Engine → Cloud Run proxy → Firebase Hosting (dispatch can target a single stage) |
+| `ci.yml` | Pull request → `main` | Runs the backend pytest suite |
+| `deploy.yml` | Push to `main` (i.e. merge) or manual dispatch | One-step pipeline via `deploy_to_gcp.sh`: Agent Engine → Cloud Run proxy → Firebase Hosting (dispatch can target a single stage); records a GitHub Deployment linked to `https://tracerlensai.com` |
 | `uptime.yml` | Every 5 minutes (cron) | Pings `/health`, updates `uptime.json` badge |
 
 ---
