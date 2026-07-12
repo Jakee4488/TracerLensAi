@@ -96,8 +96,11 @@
                 <div class="history-title"
                     style="padding: 0.8rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">
                     Recent workflows</div>
-                <div class="history-item clickable-history">[Placeholder Chat 1]</div>
-                <div class="history-item clickable-history">[Placeholder Chat 2]</div>
+                <div id="history-items">
+                    <div class="history-item" id="history-empty-hint"
+                        style="color: var(--text-secondary); font-size: 0.85rem; cursor: default;">
+                        Sign in to see your saved workflows</div>
+                </div>
             </div>
         </aside>
 
@@ -137,6 +140,17 @@
                             <span class="slider"></span>
                         </div>
                     </label>
+                    <button id="sign-in-btn"
+                        style="background: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.9rem; font-size: 0.85rem; cursor: pointer; font-weight: 500;">
+                        Sign in with Google</button>
+                    <div id="user-chip" style="display: none; align-items: center; gap: 0.6rem;">
+                        <img id="user-avatar" alt="" referrerpolicy="no-referrer"
+                            style="width: 30px; height: 30px; border-radius: 50%;">
+                        <span id="user-name" style="font-size: 0.85rem; color: var(--text-primary);"></span>
+                        <button id="sign-out-btn"
+                            style="background: none; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 0.3rem 0.7rem; font-size: 0.8rem; cursor: pointer;">
+                            Sign out</button>
+                    </div>
                 </div>
             </header>
 
@@ -171,7 +185,10 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-analytics.js";
-        
+        import {
+            getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+        } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
         const firebaseConfig = {
             apiKey: "AIzaSyAHUmpsoO9veaAjAlwYLRyCiguJ1iisb-k",
             authDomain: "icarus-agent-26.firebaseapp.com",
@@ -181,10 +198,45 @@
             appId: "1:463466170878:web:f94935748b3f12f15298af",
             measurementId: "G-47JZT25Q8S"
         };
-        
+
         // Initialize Firebase
         const app = initializeApp(firebaseConfig);
         const analytics = getAnalytics(app);
+
+        // ── Auth bridge for causal-agent.js (non-module script) ──
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+        const listeners = [];
+        let currentUser = null;
+
+        window.tracerAuth = {
+            getIdToken: () => currentUser ? currentUser.getIdToken() : Promise.resolve(null),
+            onChange: (cb) => { listeners.push(cb); cb(currentUser); },
+            signIn: () => signInWithPopup(auth, provider).catch(err => console.error("Sign-in failed:", err)),
+            signOut: () => signOut(auth),
+        };
+
+        const signInBtn = document.getElementById("sign-in-btn");
+        const userChip = document.getElementById("user-chip");
+        const userAvatar = document.getElementById("user-avatar");
+        const userName = document.getElementById("user-name");
+
+        signInBtn.addEventListener("click", () => window.tracerAuth.signIn());
+        document.getElementById("sign-out-btn").addEventListener("click", () => window.tracerAuth.signOut());
+
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            if (user) {
+                signInBtn.style.display = "none";
+                userChip.style.display = "flex";
+                userAvatar.src = user.photoURL || "";
+                userName.textContent = user.displayName || user.email || "";
+            } else {
+                signInBtn.style.display = "";
+                userChip.style.display = "none";
+            }
+            listeners.forEach(cb => cb(user));
+        });
     </script>
 </body>
 
