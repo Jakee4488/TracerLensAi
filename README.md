@@ -51,7 +51,59 @@
                                               └────────────────────────┘
 ```
 
-**Flow:** User sends a prompt → Firebase Hosting serves the static UI and proxies the API call to Cloud Run → The FastAPI Proxy forwards the request with a Session ID to the Vertex AI Agent Engine → The Agent retrieves history from the Memory Bank, uses tools, and generates a response → The Agent Engine persists the new context and returns the result → The frontend parses Markdown and updates.
+**Flow:** User sends a prompt → Firebase Hosting serves the static UI and proxies the API call to Cloud Run → FastAPI loads chat history from SQLite, calls Gemini with full context → Gemini returns a response with token usage → FastAPI persists the message and returns JSON → The frontend parses Markdown, highlights code blocks, and updates the token counter.
+
+---
+
+## 📂 Repository Structure
+
+For a detailed breakdown of every directory and file, see the [Repository Structure Guide](docs/repository_structure.md).
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+1. **Docker & Docker Compose** — Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+2. **GCP Account** — A project with [Vertex AI APIs enabled](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com).
+3. **Optional Tools** — `gcloud` CLI, `terraform` (only for infrastructure changes).
+
+### Local Development
+
+1. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env — set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, and optionally GEMINI_API_KEY
+   ```
+
+
+2. **Run the full test pipeline:**
+   ```bash
+   chmod +x run_tests.sh
+   ./run_tests.sh test
+   ```
+   This builds the Docker image, runs `flake8` linting, `pytest` unit tests, and health-check smoke tests.
+
+
+3. **Start the hot-reload dev server:**
+   ```bash
+   ./run_tests.sh --start
+   ```
+   The app will be live at `http://localhost:8080` with automatic reload on file changes.
+
+4. **Stop the dev server:**
+   ```bash
+   ./run_tests.sh --stop
+   ```
+
+
+5. **Clean all Docker resources:**
+   ```bash
+   ./run_tests.sh --clean
+   ```
+
 
 ---
 
