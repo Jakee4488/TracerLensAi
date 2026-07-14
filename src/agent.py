@@ -15,10 +15,12 @@ from google.adk.apps import App
 from vertexai.agent_engines.templates.adk import AdkApp
 
 from src.app_utils import services
+from src.causal.agents import build_root_agent
 
-# Initialize the Gemini Enterprise Agent
-agent = Agent(
-    name="TracerLensAi_Agent",
+# General assistant: the pre-existing single agent, now one branch of the
+# deterministic root router (the other branch is the causal pipeline).
+general_assistant = Agent(
+    name="GeneralAssistant",
     description="An advanced causal reasoning agent capable of mathematical modeling and deep analysis.",
     model="gemini-2.5-flash",
     instruction=(
@@ -26,7 +28,8 @@ agent = Agent(
         "data analysis, and structural causal models. You can execute Python code to perform "
         "complex mathematical calculations and use Google Search to look up current information. "
         "When asked to perform causal reasoning, identify potential confounders, propose a structural "
-        "causal model, and estimate treatment effects step-by-step."
+        "causal model, and estimate treatment effects step-by-step. "
+        "Ignore control markers such as [[causal:on]] if they appear in a message."
     ),
     # Enable Google Search (Commented out because Vertex AI does not allow mixing Search with Code Execution)
     # tools=[google_search],
@@ -34,6 +37,10 @@ agent = Agent(
     # Code execution uses the specific code_executor arg in ADK 2.x
     code_executor=BuiltInCodeExecutor(),
 )
+
+# Root: deterministic marker router in front of the causal pipeline and the
+# general assistant (see src/causal/ for the pathway engine).
+agent = build_root_agent(general_assistant)
 
 adk_app = App(
     root_agent=agent,

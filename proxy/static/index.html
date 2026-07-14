@@ -12,6 +12,12 @@
         href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script>
+        if (typeof mermaid !== 'undefined') {
+            mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
+        }
+    </script>
     <link rel="stylesheet" href="styles.css?v=2">
     <style>
         .top-controls {
@@ -126,7 +132,7 @@
                             <span class="slider"></span>
                         </div>
                     </label>
-                    <label class="ios-toggle" style="display: none;">
+                    <label class="ios-toggle">
                         <span class="label-text">Causal Reasoning</span>
                         <div class="toggle-switch">
                             <input type="checkbox" id="causal-toggle">

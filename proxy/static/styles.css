@@ -1376,3 +1376,32 @@ canvas {
     cursor: not-allowed;
     transform: none;
 }
+/* ── Causal reasoning panel ────────────────────────────────────────────── */
+
+.causal-graph-container {
+    margin-top: 0.75rem;
+    padding: 0.5rem;
+    background: var(--bg-dark, #202124);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow-x: auto;
+}
+
+.causal-graph-container svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.causal-phase-badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.55rem;
+    border-radius: 10px;
+    background: rgba(155, 114, 203, 0.18);
+    border: 1px solid #9b72cb;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: capitalize;
+    vertical-align: middle;
+}

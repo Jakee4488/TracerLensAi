@@ -22,3 +22,6 @@ python-dotenv
 
 # Auth + per-user history (proxy)
 firebase-admin>=6.5.0
+
+# Causal reasoning engine (deterministic graph ops)
+networkx>=3.3
