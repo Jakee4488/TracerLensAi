@@ -129,14 +129,31 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             let aiContent = `<div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsedResponse}</div>`;
 
-            if (report.causal_reasoning_steps && report.causal_reasoning_steps.length > 0) {
-                aiContent += `
+            const causalSteps = report.causal_reasoning_steps || [];
+            const causalGraph = report.causal_graph;
+            const hasGraph = !!(causalGraph && causalGraph.nodes && causalGraph.nodes.length);
+            let pendingGraphRender = null;
+            if (causalSteps.length > 0 || hasGraph) {
+                const phase = (report.causal_status && report.causal_status.phase) || "";
+                const badge = phase
+                    ? ` <span class="causal-phase-badge">${escapeHtml(phase.replace(/_/g, " "))}</span>`
+                    : "";
+                let panel = `
                 <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-input); border-radius: 8px; border-left: 4px solid #9b72cb;">
-                    <h6 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 0.9rem;">🤖 Causal Reasoning Steps:</h6>
+                    <h6 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 0.9rem;">🤖 Causal Reasoning Steps:${badge}</h6>`;
+                if (causalSteps.length > 0) {
+                    panel += `
                     <ul style="margin: 0; padding-left: 1.5rem; font-size: 0.85rem; color: var(--text-secondary);">
-                        ${report.causal_reasoning_steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}
-                    </ul>
-                </div>`;
+                        ${causalSteps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}
+                    </ul>`;
+                }
+                if (hasGraph) {
+                    const graphContainerId = `causal-graph-${uniqueId}`;
+                    panel += `<div id="${graphContainerId}" class="causal-graph-container"></div>`;
+                    pendingGraphRender = { id: graphContainerId, graph: causalGraph };
+                }
+                panel += `</div>`;
+                aiContent += panel;
             }
 
             const aiMessageHtml = `
@@ -149,6 +166,10 @@ document.addEventListener("DOMContentLoaded", () => {
             `;
             messagesArea.innerHTML += aiMessageHtml;
             scrollToBottom();
+
+            if (pendingGraphRender) {
+                renderCausalGraph(pendingGraphRender.id, pendingGraphRender.graph);
+            }
 
             // Refresh the sidebar so a newly started conversation appears
             loadHistoryList();
@@ -265,6 +286,75 @@ document.addEventListener("DOMContentLoaded", () => {
                 resetHistorySidebar("Sign in to see your saved workflows");
             }
         });
+    }
+
+    // ── Causal graph rendering (Mermaid) ────────────────────────────────────
+
+    // Node ids and labels come from LLM output: treat as untrusted. Ids are
+    // reduced to [a-zA-Z0-9_]; labels to a small character whitelist.
+    function sanitizeGraphId(value) {
+        return "n_" + String(value || "").replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 40);
+    }
+
+    function sanitizeGraphLabel(value) {
+        const clean = String(value || "").replace(/[^a-zA-Z0-9 .,:%+()/-]/g, " ")
+            .replace(/\s+/g, " ").trim().slice(0, 60);
+        return clean || "node";
+    }
+
+    function buildMermaidFlowchart(graph) {
+        const statusClass = {
+            pending: "cPending", active: "cActive", done: "cDone",
+            failed: "cFailed", invalidated: "cAffected", replanned: "cAffected"
+        };
+        const lines = ["flowchart TD"];
+        (graph.nodes || []).forEach(node => {
+            const cls = statusClass[node.status] || "cPending";
+            lines.push(`    ${sanitizeGraphId(node.id)}["${sanitizeGraphLabel(node.label || node.id)}"]:::${cls}`);
+        });
+
+        const criticalPairs = new Set();
+        const path = graph.critical_path || [];
+        for (let i = 0; i + 1 < path.length; i++) {
+            criticalPairs.add(`${path[i]} ${path[i + 1]}`);
+        }
+        const criticalEdgeIndexes = [];
+        (graph.edges || []).forEach((edge, index) => {
+            const dashed = edge.relation === "informs" || edge.relation === "constrains";
+            const arrow = dashed ? "-.->" : "-->";
+            const label = sanitizeGraphLabel(edge.relation || "causes");
+            lines.push(`    ${sanitizeGraphId(edge.source)} ${arrow}|${label}| ${sanitizeGraphId(edge.target)}`);
+            if (criticalPairs.has(`${edge.source} ${edge.target}`)) {
+                criticalEdgeIndexes.push(index);
+            }
+        });
+
+        lines.push("    classDef cPending fill:#3c4043,stroke:#9aa0a6,color:#e8eaed;");
+        lines.push("    classDef cActive fill:#174ea6,stroke:#8ab4f8,color:#e8eaed;");
+        lines.push("    classDef cDone fill:#0d652d,stroke:#81c995,color:#e8eaed;");
+        lines.push("    classDef cFailed fill:#8c1d18,stroke:#f28b82,color:#ffffff;");
+        lines.push("    classDef cAffected fill:#7a5900,stroke:#fdd663,color:#ffffff;");
+        criticalEdgeIndexes.forEach(index => {
+            lines.push(`    linkStyle ${index} stroke:#9b72cb,stroke-width:3px;`);
+        });
+        return lines.join("\n");
+    }
+
+    async function renderCausalGraph(containerId, graph) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const fallback = () => {
+            container.innerHTML = `<pre style="font-size: 0.75rem; overflow-x: auto; margin: 0;">${escapeHtml(JSON.stringify(graph, null, 2))}</pre>`;
+        };
+        if (typeof mermaid === "undefined") { fallback(); return; }
+        try {
+            const definition = buildMermaidFlowchart(graph);
+            const { svg } = await mermaid.render(`mmd-${containerId}`, definition);
+            container.innerHTML = svg;
+        } catch (error) {
+            console.error("Causal graph render failed:", error);
+            fallback();
+        }
     }
 
     function escapeHtml(unsafe) {
