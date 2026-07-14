@@ -33,9 +33,15 @@ def _get_firebase_app():
 
 @functools.cache
 def get_db():
-    """Firestore client for per-user conversation history."""
+    """Firestore client for per-user conversation history.
+
+    The project's Firestore database is named ``tracerlensai`` (not the
+    default ``(default)``), so pass it explicitly. Overridable via
+    FIRESTORE_DATABASE_ID for other environments.
+    """
     _get_firebase_app()
-    return firebase_firestore.client()
+    database_id = os.getenv("FIRESTORE_DATABASE_ID", "tracerlensai")
+    return firebase_firestore.client(database_id=database_id)
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
     """Optional Firebase auth: no header → anonymous (None); bad token → 401."""
