@@ -4,7 +4,9 @@ This backend serves the static UI and proxies requests to the
 Gemini Enterprise Agent Platform (Agent Runtime).
 """
 import functools
+import json
 import os
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -151,6 +153,12 @@ async def get_history(chat_id: str, user: Optional[dict] = Depends(get_current_u
 
 # ── Agent Proxy API ─────────────────────────────────────────────────────────
 
+# Must match src/causal/state_keys.py (the proxy image does not ship src/).
+CAUSAL_MODE_MARKER = "[[causal:on]]"
+CAUSAL_STATE_PREFIX = "causal_"
+_CAUSAL_FENCED_RE = re.compile(r"```causal-json\s*(\{.*?\})\s*```", re.DOTALL)
+
+
 class PromptRequest(BaseModel):
     """Request body from the UI."""
     prompt: str
@@ -158,6 +166,21 @@ class PromptRequest(BaseModel):
     web_search: bool = False
     model_name: str = "gemini-2.5-flash"
     chat_id: Optional[str] = None  # Maps to Agent Session ID
+
+
+def _extract_causal_fallback(text: str):
+    """Fallback transport: pull steps/graph out of a fenced ```causal-json```
+    block emitted by the agent when CAUSAL_TEXT_FALLBACK=1, and strip the
+    block from the visible response."""
+    match = _CAUSAL_FENCED_RE.search(text or "")
+    if not match:
+        return None, text
+    cleaned = _CAUSAL_FENCED_RE.sub("", text).strip()
+    try:
+        payload = json.loads(match.group(1))
+    except ValueError:
+        return None, cleaned
+    return (payload if isinstance(payload, dict) else None), cleaned
 
 def _persist_if_signed_in(user: Optional[dict], req: "PromptRequest", response_text: str, token_count: int):
     """Best-effort history write; never fails the chat response."""
@@ -178,11 +201,35 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         # Mock response for local development if Agent Runtime is not configured
         mock_text = "Agent Proxy configured. (Set AGENT_ENGINE_ENDPOINT to connect to Agent Runtime). Prompt: " + req.prompt
         _persist_if_signed_in(user, req, mock_text, 10)
+        mock_graph = None
+        mock_steps = []
+        if req.causal_reasoning:
+            # Canned graph so the UI panel/diagram is developable offline.
+            mock_steps = [
+                "[graph] decomposed problem into 3 components, 2 causal links",
+                "[plan] Global pathway s1 -> s2 along critical path inputs -> analysis -> outcome",
+                "[ok] s1 (analysis): Advance 'Analysis' | observed: mocked in proxy",
+            ]
+            mock_graph = {
+                "nodes": [
+                    {"id": "inputs", "label": "Inputs", "kind": "input", "status": "done"},
+                    {"id": "analysis", "label": "Analysis", "kind": "process", "status": "done"},
+                    {"id": "outcome", "label": "Outcome", "kind": "outcome", "status": "pending"},
+                ],
+                "edges": [
+                    {"source": "inputs", "target": "analysis", "relation": "informs", "confidence": 0.9},
+                    {"source": "analysis", "target": "outcome", "relation": "causes", "confidence": 0.8},
+                ],
+                "critical_path": ["inputs", "analysis", "outcome"],
+                "version": 1,
+            }
         return {
             "status": "success",
             "response": mock_text,
             "total_token_count": 10,
-            "causal_reasoning_steps": ["Causal reasoning mocked in proxy."] if req.causal_reasoning else []
+            "causal_reasoning_steps": mock_steps,
+            "causal_graph": mock_graph,
+            "causal_status": {"phase": "complete"} if req.causal_reasoning else None,
         }
 
     # Derive the streaming endpoint from the base query URL
@@ -203,17 +250,24 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         "Content-Type": "application/json"
     }
 
+    # Causal mode rides on a per-message control marker the agent's router
+    # keys on; the clean prompt (req.prompt) is what gets persisted.
+    outbound_message = req.prompt
+    if req.causal_reasoning:
+        outbound_message = f"{CAUSAL_MODE_MARKER} {req.prompt}"
+
     # ADK AdkApp only registers stream_query (no sync "query" method)
     payload = {
         "class_method": "stream_query",
         "input": {
-            "message": req.prompt,
+            "message": outbound_message,
             "user_id": user["uid"] if user else "default-user",
             "session_id": req.chat_id or "default-session",
         }
     }
 
     collected_text = []
+    causal_state = {}
     total_token_count = 0
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -245,25 +299,52 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
                         # Also handle top-level "output" key
                         if event.get("output"):
                             collected_text.append(str(event["output"]))
-                        # ADK emits usage metadata per event (snake_case or camelCase
-                        # depending on serialization); the last non-zero value wins
-                        # since totals are cumulative for the turn.
+                        # Causal pipeline results ride on event state deltas:
+                        # collect every causal_* key (lists are rewritten
+                        # whole by the agent, so last write wins).
+                        actions = event.get("actions") or {}
+                        delta = actions.get("state_delta") or actions.get("stateDelta") or {}
+                        if isinstance(delta, dict):
+                            for key, value in delta.items():
+                                if isinstance(key, str) and key.startswith(CAUSAL_STATE_PREFIX):
+                                    causal_state[key] = value
+                        # ADK emits usage metadata once per LLM call within the
+                        # turn (snake_case or camelCase depending on
+                        # serialization); sum them for the multi-agent total.
                         usage = event.get("usage_metadata") or event.get("usageMetadata")
                         if isinstance(usage, dict):
                             count = usage.get("total_token_count", usage.get("totalTokenCount"))
                             if isinstance(count, int):
-                                total_token_count = count
+                                total_token_count += count
                     except Exception:
                         # Plain text line
                         collected_text.append(line)
 
-        response_text = "".join(collected_text) or "(no response)"
+        # Prefer the synthesizer's final answer over the raw concatenation —
+        # in causal mode the text parts include intermediate pipeline output.
+        response_text = causal_state.get("causal_final_answer") or "".join(collected_text)
+
+        causal_steps = causal_state.get("causal_steps") or []
+        causal_graph = causal_state.get("causal_graph")
+        causal_status = causal_state.get("causal_status")
+        if req.causal_reasoning and not causal_state:
+            # Fallback transport (agent ran with CAUSAL_TEXT_FALLBACK=1).
+            payload_json, response_text = _extract_causal_fallback(response_text)
+            if payload_json:
+                response_text = payload_json.get("final_answer") or response_text
+                causal_steps = payload_json.get("steps") or []
+                causal_graph = payload_json.get("graph")
+                causal_status = payload_json.get("status")
+
+        response_text = response_text.replace(CAUSAL_MODE_MARKER, "").strip() or "(no response)"
         _persist_if_signed_in(user, req, response_text, total_token_count)
         return {
             "status": "success",
             "response": response_text,
             "total_token_count": total_token_count,
-            "causal_reasoning_steps": []
+            "causal_reasoning_steps": causal_steps,
+            "causal_graph": causal_graph,
+            "causal_status": causal_status,
         }
     except httpx.HTTPStatusError as e:
         import traceback

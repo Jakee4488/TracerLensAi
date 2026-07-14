@@ -58,3 +58,16 @@ With both the Backend (Docker) and the Frontend (Uvicorn Proxy) running, you can
 - **Empty Response / `b''`**: If the backend crashes mid-stream (e.g., SessionNotFoundError), the UI will show an empty response. Check the Docker compose logs.
 - **Port 8001 in use**: If you get `[Errno 98] Address already in use`, find the zombie process using `fuser -k 8001/tcp`.
 - **404 Not Found**: Ensure `AGENT_ENGINE_ENDPOINT` exactly matches the `/api/stream_reasoning_engine` path with no trailing colons.
+
+## 6. Exercising the Causal Reasoning Pathway
+
+With both processes running, flip the **Causal Reasoning** toggle in the header and send a prompt, or hit the proxy directly:
+
+```bash
+curl -s localhost:8001/analyze-prompt \
+  -H 'content-type: application/json' \
+  -d '{"prompt": "If I raise prices 10%, what happens to revenue given elastic demand? Compute scenarios.", "causal_reasoning": true}' \
+  | python -m json.tool
+```
+
+Expect `causal_reasoning_steps` (the plan/replan trace), `causal_graph` (`nodes`/`edges`/`critical_path`, rendered as a Mermaid diagram in the UI), `causal_status`, and a `response` containing only the synthesizer's final answer. Without `AGENT_ENGINE_ENDPOINT` set, the proxy's mock path returns a canned 3-node graph so the UI panel is developable offline.
