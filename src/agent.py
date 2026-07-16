@@ -6,6 +6,7 @@ enables the Google Search and Code Execution tools.
 """
 
 import logging
+import os
 from typing import Iterator
 
 from google.adk.agents import Agent
@@ -16,6 +17,16 @@ from vertexai.agent_engines.templates.adk import AdkApp
 
 from src.app_utils import services
 from src.causal.agents import build_root_agent
+
+# agents-cli injects GOOGLE_CLOUD_LOCATION=global, but this project's Gemini
+# quota on the global endpoint has been exhausted while europe-west2 (where
+# the rest of the stack lives) is healthy. Rewrite it before any Gemini
+# client is constructed, since the ADK/genai client snapshots this env var
+# at build time. Guarded so a deliberately-set region is left alone.
+if os.environ.get("GOOGLE_CLOUD_LOCATION") == "global":
+    os.environ["GOOGLE_CLOUD_LOCATION"] = os.environ.get(
+        "GOOGLE_CLOUD_REGION", "europe-west2"
+    )
 
 # General assistant: the pre-existing single agent, now one branch of the
 # deterministic root router (the other branch is the causal pipeline).
