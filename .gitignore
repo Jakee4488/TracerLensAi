@@ -84,3 +84,4 @@ app.db
 terraform/firebase-debug.log
 
 test.ipynb
+.claude
