@@ -1,9 +1,14 @@
+// TracerLensAi — Causal Agent UI
+// Talks to the proxy backend: POST /analyze-prompt, POST /upload,
+// GET /history, GET /history/{chat_id}. Auth rides on window.tracerAuth
+// (defined by the Firebase module script in index.html).
+
 let sessionTotalTokens = 0;
 let currentChatId = null;
 
 // Generate a UUID v4 for session tracking (client-side)
 function generateSessionId() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
         return v.toString(16);
@@ -14,278 +19,215 @@ document.addEventListener("DOMContentLoaded", () => {
     const chatInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
     const messagesArea = document.getElementById("messages-area");
+    const messagesInner = document.getElementById("messages-inner");
+    const chipsRow = document.getElementById("attachment-chips");
+    const attachBtn = document.getElementById("attach-btn");
+    const fileInput = document.getElementById("file-input");
+    const dropOverlay = document.getElementById("drop-overlay");
+    const historyItems = document.getElementById("history-items");
 
-    // Configure marked to use highlight.js for code blocks
-    if (typeof marked !== 'undefined') {
-        marked.setOptions({
-            highlight: function(code, lang) {
-                if (lang && hljs.getLanguage(lang)) {
-                    return hljs.highlight(code, { language: lang }).value;
-                }
-                return hljs.highlightAuto(code).value;
-            }
+    const GREETING = "Hi — I'm the TracerLensAi Causal Agent. Ask a question or attach data, "
+        + "and I'll trace the cause-and-effect graph behind it.";
+
+    // Mirrors ALLOWED_UPLOAD_EXTENSIONS / MAX_UPLOAD_BYTES in proxy/main.py.
+    const ALLOWED_EXTENSIONS = [
+        ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".yaml", ".yml",
+        ".toml", ".xml", ".html", ".css", ".js", ".ts", ".py", ".java", ".go",
+        ".rs", ".c", ".cpp", ".h", ".sh", ".sql", ".log",
+    ];
+    const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+    // {localId, id, name, size, status: "uploading" | "done" | "error"}
+    const pendingAttachments = [];
+
+    // ── Theme ───────────────────────────────────────────────────────────────
+
+    const themeToggle = document.getElementById("theme-toggle");
+
+    function applyTheme(theme) {
+        document.documentElement.setAttribute("data-theme", theme);
+        try { localStorage.setItem("tracerlens-theme", theme); } catch (e) { /* storage blocked */ }
+        if (themeToggle) themeToggle.textContent = theme === "light" ? "☀" : "☾";
+        if (typeof mermaid !== "undefined") {
+            // Graphs rendered from now on pick up the new theme; existing SVGs
+            // keep their explicit classDef colors (legible on both grounds).
+            mermaid.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: theme === "light" ? "neutral" : "dark",
+            });
+        }
+    }
+
+    if (themeToggle) {
+        themeToggle.textContent =
+            document.documentElement.getAttribute("data-theme") === "light" ? "☀" : "☾";
+        themeToggle.addEventListener("click", () => {
+            const next = document.documentElement.getAttribute("data-theme") === "light"
+                ? "dark" : "light";
+            applyTheme(next);
         });
     }
 
-    // Auto-resize textarea
-    chatInput.addEventListener("input", function() {
-        this.style.height = "auto";
-        this.style.height = (this.scrollHeight) + "px";
-    });
+    // ── Markdown pipeline (sanitized) ───────────────────────────────────────
 
-    // Send on enter (without shift)
-    chatInput.addEventListener("keydown", function(e) {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
-        }
-    });
+    function escapeHtml(unsafe) {
+        if (typeof unsafe !== 'string') return '';
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
 
-    sendBtn.addEventListener("click", sendMessage);
+    function renderMarkdown(text) {
+        if (typeof marked === "undefined") return escapeHtml(text || "");
+        const html = marked.parse(text || "");
+        // Never insert unsanitized model output; fall back to escaped text if
+        // DOMPurify failed to load.
+        if (typeof DOMPurify === "undefined") return escapeHtml(text || "");
+        return DOMPurify.sanitize(html);
+    }
 
-    async function sendMessage() {
-        const text = chatInput.value.trim();
-        if (!text) return;
+    function highlightCode(container) {
+        if (typeof hljs === "undefined") return;
+        container.querySelectorAll("pre code").forEach((block) => {
+            try { hljs.highlightElement(block); } catch (e) { /* leave plain */ }
+        });
+    }
 
-        // Clear input
-        chatInput.value = "";
-        chatInput.style.height = "auto";
+    // ── DOM factories (append nodes; never innerHTML+= on the stream) ──────
 
-        // Generate a session ID on first message
-        if (!currentChatId) {
-            currentChatId = generateSessionId();
-        }
-
-        const uniqueId = Date.now();
-        const loadingId = `loading-${uniqueId}`;
-
-        // Append User Message
-        const userHtml = `
-            <div class="message user">
-                <p style="margin: 0;">${escapeHtml(text)}</p>
-            </div>
-        `;
-        messagesArea.innerHTML += userHtml;
-        scrollToBottom();
-
-        // Append Loading Indicator
-        const loadingHtml = `
-            <div id="${loadingId}" class="message ai">
-                <div class="avatar ai-avatar"></div>
-                <div class="content">
-                    <div class="typing-indicator" style="margin: 0.5rem 0;">
-                        <span></span><span></span><span></span>
-                    </div>
-                </div>
-            </div>
-        `;
-        messagesArea.innerHTML += loadingHtml;
-        scrollToBottom();
-
-        const causalToggle = document.getElementById("causal-toggle");
-        const isCausalReasoningEnabled = causalToggle ? causalToggle.checked : false;
-
-        const webSearchToggle = document.getElementById("web-search-toggle");
-        const isWebSearchEnabled = webSearchToggle ? webSearchToggle.checked : false;
-
-        const modelSelect = document.getElementById("model-select");
-        const selectedModel = modelSelect ? modelSelect.value : "gemini-2.5-flash";
-
-        try {
-            const analysisResponse = await fetch("/analyze-prompt", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-                body: JSON.stringify({
-                    prompt: text,
-                    causal_reasoning: isCausalReasoningEnabled,
-                    web_search: isWebSearchEnabled,
-                    model_name: selectedModel,
-                    chat_id: currentChatId
-                })
-            });
-            
-            const report = await analysisResponse.json();
-
-            if (!analysisResponse.ok) {
-                throw new Error(report.detail || "Unknown error occurred on the backend.");
-            }
-
-            // Update Token Tally
-            if (report.total_token_count) {
-                sessionTotalTokens += report.total_token_count;
-                const badge = document.getElementById("token-tally-badge");
-                if (badge) {
-                    badge.innerText = `${sessionTotalTokens.toLocaleString()} tokens used`;
-                }
-            }
-
-            document.getElementById(loadingId).remove();
-
-            let parsedResponse = "";
-            if (typeof marked !== 'undefined' && report.response) {
-                parsedResponse = marked.parse(report.response);
-            } else {
-                parsedResponse = escapeHtml(report.response || "No response received.");
-            }
-            let aiContent = `<div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsedResponse}</div>`;
-
-            const causalSteps = report.causal_reasoning_steps || [];
-            const causalGraph = report.causal_graph;
-            const hasGraph = !!(causalGraph && causalGraph.nodes && causalGraph.nodes.length);
-            let pendingGraphRender = null;
-            if (causalSteps.length > 0 || hasGraph) {
-                const phase = (report.causal_status && report.causal_status.phase) || "";
-                const badge = phase
-                    ? ` <span class="causal-phase-badge">${escapeHtml(phase.replace(/_/g, " "))}</span>`
-                    : "";
-                let panel = `
-                <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-input); border-radius: 8px; border-left: 4px solid #9b72cb;">
-                    <h6 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 0.9rem;">🤖 Causal Reasoning Steps:${badge}</h6>`;
-                if (causalSteps.length > 0) {
-                    panel += `
-                    <ul style="margin: 0; padding-left: 1.5rem; font-size: 0.85rem; color: var(--text-secondary);">
-                        ${causalSteps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}
-                    </ul>`;
-                }
-                if (hasGraph) {
-                    const graphContainerId = `causal-graph-${uniqueId}`;
-                    panel += `<div id="${graphContainerId}" class="causal-graph-container"></div>`;
-                    pendingGraphRender = { id: graphContainerId, graph: causalGraph };
-                }
-                panel += `</div>`;
-                aiContent += panel;
-            }
-
-            const aiMessageHtml = `
-            <div class="message ai">
-                <div class="avatar ai-avatar"></div>
-                <div class="content">
-                    ${aiContent}
-                </div>
-            </div>
-            `;
-            messagesArea.innerHTML += aiMessageHtml;
-            scrollToBottom();
-
-            if (pendingGraphRender) {
-                renderCausalGraph(pendingGraphRender.id, pendingGraphRender.graph);
-            }
-
-            // Refresh the sidebar so a newly started conversation appears
-            loadHistoryList();
-
-        } catch (error) {
-            console.error(error);
-            const loader = document.getElementById(loadingId);
-            if (loader) {
-                loader.innerHTML = `
-                    <div class="avatar ai-avatar"></div>
-                    <div class="content" style="background: var(--bg-sidebar); border: 1px solid var(--border); padding: 0.8rem 1.2rem; border-radius: 18px 18px 18px 4px;">
-                        <span style="color: #ff5252">Error: ${error.message}</span>
-                    </div>
-                `;
-            }
-        }
+    function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text != null) node.textContent = text;
+        return node;
     }
 
     function scrollToBottom() {
         messagesArea.scrollTop = messagesArea.scrollHeight;
     }
 
-    // ── Auth + History ──────────────────────────────────────────────────────
-
-    async function authHeaders() {
-        if (!window.tracerAuth) return {};
-        const token = await window.tracerAuth.getIdToken();
-        return token ? { "Authorization": `Bearer ${token}` } : {};
+    function aiMessageShell() {
+        const msg = el("div", "msg ai");
+        const bubble = el("div", "bubble");
+        msg.appendChild(el("div", "avatar"));
+        msg.appendChild(bubble);
+        return { msg, bubble };
     }
 
-    const historyItems = document.getElementById("history-items");
-
-    async function loadHistoryList() {
-        const headers = await authHeaders();
-        if (!headers.Authorization) return;
-        try {
-            const res = await fetch("/history", { headers });
-            if (!res.ok) return;
-            const data = await res.json();
-            renderHistoryList(data.conversations || []);
-        } catch (e) {
-            console.error("Failed to load history:", e);
-        }
+    function addGreeting() {
+        const { msg, bubble } = aiMessageShell();
+        bubble.appendChild(el("p", null, GREETING));
+        messagesInner.appendChild(msg);
     }
 
-    function renderHistoryList(conversations) {
-        if (!historyItems) return;
-        historyItems.innerHTML = "";
-        if (conversations.length === 0) {
-            historyItems.innerHTML = `<div class="history-item" style="color: var(--text-secondary); font-size: 0.85rem; cursor: default;">No saved workflows yet</div>`;
-            return;
-        }
-        conversations.forEach(conv => {
-            const item = document.createElement("div");
-            item.className = "history-item clickable-history";
-            item.textContent = conv.title;
-            item.title = conv.title;
-            item.addEventListener("click", () => loadConversation(conv.chat_id));
-            historyItems.appendChild(item);
+    function addUserMessage(text, attachmentNames) {
+        const msg = el("div", "msg user");
+        const bubble = el("div", "bubble");
+        bubble.appendChild(el("p", null, text));
+        (attachmentNames || []).forEach((name) => {
+            bubble.appendChild(el("span", "bubble-attachment", "⎘ " + name));
         });
+        msg.appendChild(bubble);
+        messagesInner.appendChild(msg);
+        scrollToBottom();
+        return msg;
     }
 
-    function resetHistorySidebar(message) {
-        if (!historyItems) return;
-        historyItems.innerHTML = `<div class="history-item" style="color: var(--text-secondary); font-size: 0.85rem; cursor: default;">${message}</div>`;
+    function showTyping() {
+        const { msg, bubble } = aiMessageShell();
+        const typing = el("span", "typing");
+        typing.setAttribute("aria-label", "Agent is thinking");
+        for (let i = 0; i < 3; i++) typing.appendChild(el("i"));
+        bubble.appendChild(typing);
+        messagesInner.appendChild(msg);
+        scrollToBottom();
+        return msg;
     }
 
-    async function loadConversation(chatId) {
-        const headers = await authHeaders();
-        if (!headers.Authorization) return;
-        try {
-            const res = await fetch(`/history/${encodeURIComponent(chatId)}`, { headers });
-            if (!res.ok) return;
-            const conv = await res.json();
+    function addErrorMessage(message) {
+        const { msg, bubble } = aiMessageShell();
+        bubble.classList.add("error");
+        bubble.appendChild(el("p", null, "Error: " + message));
+        messagesInner.appendChild(msg);
+        scrollToBottom();
+        return msg;
+    }
 
-            currentChatId = conv.chat_id;
-            sessionTotalTokens = conv.total_tokens || 0;
-            const badge = document.getElementById("token-tally-badge");
-            if (badge) {
-                badge.innerText = `${sessionTotalTokens.toLocaleString()} tokens used`;
-            }
+    function addAiMessage(report) {
+        const { msg, bubble } = aiMessageShell();
+        const content = el("div", "md-content");
+        content.innerHTML = renderMarkdown(report.response || "No response received.");
+        bubble.appendChild(content);
+        highlightCode(content);
 
-            messagesArea.innerHTML = "";
-            (conv.messages || []).forEach(msg => {
-                if (msg.role === "user") {
-                    messagesArea.innerHTML += `
-                        <div class="message user">
-                            <p style="margin: 0;">${escapeHtml(msg.content)}</p>
-                        </div>`;
+        const steps = report.causal_reasoning_steps || [];
+        const graph = report.causal_graph;
+        const hasGraph = !!(graph && graph.nodes && graph.nodes.length);
+        if (steps.length > 0 || hasGraph) {
+            bubble.appendChild(buildCausalPanel(steps, graph, hasGraph, report.causal_status));
+        }
+
+        messagesInner.appendChild(msg);
+        scrollToBottom();
+        return msg;
+    }
+
+    function buildCausalPanel(steps, graph, hasGraph, status) {
+        const panel = el("div", "causal-panel");
+        const head = el("div", "causal-head", "⚯ Causal reasoning");
+        const phase = status && status.phase;
+        if (phase) {
+            head.appendChild(el("span", "phase-badge", String(phase).replace(/_/g, " ")));
+        }
+        panel.appendChild(head);
+
+        if (steps.length > 0) {
+            const list = el("ul", "causal-steps");
+            steps.forEach((step) => {
+                const item = el("li");
+                const match = /^\[([a-z_ -]+)\]\s*(.*)$/i.exec(String(step));
+                if (match) {
+                    const tagName = match[1].toLowerCase();
+                    let tagClass = "step-tag";
+                    if (tagName === "ok") tagClass += " ok";
+                    if (tagName === "fail" || tagName === "failed") tagClass += " fail";
+                    item.appendChild(el("span", tagClass, match[1]));
+                    item.appendChild(document.createTextNode(match[2]));
                 } else {
-                    const parsed = (typeof marked !== 'undefined' && msg.content)
-                        ? marked.parse(msg.content)
-                        : escapeHtml(msg.content || "");
-                    messagesArea.innerHTML += `
-                        <div class="message ai">
-                            <div class="avatar ai-avatar"></div>
-                            <div class="content">
-                                <div style="margin: 0; font-size: 0.95rem; color: var(--text-primary);">${parsed}</div>
-                            </div>
-                        </div>`;
+                    item.textContent = String(step);
                 }
+                list.appendChild(item);
             });
-            scrollToBottom();
-        } catch (e) {
-            console.error("Failed to load conversation:", e);
+            panel.appendChild(list);
         }
-    }
 
-    if (window.tracerAuth) {
-        window.tracerAuth.onChange((user) => {
-            if (user) {
-                loadHistoryList();
-            } else {
-                resetHistorySidebar("Sign in to see your saved workflows");
-            }
-        });
+        if (hasGraph) {
+            const card = el("div", "graph-card");
+            const container = el("div", "causal-graph-container");
+            container.id = `causal-graph-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+            card.appendChild(container);
+
+            const legend = el("div", "graph-legend");
+            [["done", "done"], ["pending", "pending"], ["failed", "failed"], ["critical", "critical path"]]
+                .forEach(([cls, label]) => {
+                    const entry = el("span");
+                    entry.appendChild(el("i", "lg-dot " + cls));
+                    entry.appendChild(document.createTextNode(label));
+                    legend.appendChild(entry);
+                });
+            card.appendChild(legend);
+            panel.appendChild(card);
+
+            // The panel is still detached here; mermaid.render works on an id
+            // string and we mutate the container element directly, so the SVG
+            // shows up once the message is appended.
+            renderCausalGraph(container, graph);
+        }
+        return panel;
     }
 
     // ── Causal graph rendering (Mermaid) ────────────────────────────────────
@@ -316,7 +258,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const criticalPairs = new Set();
         const path = graph.critical_path || [];
         for (let i = 0; i + 1 < path.length; i++) {
-            criticalPairs.add(`${path[i]} ${path[i + 1]}`);
+            criticalPairs.add(`${path[i]} ${path[i + 1]}`);
         }
         const criticalEdgeIndexes = [];
         (graph.edges || []).forEach((edge, index) => {
@@ -324,32 +266,35 @@ document.addEventListener("DOMContentLoaded", () => {
             const arrow = dashed ? "-.->" : "-->";
             const label = sanitizeGraphLabel(edge.relation || "causes");
             lines.push(`    ${sanitizeGraphId(edge.source)} ${arrow}|${label}| ${sanitizeGraphId(edge.target)}`);
-            if (criticalPairs.has(`${edge.source} ${edge.target}`)) {
+            if (criticalPairs.has(`${edge.source} ${edge.target}`)) {
                 criticalEdgeIndexes.push(index);
             }
         });
 
-        lines.push("    classDef cPending fill:#3c4043,stroke:#9aa0a6,color:#e8eaed;");
-        lines.push("    classDef cActive fill:#174ea6,stroke:#8ab4f8,color:#e8eaed;");
-        lines.push("    classDef cDone fill:#0d652d,stroke:#81c995,color:#e8eaed;");
-        lines.push("    classDef cFailed fill:#8c1d18,stroke:#f28b82,color:#ffffff;");
-        lines.push("    classDef cAffected fill:#7a5900,stroke:#fdd663,color:#ffffff;");
+        // Status colors from the neon-dark palette (legible in both themes).
+        lines.push("    classDef cPending fill:#1b2030,stroke:#98a2b8,color:#e9edf7;");
+        lines.push("    classDef cActive fill:#164e63,stroke:#22d3ee,color:#e9edf7;");
+        lines.push("    classDef cDone fill:#064e3b,stroke:#34d399,color:#e9edf7;");
+        lines.push("    classDef cFailed fill:#7f1d1d,stroke:#f87171,color:#ffffff;");
+        lines.push("    classDef cAffected fill:#78350f,stroke:#fbbf24,color:#ffffff;");
         criticalEdgeIndexes.forEach(index => {
-            lines.push(`    linkStyle ${index} stroke:#9b72cb,stroke-width:3px;`);
+            lines.push(`    linkStyle ${index} stroke:#8b5cf6,stroke-width:3px;`);
         });
         return lines.join("\n");
     }
 
-    async function renderCausalGraph(containerId, graph) {
-        const container = document.getElementById(containerId);
+    async function renderCausalGraph(container, graph) {
         if (!container) return;
         const fallback = () => {
-            container.innerHTML = `<pre style="font-size: 0.75rem; overflow-x: auto; margin: 0;">${escapeHtml(JSON.stringify(graph, null, 2))}</pre>`;
+            const pre = el("pre", null, JSON.stringify(graph, null, 2));
+            container.replaceChildren(pre);
         };
         if (typeof mermaid === "undefined") { fallback(); return; }
         try {
             const definition = buildMermaidFlowchart(graph);
-            const { svg } = await mermaid.render(`mmd-${containerId}`, definition);
+            const { svg } = await mermaid.render(`mmd-${container.id}`, definition);
+            // Mermaid output is generated locally from the whitelist-sanitized
+            // definition above — safe to insert as-is.
             container.innerHTML = svg;
         } catch (error) {
             console.error("Causal graph render failed:", error);
@@ -357,49 +302,320 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
-    function escapeHtml(unsafe) {
-        if (typeof unsafe !== 'string') return '';
-        return unsafe
-             .replace(/&/g, "&amp;")
-             .replace(/</g, "&lt;")
-             .replace(/>/g, "&gt;")
-             .replace(/"/g, "&quot;")
-             .replace(/'/g, "&#039;");
+    // ── Uploads ─────────────────────────────────────────────────────────────
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0) + " KB";
+        return (bytes / (1024 * 1024)).toFixed(1) + " MB";
     }
 
-    // Sidebar Toggle
+    function chipNode(att) {
+        const chip = el("span", "attach-chip");
+        chip.dataset.attId = att.localId;
+        chip.appendChild(el("span", "chip-name", att.name));
+        chip.appendChild(el("span", "size", "· " + formatSize(att.size)));
+        const remove = el("button", "chip-x", "✕");
+        remove.type = "button";
+        remove.setAttribute("aria-label", "Remove " + att.name);
+        remove.addEventListener("click", () => removeAttachment(att.localId));
+        chip.appendChild(remove);
+        return chip;
+    }
+
+    function markChipError(att, chip, message) {
+        att.status = "error";
+        chip.classList.remove("uploading");
+        chip.classList.add("error");
+        chip.title = message;
+    }
+
+    function removeAttachment(localId) {
+        const index = pendingAttachments.findIndex(a => a.localId === localId);
+        if (index >= 0) pendingAttachments.splice(index, 1);
+        const chip = chipsRow.querySelector(`[data-att-id="${localId}"]`);
+        if (chip) chip.remove();
+    }
+
+    function clearAttachments() {
+        pendingAttachments.length = 0;
+        chipsRow.replaceChildren();
+    }
+
+    async function uploadFile(file, att, chip) {
+        try {
+            const form = new FormData();
+            form.append("file", file);
+            // Note: don't set Content-Type — the browser adds the boundary.
+            const res = await fetch("/upload", {
+                method: "POST",
+                headers: { ...(await authHeaders()) },
+                body: form,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Upload failed");
+            att.id = data.file_id;
+            att.status = "done";
+            chip.classList.remove("uploading");
+        } catch (error) {
+            console.error("Upload failed:", error);
+            markChipError(att, chip, error.message);
+        }
+    }
+
+    function handleFiles(fileList) {
+        Array.from(fileList || []).forEach((file) => {
+            const dot = file.name.lastIndexOf(".");
+            const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
+            const att = {
+                localId: "att-" + Date.now() + "-" + Math.random().toString(36).slice(2),
+                id: null,
+                name: file.name,
+                size: file.size,
+                status: "uploading",
+            };
+            pendingAttachments.push(att);
+            const chip = chipNode(att);
+            chip.classList.add("uploading");
+            chipsRow.appendChild(chip);
+
+            // Client-side pre-checks mirror the backend's 415/413 responses.
+            if (!ALLOWED_EXTENSIONS.includes(ext)) {
+                markChipError(att, chip, `Unsupported file type '${ext || file.name}'`);
+                return;
+            }
+            if (file.size > MAX_UPLOAD_BYTES) {
+                markChipError(att, chip, "File exceeds 5 MB limit");
+                return;
+            }
+            uploadFile(file, att, chip);
+        });
+    }
+
+    if (attachBtn && fileInput) {
+        attachBtn.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", () => {
+            handleFiles(fileInput.files);
+            fileInput.value = "";
+        });
+    }
+
+    // Drag & drop onto the whole page; depth counter avoids flicker on child
+    // enter/leave events.
+    let dragDepth = 0;
+
+    function dragHasFiles(event) {
+        const types = event.dataTransfer && event.dataTransfer.types;
+        return !!types && Array.from(types).includes("Files");
+    }
+
+    document.addEventListener("dragenter", (event) => {
+        if (!dragHasFiles(event)) return;
+        event.preventDefault();
+        dragDepth++;
+        dropOverlay.classList.add("show");
+    });
+    document.addEventListener("dragover", (event) => {
+        if (dragHasFiles(event)) event.preventDefault();
+    });
+    document.addEventListener("dragleave", (event) => {
+        if (!dragHasFiles(event)) return;
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) dropOverlay.classList.remove("show");
+    });
+    document.addEventListener("drop", (event) => {
+        if (!dragHasFiles(event)) return;
+        event.preventDefault();
+        dragDepth = 0;
+        dropOverlay.classList.remove("show");
+        handleFiles(event.dataTransfer.files);
+    });
+
+    // ── Send flow ───────────────────────────────────────────────────────────
+
+    const tokenBadge = document.getElementById("token-tally-badge");
+
+    function updateTokenBadge() {
+        if (tokenBadge) {
+            tokenBadge.textContent = `${sessionTotalTokens.toLocaleString()} tokens used`;
+        }
+    }
+
+    // Auto-resize textarea
+    chatInput.addEventListener("input", function () {
+        this.style.height = "auto";
+        this.style.height = (this.scrollHeight) + "px";
+    });
+
+    // Send on enter (without shift)
+    chatInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    sendBtn.addEventListener("click", sendMessage);
+
+    let isSending = false;
+
+    async function sendMessage() {
+        const text = chatInput.value.trim();
+        if (!text || isSending) return;
+
+        chatInput.value = "";
+        chatInput.style.height = "auto";
+
+        if (!currentChatId) {
+            currentChatId = generateSessionId();
+        }
+
+        const readyAttachments = pendingAttachments.filter(a => a.status === "done");
+        const attachmentIds = readyAttachments.map(a => a.id);
+        const attachmentNames = readyAttachments.map(a => a.name);
+
+        addUserMessage(text, attachmentNames);
+        const typingMsg = showTyping();
+
+        const causalToggle = document.getElementById("causal-toggle");
+        const webSearchToggle = document.getElementById("web-search-toggle");
+        const modelSelect = document.getElementById("model-select");
+
+        isSending = true;
+        sendBtn.disabled = true;
+        try {
+            const analysisResponse = await fetch("/analyze-prompt", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+                body: JSON.stringify({
+                    prompt: text,
+                    causal_reasoning: causalToggle ? causalToggle.checked : false,
+                    web_search: webSearchToggle ? webSearchToggle.checked : false,
+                    model_name: modelSelect ? modelSelect.value : "gemini-2.5-flash",
+                    chat_id: currentChatId,
+                    attachments: attachmentIds,
+                })
+            });
+
+            const report = await analysisResponse.json();
+
+            if (!analysisResponse.ok) {
+                throw new Error(report.detail || "Unknown error occurred on the backend.");
+            }
+
+            if (report.total_token_count) {
+                sessionTotalTokens += report.total_token_count;
+                updateTokenBadge();
+            }
+
+            typingMsg.remove();
+            addAiMessage(report);
+            clearAttachments();
+
+            // Refresh the sidebar so a newly started conversation appears
+            loadHistoryList();
+        } catch (error) {
+            console.error(error);
+            typingMsg.remove();
+            addErrorMessage(error.message);
+        } finally {
+            isSending = false;
+            sendBtn.disabled = false;
+        }
+    }
+
+    // ── Auth + History ──────────────────────────────────────────────────────
+
+    async function authHeaders() {
+        if (!window.tracerAuth) return {};
+        const token = await window.tracerAuth.getIdToken();
+        return token ? { "Authorization": `Bearer ${token}` } : {};
+    }
+
+    async function loadHistoryList() {
+        const headers = await authHeaders();
+        if (!headers.Authorization) return;
+        try {
+            const res = await fetch("/history", { headers });
+            if (!res.ok) return;
+            const data = await res.json();
+            renderHistoryList(data.conversations || []);
+        } catch (e) {
+            console.error("Failed to load history:", e);
+        }
+    }
+
+    function renderHistoryList(conversations) {
+        if (!historyItems) return;
+        historyItems.replaceChildren();
+        if (conversations.length === 0) {
+            historyItems.appendChild(el("div", "history-item hint", "No saved workflows yet"));
+            return;
+        }
+        conversations.forEach(conv => {
+            const item = el("div", "history-item", conv.title);
+            item.title = conv.title;
+            item.addEventListener("click", () => loadConversation(conv.chat_id));
+            historyItems.appendChild(item);
+        });
+    }
+
+    function resetHistorySidebar(message) {
+        if (!historyItems) return;
+        historyItems.replaceChildren(el("div", "history-item hint", message));
+    }
+
+    async function loadConversation(chatId) {
+        const headers = await authHeaders();
+        if (!headers.Authorization) return;
+        try {
+            const res = await fetch(`/history/${encodeURIComponent(chatId)}`, { headers });
+            if (!res.ok) return;
+            const conv = await res.json();
+
+            currentChatId = conv.chat_id;
+            sessionTotalTokens = conv.total_tokens || 0;
+            updateTokenBadge();
+
+            messagesInner.replaceChildren();
+            (conv.messages || []).forEach(msg => {
+                if (msg.role === "user") {
+                    addUserMessage(msg.content || "", msg.attachments || []);
+                } else {
+                    addAiMessage({ response: msg.content || "" });
+                }
+            });
+            scrollToBottom();
+        } catch (e) {
+            console.error("Failed to load conversation:", e);
+        }
+    }
+
+    if (window.tracerAuth) {
+        window.tracerAuth.onChange((user) => {
+            if (user) {
+                loadHistoryList();
+            } else {
+                resetHistorySidebar("Sign in to see your saved workflows");
+            }
+        });
+    }
+
+    // ── Sidebar toggle & new chat ───────────────────────────────────────────
+
     document.getElementById("toggle-sidebar").addEventListener("click", () => {
         document.getElementById("sidebar").classList.toggle("collapsed");
     });
 
-    // New Chat Action
-    document.querySelector(".new-chat-btn").addEventListener("click", () => {
+    document.getElementById("new-chat-btn").addEventListener("click", () => {
         currentChatId = null;
         sessionTotalTokens = 0;
-        const badge = document.getElementById("token-tally-badge");
-        if (badge) {
-            badge.innerText = `0 tokens used`;
-        }
-
-        messagesArea.innerHTML = `
-            <div class="message ai">
-                <div class="avatar ai-avatar"></div>
-                <div class="content">
-                    <p>Hi, I am TracerLensAi's Causal Agent. Enter a prompt below to evaluate its expected causal graph across an agentic workflow trace.</p>
-                </div>
-            </div>
-        `;
+        updateTokenBadge();
+        clearAttachments();
+        messagesInner.replaceChildren();
+        addGreeting();
     });
 
-    // Dark Mode Toggle
-    const darkModeToggle = document.getElementById("dark-mode-toggle");
-    if (darkModeToggle) {
-        darkModeToggle.addEventListener("change", (e) => {
-            if (!e.target.checked) {
-                document.body.classList.add("light-mode");
-            } else {
-                document.body.classList.remove("light-mode");
-            }
-        });
-    }
+    // Initial state
+    addGreeting();
 });

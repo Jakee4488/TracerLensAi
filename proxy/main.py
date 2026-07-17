@@ -7,6 +7,7 @@ import functools
 import json
 import os
 import re
+import uuid
 from datetime import datetime, timezone
 
 import httpx
@@ -16,10 +17,10 @@ import firebase_admin
 from firebase_admin import auth as firebase_auth
 from firebase_admin import firestore as firebase_firestore
 from google.cloud import firestore as gcf
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 app = FastAPI(title="TracerLensAi Proxy")
@@ -63,7 +64,8 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> Optio
         "name": decoded.get("name"),
     }
 
-def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, token_count: int):
+def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, token_count: int,
+                   attachments: Optional[list] = None):
     """Persist a user/AI message pair under users/{uid}/conversations/{chat_id}."""
     db = get_db()
     now = datetime.now(timezone.utc)
@@ -83,7 +85,10 @@ def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, to
         })
 
     messages = conv_ref.collection("messages")
-    messages.add({"role": "user", "content": prompt, "created_at": now})
+    user_msg = {"role": "user", "content": prompt, "created_at": now}
+    if attachments:
+        user_msg["attachments"] = attachments
+    messages.add(user_msg)
     messages.add({"role": "ai", "content": response_text, "created_at": datetime.now(timezone.utc)})
 
 
@@ -151,6 +156,118 @@ async def get_history(chat_id: str, user: Optional[dict] = Depends(get_current_u
         "messages": messages,
     }
 
+# ── Upload API ───────────────────────────────────────────────────────────────
+#
+# Dev-first storage: uploads live in an in-process dict (optionally mirrored to
+# UPLOAD_DIR so `uvicorn --reload` restarts keep them). On Cloud Run this store
+# is per-instance and ephemeral — if the service ever scales past one instance,
+# swap _put_upload/_get_upload for a GCS-backed implementation keyed by
+# uploads/{uid}/{file_id}; the call sites don't need to change.
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
+MAX_ATTACHMENT_TEXT_CHARS = 200_000
+ALLOWED_UPLOAD_EXTENSIONS = {
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".yaml", ".yml",
+    ".toml", ".xml", ".html", ".css", ".js", ".ts", ".py", ".java", ".go",
+    ".rs", ".c", ".cpp", ".h", ".sh", ".sql", ".log",
+}
+
+_uploads: dict = {}
+
+
+def _upload_dir() -> Optional[str]:
+    path = os.getenv("UPLOAD_DIR")
+    if path:
+        os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _put_upload(record: dict) -> str:
+    file_id = uuid.uuid4().hex
+    _uploads[file_id] = record
+    directory = _upload_dir()
+    if directory:
+        with open(os.path.join(directory, f"{file_id}.json"), "w", encoding="utf-8") as fh:
+            json.dump(record, fh)
+    return file_id
+
+
+def _get_upload(file_id: str) -> Optional[dict]:
+    record = _uploads.get(file_id)
+    if record is not None:
+        return record
+    directory = _upload_dir()
+    if directory and re.fullmatch(r"[0-9a-f]{32}", file_id or ""):
+        sidecar = os.path.join(directory, f"{file_id}.json")
+        if os.path.exists(sidecar):
+            with open(sidecar, encoding="utf-8") as fh:
+                record = json.load(fh)
+            _uploads[file_id] = record
+            return record
+    return None
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), user: Optional[dict] = Depends(get_current_user)):
+    """Accept a text-extractable file and return an id to reference in chat."""
+    filename = os.path.basename(file.filename or "").strip() or "upload"
+    extension = os.path.splitext(filename)[1].lower()
+    if extension not in ALLOWED_UPLOAD_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_UPLOAD_EXTENSIONS))
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{extension or filename}'. Allowed: {allowed}",
+        )
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+        )
+    text = data.decode("utf-8", errors="replace")[:MAX_ATTACHMENT_TEXT_CHARS]
+    file_id = _put_upload({
+        "filename": filename,
+        "size": len(data),
+        "content_type": file.content_type or "text/plain",
+        "text": text,
+        "owner_uid": user["uid"] if user else None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {
+        "file_id": file_id,
+        "filename": filename,
+        "size": len(data),
+        "content_type": file.content_type or "text/plain",
+        "text_chars": len(text),
+    }
+
+
+def _resolve_attachments(ids: list, user: Optional[dict]) -> list:
+    """Look up attachment ids, enforcing uploader-only access.
+
+    Unknown ids and other users' uploads both 404 so ids aren't probeable.
+    """
+    owner = user["uid"] if user else None
+    files = []
+    for file_id in ids or []:
+        record = _get_upload(file_id)
+        if record is None or record.get("owner_uid") != owner:
+            raise HTTPException(status_code=404, detail=f"Unknown attachment id: {file_id}")
+        files.append(record)
+    return files
+
+
+def _attachment_context(files: list) -> str:
+    """Render attached file contents as context blocks for the agent."""
+    if not files:
+        return ""
+    blocks = [
+        f"--- Attached file: {f['filename']} ---\n{f['text']}\n--- End of file: {f['filename']} ---"
+        for f in files
+    ]
+    return "\n".join(blocks) + "\n\n"
+
+
 # ── Agent Proxy API ─────────────────────────────────────────────────────────
 
 # Must match src/causal/state_keys.py (the proxy image does not ship src/).
@@ -166,6 +283,7 @@ class PromptRequest(BaseModel):
     web_search: bool = False
     model_name: str = "gemini-2.5-flash"
     chat_id: Optional[str] = None  # Maps to Agent Session ID
+    attachments: list = Field(default_factory=list)  # file_ids from POST /upload
 
 
 def _extract_causal_fallback(text: str):
@@ -182,12 +300,13 @@ def _extract_causal_fallback(text: str):
         return None, cleaned
     return (payload if isinstance(payload, dict) else None), cleaned
 
-def _persist_if_signed_in(user: Optional[dict], req: "PromptRequest", response_text: str, token_count: int):
+def _persist_if_signed_in(user: Optional[dict], req: "PromptRequest", response_text: str, token_count: int,
+                          attachment_names: Optional[list] = None):
     """Best-effort history write; never fails the chat response."""
     if not user or not req.chat_id:
         return
     try:
-        _save_exchange(user, req.chat_id, req.prompt, response_text, token_count)
+        _save_exchange(user, req.chat_id, req.prompt, response_text, token_count, attachment_names)
     except Exception as e:
         print(f"WARNING: failed to persist history for uid={user['uid']}: {e}")
 
@@ -196,11 +315,16 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
     """Proxy the request to the Vertex AI Agent Engine (streaming)."""
 
     agent_engine_base = os.getenv("AGENT_ENGINE_ENDPOINT")
+    attachment_files = _resolve_attachments(req.attachments, user)
+    attachment_names = [f["filename"] for f in attachment_files]
 
     if not agent_engine_base:
         # Mock response for local development if Agent Runtime is not configured
         mock_text = "Agent Proxy configured. (Set AGENT_ENGINE_ENDPOINT to connect to Agent Runtime). Prompt: " + req.prompt
-        _persist_if_signed_in(user, req, mock_text, 10)
+        if attachment_names:
+            # Deterministic acknowledgment so UI/E2E tests can verify uploads.
+            mock_text += f"\n\nAttached files ({len(attachment_names)}): {', '.join(attachment_names)}"
+        _persist_if_signed_in(user, req, mock_text, 10, attachment_names)
         mock_graph = None
         mock_steps = []
         if req.causal_reasoning:
@@ -250,11 +374,13 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         "Content-Type": "application/json"
     }
 
-    # Causal mode rides on a per-message control marker the agent's router
-    # keys on; the clean prompt (req.prompt) is what gets persisted.
-    outbound_message = req.prompt
+    # Attached file contents ride as context blocks ahead of the prompt, and
+    # causal mode rides on a per-message control marker the agent's router
+    # keys on (marker stays first); the clean prompt (req.prompt) is what
+    # gets persisted.
+    outbound_message = f"{_attachment_context(attachment_files)}{req.prompt}"
     if req.causal_reasoning:
-        outbound_message = f"{CAUSAL_MODE_MARKER} {req.prompt}"
+        outbound_message = f"{CAUSAL_MODE_MARKER} {outbound_message}"
 
     # ADK AdkApp only registers stream_query (no sync "query" method)
     payload = {
@@ -337,7 +463,7 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
                 causal_status = payload_json.get("status")
 
         response_text = response_text.replace(CAUSAL_MODE_MARKER, "").strip() or "(no response)"
-        _persist_if_signed_in(user, req, response_text, total_token_count)
+        _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names)
         return {
             "status": "success",
             "response": response_text,

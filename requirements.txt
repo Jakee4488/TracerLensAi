@@ -23,5 +23,8 @@ python-dotenv
 # Auth + per-user history (proxy)
 firebase-admin>=6.5.0
 
+# Multipart form parsing for the proxy's /upload endpoint
+python-multipart>=0.0.9
+
 # Causal reasoning engine (deterministic graph ops)
 networkx>=3.3
