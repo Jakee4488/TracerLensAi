@@ -6,6 +6,11 @@
 let sessionTotalTokens = 0;
 let currentChatId = null;
 
+// Base URL for API calls. Empty = same-origin (default). Set
+// window.TRACERLENS_API_BASE (in index.html) to the Cloud Run direct URL
+// (e.g. https://api.tracerlensai.com) to bypass Firebase Hosting's 60s cap.
+const API_BASE = (typeof window !== "undefined" && window.TRACERLENS_API_BASE) || "";
+
 // Generate a UUID v4 for session tracking (client-side)
 function generateSessionId() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -70,6 +75,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // ── Markdown pipeline (sanitized) ───────────────────────────────────────
+
+    // Parse a fetch Response as JSON, tolerating non-JSON error bodies (e.g. an
+    // HTML error page from a 502/504 gateway timeout) with a clear message
+    // instead of a raw "Unexpected token '<'" SyntaxError.
+    async function parseJsonResponse(response) {
+        const raw = await response.text();
+        try {
+            return JSON.parse(raw);
+        } catch (parseError) {
+            if (!response.ok) {
+                throw new Error(`Server error (${response.status}). Please try again in a moment.`);
+            }
+            throw new Error("The server returned an unexpected response.");
+        }
+    }
 
     function escapeHtml(unsafe) {
         if (typeof unsafe !== 'string') return '';
@@ -347,12 +367,12 @@ document.addEventListener("DOMContentLoaded", () => {
             const form = new FormData();
             form.append("file", file);
             // Note: don't set Content-Type — the browser adds the boundary.
-            const res = await fetch("/upload", {
+            const res = await fetch(`${API_BASE}/upload`, {
                 method: "POST",
                 headers: { ...(await authHeaders()) },
                 body: form,
             });
-            const data = await res.json();
+            const data = await parseJsonResponse(res);
             if (!res.ok) throw new Error(data.detail || "Upload failed");
             att.id = data.file_id;
             att.status = "done";
@@ -484,7 +504,7 @@ document.addEventListener("DOMContentLoaded", () => {
         isSending = true;
         sendBtn.disabled = true;
         try {
-            const analysisResponse = await fetch("/analyze-prompt", {
+            const analysisResponse = await fetch(`${API_BASE}/analyze-prompt`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...(await authHeaders()) },
                 body: JSON.stringify({
@@ -497,7 +517,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 })
             });
 
-            const report = await analysisResponse.json();
+            const report = await parseJsonResponse(analysisResponse);
 
             if (!analysisResponse.ok) {
                 throw new Error(report.detail || "Unknown error occurred on the backend.");
@@ -536,7 +556,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const headers = await authHeaders();
         if (!headers.Authorization) return;
         try {
-            const res = await fetch("/history", { headers });
+            const res = await fetch(`${API_BASE}/history`, { headers });
             if (!res.ok) return;
             const data = await res.json();
             renderHistoryList(data.conversations || []);
@@ -569,7 +589,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const headers = await authHeaders();
         if (!headers.Authorization) return;
         try {
-            const res = await fetch(`/history/${encodeURIComponent(chatId)}`, { headers });
+            const res = await fetch(`${API_BASE}/history/${encodeURIComponent(chatId)}`, { headers });
             if (!res.ok) return;
             const conv = await res.json();
 

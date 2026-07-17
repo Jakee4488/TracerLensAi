@@ -31,7 +31,7 @@
             });
         }
     </script>
-    <link rel="stylesheet" href="styles.css?v=3">
+    <link rel="stylesheet" href="styles.css?v=4">
 </head>
 
 <body>
@@ -135,7 +135,11 @@
         </main>
     </div>
 
-    <script src="causal-agent.js?v=3"></script>
+    <!-- API base for backend calls. Empty = same-origin (through Firebase
+         Hosting). Set to the Cloud Run direct URL to bypass Hosting's 60s
+         timeout on long causal runs. Must load before causal-agent.js. -->
+    <script>window.TRACERLENS_API_BASE = "https://tracerlensai-app-gi2oexvg3a-nw.a.run.app";</script>
+    <script src="causal-agent.js?v=4"></script>
 
     <!-- Firebase SDK Configuration -->
     <script type="module">

@@ -86,6 +86,17 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
     if [ -n "${AGENT_ENGINE_ENDPOINT:-}" ]; then
         DEPLOY_ARGS+=(--update-env-vars "AGENT_ENGINE_ENDPOINT=${AGENT_ENGINE_ENDPOINT}")
     fi
+    # Cross-origin allow-list, so the app (Firebase Hosting) can call the
+    # Cloud Run service directly (e.g. via api.tracerlensai.com) and bypass
+    # Hosting's 60s timeout on long causal runs. Empty = same-origin only.
+    # Requires a separate `gcloud run domain-mappings create` + DNS record for
+    # the api subdomain, and TRACERLENS_API_BASE set in the frontend.
+    CORS_ORIGINS="${CORS_ORIGINS:-https://tracerlensai.com,https://api.tracerlensai.com}"
+    if [ -n "${CORS_ORIGINS}" ]; then
+        # ^##^ sets '##' as the delimiter so the commas inside the value are
+        # not parsed by gcloud as separate env-var assignments.
+        DEPLOY_ARGS+=(--update-env-vars "^##^CORS_ORIGINS=${CORS_ORIGINS}")
+    fi
     gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_ARGS[@]}"
 fi
 

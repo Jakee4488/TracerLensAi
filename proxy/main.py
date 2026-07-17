@@ -18,12 +18,29 @@ from firebase_admin import auth as firebase_auth
 from firebase_admin import firestore as firebase_firestore
 from google.cloud import firestore as gcf
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
 app = FastAPI(title="TracerLensAi Proxy")
+
+# Allow the frontend to call this API cross-origin when it is served from a
+# different host than the Cloud Run service — e.g. the app is on
+# tracerlensai.com (Firebase Hosting, 60s cap) but hits api.tracerlensai.com
+# (Cloud Run direct, no cap) for long causal runs. Comma-separated origins in
+# CORS_ORIGINS; empty (default) leaves the middleware inert for same-origin.
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        # Auth is a bearer header, not a cookie, so credentials stay off.
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=False,
+    )
 
 # ── Auth & Firestore ─────────────────────────────────────────────────────────
 
