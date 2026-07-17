@@ -1,0 +1,4 @@
+# Dev-only dependencies (browser E2E tests). Keep out of the prod images.
+# Setup: pip install -r requirements-dev.txt && playwright install chromium
+playwright>=1.44
+pytest-playwright>=0.5

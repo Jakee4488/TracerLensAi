@@ -15,6 +15,7 @@ from google.adk.agents import BaseAgent
 from google.adk.events import Event, EventActions
 
 from src.causal import state_keys as sk
+from src.causal.complexity import budgets_for_query, tier_for_query
 from src.causal.models import CausalStatus
 
 
@@ -27,6 +28,9 @@ def strip_marker(text: str) -> str:
 
 
 def _budgets_from_env() -> dict:
+    """Env-configured budget ceilings. When CAUSAL_MAX_STEPS/REPLANS are unset
+    these fall back to the module defaults; when set they cap the dynamic
+    per-query budget (see _budgets_for_query)."""
     def _read(name: str, default: int) -> int:
         try:
             return max(1, int(os.environ.get(name, "") or default))
@@ -37,6 +41,20 @@ def _budgets_from_env() -> dict:
         "max_steps": _read("CAUSAL_MAX_STEPS", sk.DEFAULT_MAX_STEPS),
         "max_replans": _read("CAUSAL_MAX_REPLANS", sk.DEFAULT_MAX_REPLANS),
     }
+
+
+def _budgets_for_query(query: str) -> tuple[dict, str]:
+    """Per-query budget sized by complexity, clamped by the env ceilings.
+
+    Returns (budgets, tier) so the router can also emit a UI trace line.
+    """
+    ceiling = _budgets_from_env()
+    dynamic = budgets_for_query(query)
+    budgets = {
+        "max_steps": min(dynamic["max_steps"], ceiling["max_steps"]),
+        "max_replans": min(dynamic["max_replans"], ceiling["max_replans"]),
+    }
+    return budgets, tier_for_query(query)
 
 
 class CausalRouterAgent(BaseAgent):
@@ -70,10 +88,14 @@ class CausalRouterAgent(BaseAgent):
             return
 
         # Fresh causal turn: clear any stale causal_* state from a previous
-        # turn in this session, then seed budgets and phase.
+        # turn in this session, then seed complexity-sized budgets and phase.
+        budgets, tier = _budgets_for_query(strip_marker(text))
         reset: dict = {key: None for key in sk.ALL_KEYS}
-        reset[sk.KEY_BUDGETS] = _budgets_from_env()
-        reset[sk.KEY_STEPS] = []
+        reset[sk.KEY_BUDGETS] = budgets
+        reset[sk.KEY_STEPS] = [
+            f"[budget] complexity: {tier.replace('_', ' ')} -> "
+            f"{budgets['max_steps']} steps / {budgets['max_replans']} replans"
+        ]
         reset[sk.KEY_LEDGER] = []
         reset[sk.KEY_STATUS] = CausalStatus(phase="decomposing").model_dump(mode="json")
         yield Event(
