@@ -9,7 +9,7 @@ The system is deployed as a decoupled three-tier application:
 2. **Backend Proxy (FastAPI)**: Hosted dynamically on **Google Cloud Run**.
 3. **Agent Runtime (Vertex AI)**: Hosts the core ADK agent logic (`src/agent.py`) and manages state natively via the **Memory Bank**.
 
-Firebase Hosting acts as a reverse proxy, rewriting API requests directly to the Cloud Run backend proxy. The proxy attaches authentication keys and forwards the requests to the Vertex AI Agent Engine.
+Firebase Hosting acts as a reverse proxy, rewriting API requests directly to the Cloud Run backend proxy. The proxy authenticates the request with Application Default Credentials (no stored API keys) and forwards it to the Vertex AI Agent Engine. It also handles Firebase Google Sign-In, per-user history in Firestore, and file uploads.
 
 ---
 
@@ -33,7 +33,7 @@ We provision a dedicated service account (`agent-app-sa`) specifically for the C
 The core logic of TracerLensAi now resides in `src/agent.py`, authored using the Agent Development Kit (ADK).
 
 ### Deployment Process
-The `.github/workflows/cd.yml` workflow utilizes the `google-agents-cli` to package and deploy the agent:
+The `.github/workflows/deploy.yml` workflow utilizes `google-agents-cli` (via `deploy_to_gcp.sh`) to package and deploy the agent:
 1. **Validation**: `agents-cli eval` validates the agent syntax and tests it.
 2. **Deployment**: `agents-cli deploy` packages the agent and uploads it to the Vertex AI Agent Registry.
 3. **Execution**: Once deployed, the Agent Engine hosts the agent and automatically manages the **Memory Bank** (conversational history) and MCP Tools (Code Execution, Web Search).
@@ -42,10 +42,10 @@ The `.github/workflows/cd.yml` workflow utilizes the `google-agents-cli` to pack
 
 ## 3. Backend Proxy Deployment (Cloud Run)
 
-The proxy backend (`src/main.py`) is fully containerized and deployed via our automated CI/CD pipeline.
+The proxy backend (`proxy/main.py`) is fully containerized (`Dockerfile.proxy`) and deployed via our automated CI/CD pipeline.
 
 ### GitHub Actions Pipeline
-In the same `.github/workflows/cd.yml` pipeline:
+In the same `.github/workflows/deploy.yml` pipeline:
 1. **Build**: Builds the Docker container containing the lightweight FastAPI proxy.
 2. **Push**: Pushes the image to Google Artifact Registry.
 3. **Deploy**: Deploys the new revision to Cloud Run (`tracerlensai-app`), explicitly binding it to our `agent-app-sa` service account.
@@ -54,14 +54,14 @@ In the same `.github/workflows/cd.yml` pipeline:
 
 ## 4. Frontend Deployment (Firebase Hosting)
 
-The frontend consists of static HTML, CSS, and JavaScript files located in the `src/static/` directory. We deploy these files to Firebase Hosting for global CDN caching and free SSL provisioning.
+The frontend consists of static HTML, CSS, and JavaScript files located in the `proxy/static/` directory. We deploy these files to Firebase Hosting for global CDN caching and free SSL provisioning.
 
 ### Configuration (`firebase.json`)
-Our `firebase.json` file is configured to map the root of our web app to the `src/static` directory:
+Our `firebase.json` file is configured to map the root of our web app to the `proxy/static` directory:
 ```json
 {
   "hosting": {
-    "public": "src/static",
+    "public": "proxy/static",
     "ignore": [
       "firebase.json",
       "**/.*",
@@ -84,8 +84,13 @@ Our `firebase.json` file is configured to map the root of our web app to the `sr
 Because the frontend and backend are decoupled, the frontend JavaScript needs a way to securely call backend endpoints (like `/analyze-prompt`) without dealing with CORS issues or exposing the raw Cloud Run URL.
 
 The `rewrites` block in `firebase.json` serves as our bridge:
-- If a file exists in `src/static` (like `index.html` or `styles.css`), Firebase serves it instantly via CDN.
+- If a file exists in `proxy/static` (like `index.html` or `styles.css`), Firebase serves it instantly via CDN.
 - If a request is made to an API path, Firebase Hosting automatically acts as a reverse proxy, forwarding the request securely to the `tracerlensai-app` service on Cloud Run.
+
+> **Bypassing the 60s cap.** Firebase Hosting rewrites time out at 60s. For long
+> causal runs the frontend can instead call Cloud Run directly via a dedicated
+> `api.` subdomain (`window.TRACERLENS_API_BASE`), enabled by the proxy's
+> `CORS_ORIGINS` allow-list.
 
 ### Deployment Command
 The frontend is deployed manually via the Firebase CLI (or can be added to CI/CD):
