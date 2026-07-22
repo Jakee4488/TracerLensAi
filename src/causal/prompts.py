@@ -52,11 +52,18 @@ def step_executor_instruction(ctx) -> str:
             "OBSERVED: no step to execute\nSTEP_STATUS: failure"
         )
 
+    query = state.get(sk.KEY_QUERY)
+
     lines = [
         f"You are executing ONE step of a causal plan. Overall goal: {goal or '(see conversation)'}",
         f"Step {step.id} targets component '{step.component_id}'.",
         f"Objective: {step.objective}",
     ]
+    if query:
+        # This agent runs with include_contents="none", so the original problem
+        # statement and any numeric data are NOT in the conversation history --
+        # supply them here so computational steps have their inputs.
+        lines.append(f"Given problem and data (from the user):\n{query}")
     if step.expected_effect:
         lines.append(f"Expected effect: {step.expected_effect}")
     if recent:
@@ -108,28 +115,47 @@ def synthesizer_instruction(ctx) -> str:
     plan = parse_model(ExecutionPlan, state.get(sk.KEY_PLAN))
     steps_trace = state.get(sk.KEY_STEPS) or []
 
+    # Feed the model the substance of each step (what it was for and what it
+    # found) WITHOUT step ids or status flags -- those are execution-engine
+    # internals that must never reach the user-facing answer.
     results = ""
     if plan:
         results = "\n".join(
-            f"- {s.id} [{s.status}] {s.objective[:100]}"
-            + (f" => {s.result_summary}" if s.result_summary else "")
+            f"- {s.objective[:120]}" + (f" => {s.result_summary}" if s.result_summary else "")
             for s in plan.steps
+            if s.result_summary or s.status != "pending"
         )
 
     outcome_note = {
-        "synthesizing": "The plan completed.",
-        "complete": "The plan completed.",
-        "budget_exhausted": f"The plan stopped early: {status.note or 'budget exhausted'}. Be explicit about what remains undone.",
-        "failed": f"The causal pipeline could not run: {status.note or 'decomposition failed'}. Answer the user's question directly and well without it.",
+        "synthesizing": "",
+        "complete": "",
+        "budget_exhausted": (
+            "Some analysis could not be fully completed. Present the strongest "
+            "answer supported by the results below. If a specific quantity or "
+            "conclusion genuinely could not be determined, say so in one plain "
+            "sentence -- do not enumerate internal steps or 'what remains undone'."
+        ),
+        "failed": (
+            "The structured analysis did not run. Answer the user's question "
+            "directly and well from your own reasoning, without referring to any "
+            "pipeline or plan."
+        ),
     }.get(status.phase, "")
 
     return (
-        "Write the final user-facing answer to the goal below, grounded in the "
-        "executed causal plan. Summarize the causal pathway that was followed, key "
-        "quantitative results, and any replanning that occurred and why. "
-        "Do not mention control markers or internal state keys.\n"
+        "You are writing the FINAL user-facing answer. Address the goal below "
+        "directly, grounded in the analysis results.\n"
+        "Lead with the answer and the key quantitative results, then a brief, "
+        "plain-language explanation of the causal reasoning (confounders, "
+        "adjustment, direction/size of effect).\n"
+        "STRICT: Write as a self-contained answer to the user. Never mention the "
+        "plan, steps, step ids (e.g. s1, s6.r1), replanning, budgets, status "
+        "phases, control markers, or internal state. The reader has no idea an "
+        "internal pipeline exists. No 'Replanning' or 'What Remains Undone' "
+        "sections.\n"
         f"Goal: {goal or '(the user message in this conversation)'}\n"
-        f"Status: {status.phase} (steps executed: {status.executed_steps}, replans: {status.replans_used}). {outcome_note}\n"
-        f"Step results:\n{results or '(none)'}\n"
-        f"Trace:\n" + "\n".join(f"- {line}" for line in steps_trace[-15:])
+        + (f"{outcome_note}\n" if outcome_note else "")
+        + f"Analysis results (for your grounding -- rewrite, do not quote verbatim):\n{results or '(none)'}\n"
+        "Internal notes (context only -- never quote or reference these):\n"
+        + "\n".join(f"- {line}" for line in steps_trace[-15:])
     )

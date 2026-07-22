@@ -89,9 +89,14 @@ class CausalRouterAgent(BaseAgent):
 
         # Fresh causal turn: clear any stale causal_* state from a previous
         # turn in this session, then seed complexity-sized budgets and phase.
-        budgets, tier = _budgets_for_query(strip_marker(text))
+        query = strip_marker(text)
+        budgets, tier = _budgets_for_query(query)
         reset: dict = {key: None for key in sk.ALL_KEYS}
         reset[sk.KEY_BUDGETS] = budgets
+        # Persist the original problem text so the step executor -- which runs
+        # with include_contents="none" and therefore never sees the user
+        # message -- can access the raw data it needs to compute on.
+        reset[sk.KEY_QUERY] = query
         reset[sk.KEY_STEPS] = [
             f"[budget] complexity: {tier.replace('_', ' ')} -> "
             f"{budgets['max_steps']} steps / {budgets['max_replans']} replans"

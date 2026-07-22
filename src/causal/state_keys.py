@@ -24,12 +24,13 @@ KEY_REPLAN_REQUEST = "causal_replan_request"     # dict or None
 KEY_REPLAN_RAW = "causal_replan_raw"
 KEY_FINAL = "causal_final_answer"
 KEY_BUDGETS = "causal_budgets"                   # {"max_steps": N, "max_replans": N}
+KEY_QUERY = "causal_query"                       # original user problem text (marker stripped)
 
 # All keys the router resets at the start of a causal turn.
 ALL_KEYS = (
     KEY_GRAPH, KEY_GRAPH_FULL, KEY_PLAN, KEY_STEPS, KEY_LEDGER, KEY_STATUS,
     KEY_CURRENT_STEP, KEY_STEP_OUTPUT, KEY_DECOMPOSITION_RAW,
-    KEY_REPLAN_REQUEST, KEY_REPLAN_RAW, KEY_FINAL, KEY_BUDGETS,
+    KEY_REPLAN_REQUEST, KEY_REPLAN_RAW, KEY_FINAL, KEY_BUDGETS, KEY_QUERY,
 )
 
 # Budgets and caps (env-overridable where noted in agents.py/router.py).

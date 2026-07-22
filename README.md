@@ -160,6 +160,7 @@ See the [Deployment Guide](docs/deployment_guide.md) and [Advanced Deployment](d
 | [Developer Guide](docs/developer_guide.md) | Architecture deep-dive, full API reference, and function-level docs for every source file |
 | [Repository Structure](docs/repository_structure.md) | Directory-by-directory, file-by-file breakdown |
 | [Causal Reasoning](docs/causal_reasoning.md) | How the causal pipeline decomposes, plans, executes, and replans |
+| [Evaluation & Testing](docs/evaluation_and_testing.md) | How both chat pathways are executed under test and scored — the `pytest` suite and the `agents-cli eval` flywheel |
 | [Local Development (Vertex AI)](docs/local_development_vertex_agent.md) | Running the full stack locally against a real ADK agent |
 | [Deployment Guide](docs/deployment_guide.md) | Step-by-step deployment methods and infrastructure provisioning |
 | [Advanced Deployment](docs/advanced_deployment.md) | End-to-end multi-tier architecture, WIF, DNS, and rewrites |

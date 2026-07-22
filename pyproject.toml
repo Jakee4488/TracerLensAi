@@ -1,0 +1,49 @@
+[project]
+name = "tracerlensai"
+version = "0.1.0"
+description = "TracerLensAi - ADK causal-reasoning agent"
+requires-python = ">=3.11"
+
+# Mirrors requirements.txt. requirements.txt is kept as the source of truth for
+# the Docker/prod images; this file exists so `agents-cli eval` (which runs
+# `uv sync --dev --extra eval`) can resolve the environment.
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.7.0",
+    "httpx>=0.28.1",
+    "google-genai>=1.12.0",
+    "google-auth>=2.29.0",
+    "google-agents-cli>=0.1.0",
+    "google-adk[gcp]>=2.0.0",
+    "a2a-sdk[http-server]>=0.3.22",
+    "google-cloud-logging",
+    "python-dotenv",
+    "firebase-admin>=6.5.0",
+    "python-multipart>=0.0.9",
+    "networkx>=3.3",
+]
+
+[project.optional-dependencies]
+# `agents-cli eval` syncs with `--extra eval`. Built-in metrics
+# (final_response_quality, hallucination, tool_use_quality) run through the
+# Vertex Gen AI evaluation service.
+eval = [
+    "google-cloud-aiplatform[evaluation]>=1.71.0",
+    "pandas>=2.0",
+]
+
+[dependency-groups]
+# `uv sync --dev` reads this group. Mirrors requirements-dev.txt plus test deps
+# from requirements.txt that only matter for local dev/eval.
+dev = [
+    "pytest==7.4.0",
+    "pytest-asyncio==0.23.5",
+    "flake8>=7.0.0",
+    "playwright>=1.44",
+    "pytest-playwright>=0.5",
+]
+
+[tool.uv]
+# App, not a library: install dependencies only, don't build src/ as a wheel.
+package = false

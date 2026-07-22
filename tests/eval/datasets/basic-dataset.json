@@ -1,21 +1,7 @@
 {
   "eval_cases": [
     {
-      "eval_case_id": "greeting",
-      "prompt": {
-        "role": "user",
-        "parts": [{"text": "Hello, what can you help me with?"}]
-      }
-    },
-    {
-      "eval_case_id": "weather_query",
-      "prompt": {
-        "role": "user",
-        "parts": [{"text": "What's the weather like in San Francisco?"}]
-      }
-    },
-    {
-      "eval_case_id": "capital_lookup",
+      "eval_case_id": "sanity_capital_lookup",
       "prompt": {
         "role": "user",
         "parts": [{"text": "What is the capital of France?"}]
@@ -24,6 +10,58 @@
         "response": {
           "role": "model",
           "parts": [{"text": "The capital of France is Paris."}]
+        }
+      }
+    },
+    {
+      "eval_case_id": "confounder_ice_cream_drowning",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Ice cream sales and drowning deaths are strongly correlated across the year. Does buying ice cream cause drowning? Explain your reasoning."}]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [{"text": "No. This is a classic case of a confound, not causation. Both ice cream sales and drowning deaths are driven by a common cause: hot weather / summer. Warm temperatures independently raise ice cream sales and increase swimming (and therefore drowning) exposure. The ice-cream–drowning association is spurious; conditioning on temperature/season would remove it. There is no direct causal edge from ice cream to drowning."}]
+        }
+      }
+    },
+    {
+      "eval_case_id": "backdoor_adjustment_set",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Consider a DAG where smoking (S) causes tar buildup (T) which causes lung cancer (C), and a genotype (G) causes both smoking (S) and lung cancer (C) directly. I want the causal effect of smoking on lung cancer. Which variables must I adjust for, and which must I NOT adjust for? Explain why."}]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [{"text": "Adjust for the genotype G. G is a common cause of S and C, so it opens a backdoor path S <- G -> C that confounds the S->C effect; conditioning on G blocks it and satisfies the backdoor criterion. Do NOT adjust for tar T: T is a mediator on the causal path S -> T -> C. Conditioning on a mediator blocks part of the very effect you want to estimate (it would give only the direct S->C effect, biasing the total effect). So the valid adjustment set is {G}, not {G, T} and not {T}."}]
+        }
+      }
+    },
+    {
+      "eval_case_id": "causal_pipeline_ate_estimation",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "[[causal:on]] A study measures a binary treatment X and outcome Y with a single binary confounder Z. Counts are: Z=0: (X=1,Y=1)=8/20 treated, (X=0,Y=1)=6/20 control; Z=1: (X=1,Y=1)=45/60 treated, (X=0,Y=1)=48/80 control. Estimate the average treatment effect of X on Y using backdoor adjustment over Z, and state whether naive (unadjusted) association would mislead."}]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [{"text": "Adjusting for Z (standardization / backdoor adjustment): in stratum Z=0, P(Y=1|X=1)=8/20=0.40 and P(Y=1|X=0)=6/20=0.30, effect +0.10. In stratum Z=1, P(Y=1|X=1)=45/60=0.75 and P(Y=1|X=0)=48/80=0.60, effect +0.15. Weighting each stratum by the population share of Z (P(Z=0)=40/180=0.222, P(Z=1)=140/180=0.778) gives an adjusted ATE = 0.222*0.10 + 0.778*0.15 = +0.139 (positive: treatment increases the outcome). The naive unadjusted comparison (about +0.12) is distorted because Z is associated with both X and Y, so the confounder-adjusted estimate is the trustworthy one; report the adjusted positive effect (~+0.139), not the raw association."}]
+        }
+      }
+    },
+    {
+      "eval_case_id": "causal_pipeline_confounder_id",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "[[causal:on]] An online store observes that customers who receive a discount coupon spend more on average. Before concluding the coupon causes higher spend, identify the most likely confounders and propose how to estimate the true causal effect."}]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [{"text": "The observed coupon-spend association is likely confounded because coupons are not randomly assigned. Likely confounders (common causes of both receiving a coupon and spending): prior purchase history / loyalty tier, customer engagement or site-visit frequency, and marketing segment / targeting rules that send coupons to already-high-value customers. To estimate the true causal effect, run a randomized experiment (A/B test) assigning coupons at random; if only observational data exists, adjust for the confounders via stratification, regression, propensity-score matching, or inverse-probability weighting, being careful not to condition on post-treatment variables (e.g., items added to cart after seeing the coupon). Report the adjusted effect, not the raw difference."}]
         }
       }
     }

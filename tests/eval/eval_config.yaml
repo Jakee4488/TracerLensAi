@@ -1,14 +1,33 @@
 metrics_to_run:
-  - custom_response_quality
+  # --- Managed Vertex eval-service built-ins (need GOOGLE_CLOUD_PROJECT + ADC,
+  #     which this project has; graded at the `global` endpoint by default --
+  #     override per run with `agents-cli eval grade --region <REGION>`).
+  #     Our eval cases are single-turn (one prompt -> one response with tool
+  #     calls), so we use the single-turn built-ins, NOT the multi_turn_* ones.
+  - final_response_quality   # reference-free quality of the final answer
+  - hallucination            # catches fabricated numbers/claims -- key for an
+                             # agent that executes Python and may invent results
+  # NOTE: tool_use_quality is intentionally NOT used. This agent's Python runs
+  # via BuiltInCodeExecutor, a Gemini *model-internal* tool whose executions do
+  # NOT appear as function_call/function_response events in the trace. The metric
+  # requires those events and errors on every case
+  # ("requires tool calls in the evaluation trace ... no function_call ... found").
+  # It's the wrong metric for built-in code execution -- grounding is covered by
+  # `hallucination` + the custom judge's `grounding` axis instead.
+
+  # --- Local custom metrics (in-process google-genai; no managed service; run
+  #     on Vertex or AI Studio). Keep these so grading still works even without
+  #     the Vertex eval service, and for causal-specific scoring the built-ins
+  #     don't cover.
+  - custom_response_quality  # multi-axis causal judge (see metrics.py)
+  - agent_turn_count
 
 custom_metrics:
-  # Default: local LLM-as-judge defined in metrics.py (a real, lintable/testable
-  # module) rather than an inline blob. It runs in-process via google-genai, so it
-  # grades on BOTH Vertex (ADC) and Google AI Studio (GEMINI_API_KEY) with no
-  # managed Vertex eval service -- genai.Client() auto-selects the backend from the
-  # project's .env (loaded by `eval grade`). It uses each case's `reference` (ground
-  # truth) when present. To use the managed Vertex eval service instead (rubric
-  # LLMMetric; needs a GCP project), see the eval skill's metrics-guide.
+  # Multi-axis causal LLM-as-judge defined in metrics.py (a real, lintable/
+  # testable module) rather than an inline blob. Scores causal_correctness,
+  # grounding, relevance, and clarity, aggregating into one weighted 1-5 score
+  # with a per-axis breakdown in the explanation. Uses each case's `reference`
+  # (ground truth) when present.
   - name: custom_response_quality
     custom_function_file: metrics.py
   - name: agent_turn_count

@@ -1,0 +1,932 @@
+{
+  "eval_cases": [
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "What is the capital of France?"
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "The capital of France is Paris."
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "reference": {
+        "response": {
+          "parts": [
+            {
+              "text": "The capital of France is Paris."
+            }
+          ],
+          "role": "model"
+        }
+      },
+      "eval_case_id": "sanity_capital_lookup",
+      "agent_data": {
+        "agents": {
+          "TracerLensAi_Agent": {
+            "agent_id": "TracerLensAi_Agent",
+            "agent_type": "CausalRouterAgent",
+            "description": "TracerLensAi root agent: causal-reasoning pipeline for marked requests, general assistant otherwise.",
+            "tools": [],
+            "sub_agents": [
+              "GeneralAssistant",
+              "CausalPipeline"
+            ]
+          },
+          "GeneralAssistant": {
+            "agent_id": "GeneralAssistant",
+            "agent_type": "LlmAgent",
+            "description": "An advanced causal reasoning agent capable of mathematical modeling and deep analysis.",
+            "instruction": "You are TracerLensAi, an expert AI assistant specializing in causal reasoning, data analysis, and structural causal models. You can execute Python code to perform complex mathematical calculations and use Google Search to look up current information. When asked to perform causal reasoning, identify potential confounders, propose a structural causal model, and estimate treatment effects step-by-step. Ignore control markers such as [[causal:on]] if they appear in a message.",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalPipeline": {
+            "agent_id": "CausalPipeline",
+            "agent_type": "SequentialAgent",
+            "description": "Causal reasoning pathway: decompose, plan, execute, replan, synthesize.",
+            "tools": [],
+            "sub_agents": [
+              "CausalDecomposer",
+              "CausalExecutorLoop",
+              "CausalSynthesizer",
+              "CausalFallbackEmitter"
+            ]
+          },
+          "CausalDecomposer": {
+            "agent_id": "CausalDecomposer",
+            "agent_type": "LlmAgent",
+            "description": "Extracts components and causal relations as structured JSON.",
+            "instruction": "<dynamic: decomposer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalExecutorLoop": {
+            "agent_id": "CausalExecutorLoop",
+            "agent_type": "LoopAgent",
+            "description": "Bounded execute/verify/replan loop over the causal plan.",
+            "tools": [],
+            "sub_agents": [
+              "CausalStepExecutor",
+              "CausalStepController",
+              "CausalReplanner"
+            ]
+          },
+          "CausalStepExecutor": {
+            "agent_id": "CausalStepExecutor",
+            "agent_type": "LlmAgent",
+            "description": "Executes exactly one plan step, with Python code execution.",
+            "instruction": "<dynamic: step_executor_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalStepController": {
+            "agent_id": "CausalStepController",
+            "agent_type": "CausalStepController",
+            "description": "Deterministic causal plan controller (no LLM).",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalReplanner": {
+            "agent_id": "CausalReplanner",
+            "agent_type": "LlmAgent",
+            "description": "Replans only the failure-affected subgraph as structured JSON.",
+            "instruction": "<dynamic: replanner_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalSynthesizer": {
+            "agent_id": "CausalSynthesizer",
+            "agent_type": "LlmAgent",
+            "description": "Writes the final user-facing answer from the executed plan.",
+            "instruction": "<dynamic: synthesizer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalFallbackEmitter": {
+            "agent_id": "CausalFallbackEmitter",
+            "agent_type": "CausalFallbackEmitter",
+            "description": "Optional fenced-JSON transport fallback.",
+            "tools": [],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "GeneralAssistant",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "The capital of France is Paris."
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "Ice cream sales and drowning deaths are strongly correlated across the year. Does buying ice cream cause drowning? Explain your reasoning."
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "No, buying ice cream does not cause drowning deaths. This is a classic example of **correlation not implying causation**.\n\nHere's a breakdown of the reasoning:\n\n1.  **Observed Correlation:** It's true that there's often a strong positive correlation between ice cream sales and drowning deaths throughout the year. As one increases, the other tends to increase.\n\n2.  **Missing Causal Link:** There is no plausible direct causal mechanism by which consuming ice cream would lead to drowning. Eating ice cream doesn't make someone more likely to drown, nor does it affect their swimming ability or judgment in a way that would cause drowning.\n\n3.  **The Role of a Confounding Variable:** The observed correlation is driven by a third, unobserved variable that influences both ice cream sales and drowning deaths. This variable is **warm weather** (or the summer season).\n\n    *   **Warm Weather -> Ice Cream Sales:** When the weather is hot, people are more likely to buy and consume refreshing treats like ice cream.\n    *   **Warm Weather -> Drowning Deaths:** When the weather is hot, more people engage in water-based activities such as swimming in pools, lakes, rivers, and the ocean. With more people in and around water, there is an increased absolute number of opportunities for accidents, leading to a higher number of drowning incidents, even if the per-capita risk of drowning remains the same.\n\n4.  **Conclusion:** The increase in ice cream sales and the increase in drowning deaths are both **effects of the same cause (warm weather)**, not cause-and-effect of each other. If you controlled for the weather (e.g., compared ice cream sales and drownings on hot days versus cold days), you would find that the spurious correlation between ice cream and drowning disappears."
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "reference": {
+        "response": {
+          "parts": [
+            {
+              "text": "No. This is a classic case of a confound, not causation. Both ice cream sales and drowning deaths are driven by a common cause: hot weather / summer. Warm temperatures independently raise ice cream sales and increase swimming (and therefore drowning) exposure. The ice-cream–drowning association is spurious; conditioning on temperature/season would remove it. There is no direct causal edge from ice cream to drowning."
+            }
+          ],
+          "role": "model"
+        }
+      },
+      "eval_case_id": "confounder_ice_cream_drowning",
+      "agent_data": {
+        "agents": {
+          "TracerLensAi_Agent": {
+            "agent_id": "TracerLensAi_Agent",
+            "agent_type": "CausalRouterAgent",
+            "description": "TracerLensAi root agent: causal-reasoning pipeline for marked requests, general assistant otherwise.",
+            "tools": [],
+            "sub_agents": [
+              "GeneralAssistant",
+              "CausalPipeline"
+            ]
+          },
+          "GeneralAssistant": {
+            "agent_id": "GeneralAssistant",
+            "agent_type": "LlmAgent",
+            "description": "An advanced causal reasoning agent capable of mathematical modeling and deep analysis.",
+            "instruction": "You are TracerLensAi, an expert AI assistant specializing in causal reasoning, data analysis, and structural causal models. You can execute Python code to perform complex mathematical calculations and use Google Search to look up current information. When asked to perform causal reasoning, identify potential confounders, propose a structural causal model, and estimate treatment effects step-by-step. Ignore control markers such as [[causal:on]] if they appear in a message.",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalPipeline": {
+            "agent_id": "CausalPipeline",
+            "agent_type": "SequentialAgent",
+            "description": "Causal reasoning pathway: decompose, plan, execute, replan, synthesize.",
+            "tools": [],
+            "sub_agents": [
+              "CausalDecomposer",
+              "CausalExecutorLoop",
+              "CausalSynthesizer",
+              "CausalFallbackEmitter"
+            ]
+          },
+          "CausalDecomposer": {
+            "agent_id": "CausalDecomposer",
+            "agent_type": "LlmAgent",
+            "description": "Extracts components and causal relations as structured JSON.",
+            "instruction": "<dynamic: decomposer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalExecutorLoop": {
+            "agent_id": "CausalExecutorLoop",
+            "agent_type": "LoopAgent",
+            "description": "Bounded execute/verify/replan loop over the causal plan.",
+            "tools": [],
+            "sub_agents": [
+              "CausalStepExecutor",
+              "CausalStepController",
+              "CausalReplanner"
+            ]
+          },
+          "CausalStepExecutor": {
+            "agent_id": "CausalStepExecutor",
+            "agent_type": "LlmAgent",
+            "description": "Executes exactly one plan step, with Python code execution.",
+            "instruction": "<dynamic: step_executor_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalStepController": {
+            "agent_id": "CausalStepController",
+            "agent_type": "CausalStepController",
+            "description": "Deterministic causal plan controller (no LLM).",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalReplanner": {
+            "agent_id": "CausalReplanner",
+            "agent_type": "LlmAgent",
+            "description": "Replans only the failure-affected subgraph as structured JSON.",
+            "instruction": "<dynamic: replanner_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalSynthesizer": {
+            "agent_id": "CausalSynthesizer",
+            "agent_type": "LlmAgent",
+            "description": "Writes the final user-facing answer from the executed plan.",
+            "instruction": "<dynamic: synthesizer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalFallbackEmitter": {
+            "agent_id": "CausalFallbackEmitter",
+            "agent_type": "CausalFallbackEmitter",
+            "description": "Optional fenced-JSON transport fallback.",
+            "tools": [],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "GeneralAssistant",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "No, buying ice cream does not cause drowning deaths. This is a classic example of **correlation not implying causation**.\n\nHere's a breakdown of the reasoning:\n\n1.  **Observed Correlation:** It's true that there's often a strong positive correlation between ice cream sales and drowning deaths throughout the year. As one increases, the other tends to increase.\n\n2.  **Missing Causal Link:** There is no plausible direct causal mechanism by which consuming ice cream would lead to drowning. Eating ice cream doesn't make someone more likely to drown, nor does it affect their swimming ability or judgment in a way that would cause drowning.\n\n3.  **The Role of a Confounding Variable:** The observed correlation is driven by a third, unobserved variable that influences both ice cream sales and drowning deaths. This variable is **warm weather** (or the summer season).\n\n    *   **Warm Weather -> Ice Cream Sales:** When the weather is hot, people are more likely to buy and consume refreshing treats like ice cream.\n    *   **Warm Weather -> Drowning Deaths:** When the weather is hot, more people engage in water-based activities such as swimming in pools, lakes, rivers, and the ocean. With more people in and around water, there is an increased absolute number of opportunities for accidents, leading to a higher number of drowning incidents, even if the per-capita risk of drowning remains the same.\n\n4.  **Conclusion:** The increase in ice cream sales and the increase in drowning deaths are both **effects of the same cause (warm weather)**, not cause-and-effect of each other. If you controlled for the weather (e.g., compared ice cream sales and drownings on hot days versus cold days), you would find that the spurious correlation between ice cream and drowning disappears."
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "Consider a DAG where smoking (S) causes tar buildup (T) which causes lung cancer (C), and a genotype (G) causes both smoking (S) and lung cancer (C) directly. I want the causal effect of smoking on lung cancer. Which variables must I adjust for, and which must I NOT adjust for? Explain why."
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "Let's analyze the DAG and determine the appropriate adjustment strategy for estimating the causal effect of Smoking (S) on Lung Cancer (C).\n\n**1. Define the Causal Effect of Interest:**\nWe want to find the total causal effect of Smoking (S) on Lung Cancer (C).\n\n**2. Identify All Paths Between S and C:**\n\n*   **Causal Path:** S → T → C\n    *   This is the path through which smoking causes lung cancer, mediated by tar buildup. We want to measure the full effect that travels along this path.\n\n*   **Backdoor Path:** S ← G → C\n    *   This path represents a common cause (Genotype G) influencing both smoking and lung cancer independently. This is a confounding path that must be blocked.\n\n**3. Determine Variables to Adjust For:**\n\nTo identify the causal effect of S on C, we need to block all backdoor paths between S and C while not blocking the causal paths of interest or introducing new bias.\n\n*   **Adjust for G (Genotype):**\n    *   The path S ← G → C is an open backdoor path. Genotype (G) is a common cause (confounder) of both Smoking (S) and Lung Cancer (C). If we don't adjust for G, the observed correlation between S and C will be a mix of the true causal effect of S on C and the spurious correlation induced by G.\n    *   By conditioning on G (adjusting for it in our analysis), we effectively block this backdoor path, allowing us to isolate the causal effect of S on C.\n\n**4. Determine Variables NOT to Adjust For:**\n\n*   **DO NOT adjust for T (Tar buildup):**\n    *   Tar buildup (T) is a *mediator* on the causal pathway from S to C (S → T → C).\n    *   If you adjust for a mediator, you are essentially asking for the *direct* effect of S on C *not* going through T. However, the question asks for the *total* causal effect of smoking on lung cancer, which *includes* the effect mediated by tar buildup.\n    *   Adjusting for T would block the very mechanism through which smoking primarily causes lung cancer, leading to an underestimate or complete elimination of the causal effect you are trying to measure.\n\n**5. Explanation:**\n\n*   **Why adjust for G?** Genotype (G) is a confounder. It is a common cause of both smoking (S) and lung cancer (C). This creates a spurious association between S and C that is not due to S causing C directly or via T. By adjusting for G, we control for this confounding effect, isolating the true causal influence of S on C.\n\n*   **Why NOT adjust for T?** Tar buildup (T) is a mediator. It lies on the causal pathway from smoking (S) to lung cancer (C). If we adjust for T, we are effectively removing the primary mechanism through which smoking causes lung cancer. This would lead to an estimate of the effect of S on C that *does not pass through T*, which is not the total causal effect we are typically interested in when asking for \"the causal effect of smoking on lung cancer.\"\n\n**In summary:**\n\n*   **Must Adjust For:** **Genotype (G)**\n*   **Must NOT Adjust For:** **Tar buildup (T)**"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "reference": {
+        "response": {
+          "parts": [
+            {
+              "text": "Adjust for the genotype G. G is a common cause of S and C, so it opens a backdoor path S <- G -> C that confounds the S->C effect; conditioning on G blocks it and satisfies the backdoor criterion. Do NOT adjust for tar T: T is a mediator on the causal path S -> T -> C. Conditioning on a mediator blocks part of the very effect you want to estimate (it would give only the direct S->C effect, biasing the total effect). So the valid adjustment set is {G}, not {G, T} and not {T}."
+            }
+          ],
+          "role": "model"
+        }
+      },
+      "eval_case_id": "backdoor_adjustment_set",
+      "agent_data": {
+        "agents": {
+          "TracerLensAi_Agent": {
+            "agent_id": "TracerLensAi_Agent",
+            "agent_type": "CausalRouterAgent",
+            "description": "TracerLensAi root agent: causal-reasoning pipeline for marked requests, general assistant otherwise.",
+            "tools": [],
+            "sub_agents": [
+              "GeneralAssistant",
+              "CausalPipeline"
+            ]
+          },
+          "GeneralAssistant": {
+            "agent_id": "GeneralAssistant",
+            "agent_type": "LlmAgent",
+            "description": "An advanced causal reasoning agent capable of mathematical modeling and deep analysis.",
+            "instruction": "You are TracerLensAi, an expert AI assistant specializing in causal reasoning, data analysis, and structural causal models. You can execute Python code to perform complex mathematical calculations and use Google Search to look up current information. When asked to perform causal reasoning, identify potential confounders, propose a structural causal model, and estimate treatment effects step-by-step. Ignore control markers such as [[causal:on]] if they appear in a message.",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalPipeline": {
+            "agent_id": "CausalPipeline",
+            "agent_type": "SequentialAgent",
+            "description": "Causal reasoning pathway: decompose, plan, execute, replan, synthesize.",
+            "tools": [],
+            "sub_agents": [
+              "CausalDecomposer",
+              "CausalExecutorLoop",
+              "CausalSynthesizer",
+              "CausalFallbackEmitter"
+            ]
+          },
+          "CausalDecomposer": {
+            "agent_id": "CausalDecomposer",
+            "agent_type": "LlmAgent",
+            "description": "Extracts components and causal relations as structured JSON.",
+            "instruction": "<dynamic: decomposer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalExecutorLoop": {
+            "agent_id": "CausalExecutorLoop",
+            "agent_type": "LoopAgent",
+            "description": "Bounded execute/verify/replan loop over the causal plan.",
+            "tools": [],
+            "sub_agents": [
+              "CausalStepExecutor",
+              "CausalStepController",
+              "CausalReplanner"
+            ]
+          },
+          "CausalStepExecutor": {
+            "agent_id": "CausalStepExecutor",
+            "agent_type": "LlmAgent",
+            "description": "Executes exactly one plan step, with Python code execution.",
+            "instruction": "<dynamic: step_executor_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalStepController": {
+            "agent_id": "CausalStepController",
+            "agent_type": "CausalStepController",
+            "description": "Deterministic causal plan controller (no LLM).",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalReplanner": {
+            "agent_id": "CausalReplanner",
+            "agent_type": "LlmAgent",
+            "description": "Replans only the failure-affected subgraph as structured JSON.",
+            "instruction": "<dynamic: replanner_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalSynthesizer": {
+            "agent_id": "CausalSynthesizer",
+            "agent_type": "LlmAgent",
+            "description": "Writes the final user-facing answer from the executed plan.",
+            "instruction": "<dynamic: synthesizer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalFallbackEmitter": {
+            "agent_id": "CausalFallbackEmitter",
+            "agent_type": "CausalFallbackEmitter",
+            "description": "Optional fenced-JSON transport fallback.",
+            "tools": [],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "GeneralAssistant",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Let's analyze the DAG and determine the appropriate adjustment strategy for estimating the causal effect of Smoking (S) on Lung Cancer (C).\n\n**1. Define the Causal Effect of Interest:**\nWe want to find the total causal effect of Smoking (S) on Lung Cancer (C).\n\n**2. Identify All Paths Between S and C:**\n\n*   **Causal Path:** S → T → C\n    *   This is the path through which smoking causes lung cancer, mediated by tar buildup. We want to measure the full effect that travels along this path.\n\n*   **Backdoor Path:** S ← G → C\n    *   This path represents a common cause (Genotype G) influencing both smoking and lung cancer independently. This is a confounding path that must be blocked.\n\n**3. Determine Variables to Adjust For:**\n\nTo identify the causal effect of S on C, we need to block all backdoor paths between S and C while not blocking the causal paths of interest or introducing new bias.\n\n*   **Adjust for G (Genotype):**\n    *   The path S ← G → C is an open backdoor path. Genotype (G) is a common cause (confounder) of both Smoking (S) and Lung Cancer (C). If we don't adjust for G, the observed correlation between S and C will be a mix of the true causal effect of S on C and the spurious correlation induced by G.\n    *   By conditioning on G (adjusting for it in our analysis), we effectively block this backdoor path, allowing us to isolate the causal effect of S on C.\n\n**4. Determine Variables NOT to Adjust For:**\n\n*   **DO NOT adjust for T (Tar buildup):**\n    *   Tar buildup (T) is a *mediator* on the causal pathway from S to C (S → T → C).\n    *   If you adjust for a mediator, you are essentially asking for the *direct* effect of S on C *not* going through T. However, the question asks for the *total* causal effect of smoking on lung cancer, which *includes* the effect mediated by tar buildup.\n    *   Adjusting for T would block the very mechanism through which smoking primarily causes lung cancer, leading to an underestimate or complete elimination of the causal effect you are trying to measure.\n\n**5. Explanation:**\n\n*   **Why adjust for G?** Genotype (G) is a confounder. It is a common cause of both smoking (S) and lung cancer (C). This creates a spurious association between S and C that is not due to S causing C directly or via T. By adjusting for G, we control for this confounding effect, isolating the true causal influence of S on C.\n\n*   **Why NOT adjust for T?** Tar buildup (T) is a mediator. It lies on the causal pathway from smoking (S) to lung cancer (C). If we adjust for T, we are effectively removing the primary mechanism through which smoking causes lung cancer. This would lead to an estimate of the effect of S on C that *does not pass through T*, which is not the total causal effect we are typically interested in when asking for \"the causal effect of smoking on lung cancer.\"\n\n**In summary:**\n\n*   **Must Adjust For:** **Genotype (G)**\n*   **Must NOT Adjust For:** **Tar buildup (T)**"
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "[[causal:on]] A study measures a binary treatment X and outcome Y with a single binary confounder Z. Counts are: Z=0: (X=1,Y=1)=8/20 treated, (X=0,Y=1)=6/20 control; Z=1: (X=1,Y=1)=45/60 treated, (X=0,Y=1)=48/80 control. Estimate the average treatment effect of X on Y using backdoor adjustment over Z, and state whether naive (unadjusted) association would mislead."
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "The estimation of the Average Treatment Effect (ATE) of X on Y using backdoor adjustment over Z, and the subsequent comparison with the naive (unadjusted) association, could not be completed.\n\n**Causal Pathway Summary & Execution Status:**\nThe initial plan involved calculating the naive association `P(Y|X=1) - P(Y|X=0)` and deriving conditional probabilities `P(Y|X,Z)` and `P(Z)` as foundational steps for the backdoor adjustment. However, both of these critical initial steps failed due to the absence of the necessary `raw_counts` data.\n\n**Key Quantitative Results:**\nNo quantitative results were obtained because the required input data (`raw_counts`) was missing.\n\n**Replanning:**\nTwo replanning attempts occurred, both triggered by the failure to obtain `raw_counts`:\n1.  The first replan was initiated when the initial attempt to `Calculate Naive Association` (step `s1`) failed. This led to a revised set of steps focusing on re-attempting the naive association calculation (`s1.r1`).\n2.  The second replan was initiated when the attempt to `Calculate Conditional Probabilities` (step `s3`) also failed. This led to a revised plan for calculating conditional probabilities (`s3.r1`) and subsequent ATE steps.\nHowever, the `raw_counts` issue persisted, causing the re-attempt (`s1.r1`) to calculate naive association to fail again. At this point, the replan budget was exhausted, and execution halted.\n\n**What Remains Undone:**\nEssentially, the entire goal remains unaddressed:\n*   The **naive association** between X and Y could not be calculated.\n*   The necessary **conditional probabilities** `P(Y|X,Z)` and `P(Z)` could not be derived.\n*   Consequently, the **Average Treatment Effect (ATE)** using backdoor adjustment could not be estimated.\n*   Without both the naive association and the ATE, it is impossible to **compare them** to determine if naive association would mislead.\n\nTo proceed, the `raw_counts` data for Y, X, and Z is required."
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "reference": {
+        "response": {
+          "parts": [
+            {
+              "text": "Adjusting for Z (standardization / backdoor adjustment): in stratum Z=0, P(Y=1|X=1)=8/20=0.40 and P(Y=1|X=0)=6/20=0.30, effect +0.10. In stratum Z=1, P(Y=1|X=1)=45/60=0.75 and P(Y=1|X=0)=48/80=0.60, effect +0.15. Weighting each stratum by the population share of Z gives an adjusted ATE of roughly +0.12 to +0.13 (positive: treatment increases the outcome). The naive unadjusted comparison is distorted because Z is associated with both X and Y, so the confounder-adjusted estimate is the trustworthy one; report the adjusted positive effect, not the raw association."
+            }
+          ],
+          "role": "model"
+        }
+      },
+      "eval_case_id": "causal_pipeline_ate_estimation",
+      "agent_data": {
+        "agents": {
+          "TracerLensAi_Agent": {
+            "agent_id": "TracerLensAi_Agent",
+            "agent_type": "CausalRouterAgent",
+            "description": "TracerLensAi root agent: causal-reasoning pipeline for marked requests, general assistant otherwise.",
+            "tools": [],
+            "sub_agents": [
+              "GeneralAssistant",
+              "CausalPipeline"
+            ]
+          },
+          "GeneralAssistant": {
+            "agent_id": "GeneralAssistant",
+            "agent_type": "LlmAgent",
+            "description": "An advanced causal reasoning agent capable of mathematical modeling and deep analysis.",
+            "instruction": "You are TracerLensAi, an expert AI assistant specializing in causal reasoning, data analysis, and structural causal models. You can execute Python code to perform complex mathematical calculations and use Google Search to look up current information. When asked to perform causal reasoning, identify potential confounders, propose a structural causal model, and estimate treatment effects step-by-step. Ignore control markers such as [[causal:on]] if they appear in a message.",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalPipeline": {
+            "agent_id": "CausalPipeline",
+            "agent_type": "SequentialAgent",
+            "description": "Causal reasoning pathway: decompose, plan, execute, replan, synthesize.",
+            "tools": [],
+            "sub_agents": [
+              "CausalDecomposer",
+              "CausalExecutorLoop",
+              "CausalSynthesizer",
+              "CausalFallbackEmitter"
+            ]
+          },
+          "CausalDecomposer": {
+            "agent_id": "CausalDecomposer",
+            "agent_type": "LlmAgent",
+            "description": "Extracts components and causal relations as structured JSON.",
+            "instruction": "<dynamic: decomposer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalExecutorLoop": {
+            "agent_id": "CausalExecutorLoop",
+            "agent_type": "LoopAgent",
+            "description": "Bounded execute/verify/replan loop over the causal plan.",
+            "tools": [],
+            "sub_agents": [
+              "CausalStepExecutor",
+              "CausalStepController",
+              "CausalReplanner"
+            ]
+          },
+          "CausalStepExecutor": {
+            "agent_id": "CausalStepExecutor",
+            "agent_type": "LlmAgent",
+            "description": "Executes exactly one plan step, with Python code execution.",
+            "instruction": "<dynamic: step_executor_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalStepController": {
+            "agent_id": "CausalStepController",
+            "agent_type": "CausalStepController",
+            "description": "Deterministic causal plan controller (no LLM).",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalReplanner": {
+            "agent_id": "CausalReplanner",
+            "agent_type": "LlmAgent",
+            "description": "Replans only the failure-affected subgraph as structured JSON.",
+            "instruction": "<dynamic: replanner_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalSynthesizer": {
+            "agent_id": "CausalSynthesizer",
+            "agent_type": "LlmAgent",
+            "description": "Writes the final user-facing answer from the executed plan.",
+            "instruction": "<dynamic: synthesizer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalFallbackEmitter": {
+            "agent_id": "CausalFallbackEmitter",
+            "agent_type": "CausalFallbackEmitter",
+            "description": "Optional fenced-JSON transport fallback.",
+            "tools": [],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "CausalDecomposer",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "{\n  \"goal\": \"Estimate the Average Treatment Effect (ATE) of X on Y using backdoor adjustment over Z, and determine if naive (unadjusted) association would mislead.\",\n  \"components\": [\n    {\n      \"id\": \"treatment_x\",\n      \"label\": \"Treatment X\",\n      \"kind\": \"input\",\n      \"description\": \"Binary treatment variable X.\"\n    },\n    {\n      \"id\": \"outcome_y\",\n      \"label\": \"Outcome Y\",\n      \"kind\": \"input\",\n      \"description\": \"Binary outcome variable Y.\"\n    },\n    {\n      \"id\": \"confounder_z\",\n      \"label\": \"Confounder Z\",\n      \"kind\": \"input\",\n      \"description\": \"Binary confounder variable Z.\"\n    },\n    {\n      \"id\": \"raw_counts\",\n      \"label\": \"Raw Counts\",\n      \"kind\": \"input\",\n      \"description\": \"Given counts for (X,Y,Z) combinations from the study.\"\n    },\n    {\n      \"id\": \"calc_conditional_probs\",\n      \"label\": \"Calculate Conditional Probabilities\",\n      \"kind\": \"process\",\n      \"description\": \"Derive P(Y|X,Z) and P(Z) from the raw counts.\"\n    },\n    {\n      \"id\": \"conditional_probs\",\n      \"label\": \"Conditional Probabilities\",\n      \"kind\": \"artifact\",\n      \"description\": \"Calculated conditional probabilities P(Y|X,Z) and P(Z).\"\n    },\n    {\n      \"id\": \"backdoor_adjustment\",\n      \"label\": \"Backdoor Adjustment\",\n      \"kind\": \"process\",\n      \"description\": \"Apply the backdoor adjustment formula to estimate the Average Treatment Effect (ATE).\"\n    },\n    {\n      \"id\": \"ate_value\",\n      \"label\": \"ATE Value\",\n      \"kind\": \"artifact\",\n      \"description\": \"The calculated Average Treatment Effect (ATE) value.\"\n    },\n    {\n      \"id\": \"calc_naive_association\",\n      \"label\": \"Calculate Naive Association\",\n      \"kind\": \"process\",\n      \"description\": \"Calculate the unadjusted association P(Y|X=1) - P(Y|X=0).\"\n    },\n    {\n      \"id\": \"naive_association_value\",\n      \"label\": \"Naive Association Value\",\n      \"kind\": \"artifact\",\n      \"description\": \"The calculated unadjusted association value.\"\n    },\n    {\n      \"id\": \"comparison_logic\",\n      \"label\": \"Comparison Logic\",\n      \"kind\": \"process\",\n      \"description\": \"Compare the ATE value with the naive association value to determine if the latter is misleading.\"\n    },\n    {\n      \"id\": \"final_assessment\",\n      \"label\": \"Final Assessment\",\n      \"kind\": \"outcome\",\n      \"description\": \"The estimated ATE and the conclusion on whether naive association is misleading.\"\n    }\n  ],\n  \"edges\": [\n    {\n      \"source\": \"treatment_x\",\n      \"target\": \"calc_conditional_probs\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.95,\n      \"rationale\": \"Defines one of the variables for probability calculation.\"\n    },\n    {\n      \"source\": \"outcome_y\",\n      \"target\": \"calc_conditional_probs\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.95,\n      \"rationale\": \"Defines one of the variables for probability calculation.\"\n    },\n    {\n      \"source\": \"confounder_z\",\n      \"target\": \"calc_conditional_probs\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.95,\n      \"rationale\": \"Defines one of the variables for probability calculation.\"\n    },\n    {\n      \"source\": \"raw_counts\",\n      \"target\": \"calc_conditional_probs\",\n      \"relation\": \"enables\",\n      \"confidence\": 0.95,\n      \"rationale\": \"Provides the necessary data to compute conditional probabilities.\"\n    },\n    {\n      \"source\": \"calc_conditional_probs\",\n      \"target\": \"conditional_probs\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.95,\n      \"rationale\": \"The process of calculation produces the conditional probabilities.\"\n    },\n    {\n      \"source\": \"conditional_probs\",\n      \"target\": \"backdoor_adjustment\",\n      \"relation\": \"enables\",\n      \"confidence\": 0.95,\n      \"rationale\": \"These probabilities are essential inputs for the backdoor adjustment formula.\"\n    },\n    {\n      \"source\": \"confounder_z\",\n      \"target\": \"backdoor_adjustment\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.95,\n      \"rationale\": \"Identifies the variable to adjust for in the backdoor formula.\"\n    },\n    {\n      \"source\": \"backdoor_adjustment\",\n      \"target\": \"ate_value\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.95,\n      \"rationale\": \"The adjustment process yields the ATE value.\"\n    },\n    {\n      \"source\": \"raw_counts\",\n      \"target\": \"calc_naive_association\",\n      \"relation\": \"enables\",\n      \"confidence\": 0.95,\n      \"rationale\": \"Provides the data to compute unadjusted probabilities.\"\n    },\n    {\n      \"source\": \"calc_naive_association\",\n      \"target\": \"naive_association_value\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.95,\n      \"rationale\": \"The calculation process produces the naive association value.\"\n    },\n    {\n      \"source\": \"ate_value\",\n      \"target\": \"comparison_logic\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.95,\n      \"rationale\": \"The ATE value is a key input for the final assessment.\"\n    },\n    {\n      \"source\": \"naive_association_value\",\n      \"target\": \"comparison_logic\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.95,\n      \"rationale\": \"The naive association value is a key input for the final assessment.\"\n    },\n    {\n      \"source\": \"comparison_logic\",\n      \"target\": \"final_assessment\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.95,\n      \"rationale\": \"The comparison logic produces the comprehensive final assessment.\"\n    }\n  ]\n}"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "I need the raw counts for the combinations of (X, Y, Z) to calculate the unadjusted association. Please provide the `raw_counts` data, typically as a dictionary mapping `(x, y, z)` tuples to their corresponding counts.\n\nOBSERVED: Missing input: raw_counts\nSTEP_STATUS: failure"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalReplanner",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "{\n  \"reason\": \"The 'calc_naive_association' step failed due to missing 'raw_counts' input, invalidating subsequent steps. These new steps re-execute the affected subgraph starting from the root cause.\",\n  \"new_steps\": [\n    {\n      \"component_id\": \"calc_naive_association\",\n      \"objective\": \"Advance 'Calculate Naive Association': Calculate the unadjusted association P(Y|X=1) - P(Y|X=0).\",\n      \"expected_effect\": \"The naive association value will be calculated and stored in 'naive_association_value'.\",\n      \"depends_on\": []\n    },\n    {\n      \"component_id\": \"comparison_logic\",\n      \"objective\": \"Advance 'Comparison Logic': Compare the naive association with a predefined threshold.\",\n      \"expected_effect\": \"The comparison result will be available for the final assessment.\",\n      \"depends_on\": []\n    },\n    {\n      \"component_id\": \"final_assessment\",\n      \"objective\": \"Advance 'Final Assessment': Determine the final assessment based on the comparison logic.\",\n      \"expected_effect\": \"The final assessment of the association will be concluded.\",\n      \"depends_on\": []\n    }\n  ]\n}"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "To calculate the conditional probabilities P(Y|X,Z) and P(Z), I need the raw counts for the joint distribution of X, Y, and Z. The previous step (s1) indicated that 'raw_counts' were missing. Please provide the raw counts.\n\nOBSERVED: Missing input: raw_counts for P(Y|X,Z) and P(Z) calculations.\nSTEP_STATUS: failure"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalReplanner",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "{\n  \"reason\": \"The 'calc_conditional_probs' step (s3) failed due to missing 'raw_counts' input. This replan re-initiates the calculation of conditional probabilities and all dependent downstream processes, assuming the 'raw_counts' input will be provided, potentially by the completion of step 's1' which indicated the missing input. All invalidated steps and affected components are addressed in the correct causal order.\",\n  \"new_steps\": [\n    {\n      \"component_id\": \"calc_conditional_probs\",\n      \"objective\": \"Derive P(Y|X,Z) and P(Z) from the raw counts.\",\n      \"expected_effect\": \"The 'conditional_probs' artifact is generated.\",\n      \"depends_on\": [\"s1\"]\n    },\n    {\n      \"component_id\": \"backdoor_adjustment\",\n      \"objective\": \"Perform backdoor adjustment using conditional probabilities.\",\n      \"expected_effect\": \"The 'ate_value' artifact is calculated.\",\n      \"depends_on\": [\"calc_conditional_probs\"]\n    },\n    {\n      \"component_id\": \"comparison_logic\",\n      \"objective\": \"Compare ATE value against a threshold.\",\n      \"expected_effect\": \"The comparison result for 'final_assessment' is determined.\",\n      \"depends_on\": [\"backdoor_adjustment\"]\n    },\n    {\n      \"component_id\": \"final_assessment\",\n      \"objective\": \"Finalize the assessment based on comparison logic.\",\n      \"expected_effect\": \"The 'final_assessment' outcome is finalized.\",\n      \"depends_on\": [\"comparison_logic\"]\n    }\n  ]\n}"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "I cannot calculate the naive association `P(Y|X=1) - P(Y|X=0)` because the `raw_counts` data is missing. This data is essential for deriving the required probabilities.\n\nOBSERVED: Missing input: raw_counts\nSTEP_STATUS: failure"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalSynthesizer",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "The estimation of the Average Treatment Effect (ATE) of X on Y using backdoor adjustment over Z, and the subsequent comparison with the naive (unadjusted) association, could not be completed.\n\n**Causal Pathway Summary & Execution Status:**\nThe initial plan involved calculating the naive association `P(Y|X=1) - P(Y|X=0)` and deriving conditional probabilities `P(Y|X,Z)` and `P(Z)` as foundational steps for the backdoor adjustment. However, both of these critical initial steps failed due to the absence of the necessary `raw_counts` data.\n\n**Key Quantitative Results:**\nNo quantitative results were obtained because the required input data (`raw_counts`) was missing.\n\n**Replanning:**\nTwo replanning attempts occurred, both triggered by the failure to obtain `raw_counts`:\n1.  The first replan was initiated when the initial attempt to `Calculate Naive Association` (step `s1`) failed. This led to a revised set of steps focusing on re-attempting the naive association calculation (`s1.r1`).\n2.  The second replan was initiated when the attempt to `Calculate Conditional Probabilities` (step `s3`) also failed. This led to a revised plan for calculating conditional probabilities (`s3.r1`) and subsequent ATE steps.\nHowever, the `raw_counts` issue persisted, causing the re-attempt (`s1.r1`) to calculate naive association to fail again. At this point, the replan budget was exhausted, and execution halted.\n\n**What Remains Undone:**\nEssentially, the entire goal remains unaddressed:\n*   The **naive association** between X and Y could not be calculated.\n*   The necessary **conditional probabilities** `P(Y|X,Z)` and `P(Z)` could not be derived.\n*   Consequently, the **Average Treatment Effect (ATE)** using backdoor adjustment could not be estimated.\n*   Without both the naive association and the ATE, it is impossible to **compare them** to determine if naive association would mislead.\n\nTo proceed, the `raw_counts` data for Y, X, and Z is required."
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "prompt": {
+        "parts": [
+          {
+            "text": "[[causal:on]] An online store observes that customers who receive a discount coupon spend more on average. Before concluding the coupon causes higher spend, identify the most likely confounders and propose how to estimate the true causal effect."
+          }
+        ],
+        "role": "user"
+      },
+      "responses": [
+        {
+          "response": {
+            "parts": [
+              {
+                "text": "The goal was to estimate the true causal effect of discount coupons on customer spending by identifying and accounting for confounders.\n\nThe causal pathway involved:\n1.  **Initial Confounder Identification**: Variables initially identified as influencing both coupon receipt and customer spending were 'Customer Engagement', 'Prior Purchase History', and 'Marketing Campaigns'.\n2.  **Defining Customer Spending**: Customer spending was defined as the total monetary value of purchases made by a customer within a specified post-coupon exposure period, serving as the dependent variable.\n3.  **Causal Effect Estimation**: The true causal effect was to be estimated using statistical or experimental methods.\n\n**Replanning and Refinement**:\nDuring the initial phase of identifying confounders, a failure occurred in processing the identified list. This prompted a replanning step, which led to:\n1.  **Re-identification of Confounders**: The list of confounding variables was refined and expanded to include 'Customer Engagement', 'Prior Purchase History', 'Customer Segment/Value Tier', and 'Exposure to Other Concurrent Marketing Promotions'. This more comprehensive set of confounders was deemed necessary for a robust causal analysis.\n2.  **Re-estimation of Causal Effect**: The causal effect is now to be re-estimated using **multivariable linear regression**. This method will incorporate the re-identified confounders (Customer Engagement, Prior Purchase History, Customer Segment/Value Tier, and Exposure to Other Concurrent Marketing Promotions) as control variables. The coefficient (`β₁`) associated with the discount coupon variable in this model will represent the average causal effect.\n3.  **Re-evaluation of True Causal Effect**: The true causal effect will be re-evaluated by interpreting the magnitude and statistical significance (e.g., p-value) of the re-estimated causal effect (`β₁`). This provides a more robust and refined understanding of the discount coupons' impact on customer spending, as it accounts for the identified confounding factors.\n\n**Key Quantitative Results (Expected)**:\nWhile the specific numerical result for `β₁` is not yet available, the plan outlines how it will be interpreted:\n*   `β₁` will quantify the average change in customer spending attributable to discount coupons, holding all identified confounders constant.\n*   A positive `β₁` would indicate an increase in spending, a negative `β₁` a decrease, and a value near zero would suggest a negligible effect.\n*   The statistical significance (p-value) of `β₁` will determine if the observed effect is likely due to the coupon or random chance. The practical significance will be assessed based on the magnitude of `β₁` in relation to business objectives.\n\nBy controlling for these identified confounders through multivariable linear regression, the analysis aims to provide a more accurate and unbiased estimate of the causal impact of discount coupons on customer spending, moving beyond simple correlation."
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "reference": {
+        "response": {
+          "parts": [
+            {
+              "text": "The observed coupon-spend association is likely confounded because coupons are not randomly assigned. Likely confounders (common causes of both receiving a coupon and spending): prior purchase history / loyalty tier, customer engagement or site-visit frequency, and marketing segment / targeting rules that send coupons to already-high-value customers. To estimate the true causal effect, run a randomized experiment (A/B test) assigning coupons at random; if only observational data exists, adjust for the confounders via stratification, regression, propensity-score matching, or inverse-probability weighting, being careful not to condition on post-treatment variables (e.g., items added to cart after seeing the coupon). Report the adjusted effect, not the raw difference."
+            }
+          ],
+          "role": "model"
+        }
+      },
+      "eval_case_id": "causal_pipeline_confounder_id",
+      "agent_data": {
+        "agents": {
+          "TracerLensAi_Agent": {
+            "agent_id": "TracerLensAi_Agent",
+            "agent_type": "CausalRouterAgent",
+            "description": "TracerLensAi root agent: causal-reasoning pipeline for marked requests, general assistant otherwise.",
+            "tools": [],
+            "sub_agents": [
+              "GeneralAssistant",
+              "CausalPipeline"
+            ]
+          },
+          "GeneralAssistant": {
+            "agent_id": "GeneralAssistant",
+            "agent_type": "LlmAgent",
+            "description": "An advanced causal reasoning agent capable of mathematical modeling and deep analysis.",
+            "instruction": "You are TracerLensAi, an expert AI assistant specializing in causal reasoning, data analysis, and structural causal models. You can execute Python code to perform complex mathematical calculations and use Google Search to look up current information. When asked to perform causal reasoning, identify potential confounders, propose a structural causal model, and estimate treatment effects step-by-step. Ignore control markers such as [[causal:on]] if they appear in a message.",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalPipeline": {
+            "agent_id": "CausalPipeline",
+            "agent_type": "SequentialAgent",
+            "description": "Causal reasoning pathway: decompose, plan, execute, replan, synthesize.",
+            "tools": [],
+            "sub_agents": [
+              "CausalDecomposer",
+              "CausalExecutorLoop",
+              "CausalSynthesizer",
+              "CausalFallbackEmitter"
+            ]
+          },
+          "CausalDecomposer": {
+            "agent_id": "CausalDecomposer",
+            "agent_type": "LlmAgent",
+            "description": "Extracts components and causal relations as structured JSON.",
+            "instruction": "<dynamic: decomposer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalExecutorLoop": {
+            "agent_id": "CausalExecutorLoop",
+            "agent_type": "LoopAgent",
+            "description": "Bounded execute/verify/replan loop over the causal plan.",
+            "tools": [],
+            "sub_agents": [
+              "CausalStepExecutor",
+              "CausalStepController",
+              "CausalReplanner"
+            ]
+          },
+          "CausalStepExecutor": {
+            "agent_id": "CausalStepExecutor",
+            "agent_type": "LlmAgent",
+            "description": "Executes exactly one plan step, with Python code execution.",
+            "instruction": "<dynamic: step_executor_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalStepController": {
+            "agent_id": "CausalStepController",
+            "agent_type": "CausalStepController",
+            "description": "Deterministic causal plan controller (no LLM).",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalReplanner": {
+            "agent_id": "CausalReplanner",
+            "agent_type": "LlmAgent",
+            "description": "Replans only the failure-affected subgraph as structured JSON.",
+            "instruction": "<dynamic: replanner_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalSynthesizer": {
+            "agent_id": "CausalSynthesizer",
+            "agent_type": "LlmAgent",
+            "description": "Writes the final user-facing answer from the executed plan.",
+            "instruction": "<dynamic: synthesizer_instruction>",
+            "tools": [],
+            "sub_agents": []
+          },
+          "CausalFallbackEmitter": {
+            "agent_id": "CausalFallbackEmitter",
+            "agent_type": "CausalFallbackEmitter",
+            "description": "Optional fenced-JSON transport fallback.",
+            "tools": [],
+            "sub_agents": []
+          }
+        },
+        "turns": [
+          {
+            "turn_index": 0,
+            "turn_id": "turn_0",
+            "events": [
+              {
+                "author": "CausalDecomposer",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "{\n  \"goal\": \"Estimate the true causal effect of discount coupons on customer spending by identifying and accounting for confounders.\",\n  \"components\": [\n    {\n      \"id\": \"initial_observation\",\n      \"label\": \"Initial Observation\",\n      \"kind\": \"input\",\n      \"description\": \"Customers receiving discount coupons spend more on average.\"\n    },\n    {\n      \"id\": \"discount_coupon\",\n      \"label\": \"Discount Coupon\",\n      \"kind\": \"input\",\n      \"description\": \"The intervention (treatment) whose causal effect is being investigated.\"\n    },\n    {\n      \"id\": \"customer_spending\",\n      \"label\": \"Customer Spending\",\n      \"kind\": \"artifact\",\n      \"description\": \"The measured outcome variable, representing the amount customers spend.\"\n    },\n    {\n      \"id\": \"customer_engagement\",\n      \"label\": \"Customer Engagement\",\n      \"kind\": \"constraint\",\n      \"description\": \"A potential confounder; highly engaged customers might be targeted for coupons and also spend more.\"\n    },\n    {\n      \"id\": \"prior_purchase_history\",\n      \"label\": \"Prior Purchase History\",\n      \"kind\": \"constraint\",\n      \"description\": \"A potential confounder; customers with higher past spending might be selected for coupons and tend to spend more.\"\n    },\n    {\n      \"id\": \"marketing_campaigns\",\n      \"label\": \"Marketing Campaigns\",\n      \"kind\": \"constraint\",\n      \"description\": \"A potential confounder; coupons might be part of broader campaigns that also influence spending.\"\n    },\n    {\n      \"id\": \"confounder_identification_process\",\n      \"label\": \"Identify Confounders\",\n      \"kind\": \"process\",\n      \"description\": \"The process of identifying variables that influence both coupon receipt and customer spending.\"\n    },\n    {\n      \"id\": \"identified_confounders\",\n      \"label\": \"Identified Confounders\",\n      \"kind\": \"artifact\",\n      \"description\": \"The list of confounding variables that need to be controlled for.\"\n    },\n    {\n      \"id\": \"causal_estimation_process\",\n      \"label\": \"Estimate Causal Effect\",\n      \"kind\": \"process\",\n      \"description\": \"The process of applying statistical or experimental methods to determine the true causal impact.\"\n    },\n    {\n      \"id\": \"true_causal_effect\",\n      \"label\": \"True Causal Effect\",\n      \"kind\": \"outcome\",\n      \"description\": \"The unbiased and accurate measure of how discount coupons affect customer spending.\"\n    }\n  ],\n  \"edges\": [\n    {\n      \"source\": \"initial_observation\",\n      \"target\": \"confounder_identification_process\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.9,\n      \"rationale\": \"The observation that coupon recipients spend more prompts the need to identify confounders.\"\n    },\n    {\n      \"source\": \"discount_coupon\",\n      \"target\": \"causal_estimation_process\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.9,\n      \"rationale\": \"The discount coupon is the treatment variable whose effect is to be estimated.\"\n    },\n    {\n      \"source\": \"customer_spending\",\n      \"target\": \"causal_estimation_process\",\n      \"relation\": \"informs\",\n      \"confidence\": 0.9,\n      \"rationale\": \"Customer spending is the outcome variable whose change is being measured.\"\n    },\n    {\n      \"source\": \"customer_engagement\",\n      \"target\": \"discount_coupon\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.8,\n      \"rationale\": \"More engaged customers might be targeted for discount coupons.\"\n    },\n    {\n      \"source\": \"customer_engagement\",\n      \"target\": \"customer_spending\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.9,\n      \"rationale\": \"More engaged customers generally tend to spend more.\"\n    },\n    {\n      \"source\": \"prior_purchase_history\",\n      \"target\": \"discount_coupon\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.8,\n      \"rationale\": \"Customers with a history of higher spending might be selected to receive coupons.\"\n    },\n    {\n      \"source\": \"prior_purchase_history\",\n      \"target\": \"customer_spending\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.9,\n      \"rationale\": \"Customers with higher past spending tend to continue spending more.\"\n    },\n    {\n      \"source\": \"marketing_campaigns\",\n      \"target\": \"discount_coupon\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.8,\n      \"rationale\": \"Discount coupons are often distributed as part of broader marketing campaigns.\"\n    },\n    {\n      \"source\": \"marketing_campaigns\",\n      \"target\": \"customer_spending\",\n      \"relation\": \"causes\",\n      \"confidence\": 0.9,\n      \"rationale\": \"Marketing campaigns are designed to increase overall customer spending.\"\n    },\n    {\n      \"source\": \"confounder_identification_process\",\n      \"target\": \"identified_confounders\",\n      \"relation\": \"enables\",\n      \"confidence\": 1.0,\n      \"rationale\": \"The identification process produces the list of confounders.\"\n    },\n    {\n      \"source\": \"identified_confounders\",\n      \"target\": \"causal_estimation_process\",\n      \"relation\": \"constrains\",\n      \"confidence\": 0.9,\n      \"rationale\": \"The estimation process must account for identified confounders to yield an unbiased result.\"\n    },\n    {\n      \"source\": \"causal_estimation_process\",\n      \"target\": \"true_causal_effect\",\n      \"relation\": \"causes\",\n      \"confidence\": 1.0,\n      \"rationale\": \"The estimation process directly produces the true causal effect.\"\n    }\n  ]\n}"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "Based on the provided causal graph and component descriptions, the following variables influence both the `discount_coupon` (treatment) and `customer_spending` (outcome), thus acting as confounders:\n\n1.  **Customer Engagement**: Highly engaged customers might be targeted for coupons and also tend to spend more.\n2.  **Prior Purchase History**: Customers with higher past spending might be selected for coupons and tend to continue spending more.\n3.  **Marketing Campaigns**: Coupons might be part of broader marketing campaigns that also influence customer spending.\n\n"
+                    },
+                    {
+                      "executable_code": {
+                        "code": "identified_confounders = [\n    \"Customer Engagement\",\n    \"Prior Purchase History\",\n    \"Marketing Campaigns\"\n]\nprint(f'{identified_confounders=}')\n",
+                        "language": "PYTHON"
+                      }
+                    },
+                    {
+                      "code_execution_result": {
+                        "outcome": "OUTCOME_OK",
+                        "output": "identified_confounders=['Customer Engagement', 'Prior Purchase History', 'Marketing Campaigns']\n"
+                      }
+                    },
+                    {
+                      "text": "OBSERVED: identified_confounders=['Customer Engagement', 'Prior Purchase History', 'Marketing Campaigns']\nSTEP_STATUS: success"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalReplanner",
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "The requested step (s2) has been successfully executed. No further outputs are needed for this specific step."
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalReplanner",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "{\n  \"reason\": \"Step s2 on 'identified_confounders' failed, causing its status to be 'failed' and invalidating downstream steps s4 and s5. New steps are proposed to re-establish the identified confounders and subsequently re-estimate the causal effect and true causal effect. Due to the 'depends_on (existing completed step ids only)' constraint, no dependencies are listed for the newly proposed steps.\",\n  \"new_steps\": [\n    {\n      \"component_id\": \"identified_confounders\",\n      \"objective\": \"Re-identify confounding variables for causal analysis.\",\n      \"expected_effect\": \"A validated list of confounding variables.\",\n      \"depends_on\": []\n    },\n    {\n      \"component_id\": \"causal_estimation_process\",\n      \"objective\": \"Re-estimate the causal effect using the re-identified confounders.\",\n      \"expected_effect\": \"An updated estimate of the causal effect.\",\n      \"depends_on\": []\n    },\n    {\n      \"component_id\": \"true_causal_effect\",\n      \"objective\": \"Re-evaluate the true causal effect based on the re-estimated causal effect.\",\n      \"expected_effect\": \"A refined understanding of the true causal effect.\",\n      \"depends_on\": []\n    }\n  ]\n}"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "To advance the 'Customer Spending' component, the outcome variable is defined as follows:\n\n**Customer Spending:** The total monetary value of all purchases made by a customer within a specified period (e.g., 30 days) following their exposure to a discount coupon. This metric will be used to quantify the direct impact of the coupons and will serve as the dependent variable in the causal estimation process. It will be measured as a continuous numerical variable.\n\nOBSERVED: Customer spending is defined as the total monetary value of purchases made by a customer within a specified post-coupon exposure period, to be used as the dependent variable.\nSTEP_STATUS: success"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalReplanner",
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "To re-identify and validate confounding variables for analyzing the causal effect of discount coupons on customer spending, we consider factors that influence both the likelihood of receiving/using a coupon and the customer's spending behavior. Based on common practices in causal inference for marketing and the provided context, the following variables are identified as confounders:\n\n1.  **Customer Engagement:** This refers to the frequency and intensity of a customer's interactions with the brand or platform (e.g., website visits, app usage, email open rates). Highly engaged customers are more likely to be exposed to and redeem discount coupons, and they also exhibit a higher intrinsic propensity to make purchases and spend more.\n2.  **Prior Purchase History:** This includes metrics such as a customer's total spending in a previous period, number of past purchases, average order value, and recency of their last purchase. Businesses often use this historical data to target specific customers with coupons (e.g., loyalty rewards, reactivation offers). Simultaneously, prior spending behavior is a strong predictor of future spending.\n3.  **Customer Segment/Value Tier:** Companies often categorize customers into segments (e.g., high-value, at-risk, new customers) based on various characteristics, including demographics, past behavior, and predicted lifetime value. These segments typically determine eligibility for certain coupon campaigns and inherently possess different baseline spending capacities and propensities.\n4.  **Exposure to Other Concurrent Marketing Promotions:** This refers to a customer's simultaneous exposure to other marketing efforts (e.g., non-coupon-specific email campaigns, social media ads for new products, general brand awareness campaigns). Such promotions can independently influence a customer's overall purchasing intent and spending, and might also correlate with who is selected to receive discount coupons.\n\nThese variables must be accounted for in the causal analysis to isolate the true effect of discount coupons from other factors that influence customer spending.\n\nOBSERVED: Re-identified confounding variables are: Customer Engagement, Prior Purchase History, Customer Segment/Value Tier, and Exposure to Other Concurrent Marketing Promotions.\nSTEP_STATUS: success"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalReplanner",
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "With the re-identified confounding variables (Customer Engagement, Prior Purchase History, Customer Segment/Value Tier, and Exposure to Other Concurrent Marketing Promotions) and the defined outcome variable (Customer Spending), we will proceed to re-estimate the causal effect of discount coupons.\n\n**Causal Estimation Methodology:**\n\nWe will employ a **Regression Adjustment** method, specifically using a **multivariable linear regression model**. This approach is suitable for estimating the average treatment effect (ATE) when the outcome variable (Customer Spending) is continuous and we have identified a set of confounders.\n\nThe model will take the following general form:\n\n`Customer Spending = β₀ + β₁ * Discount_Coupon + β₂ * Customer_Engagement + β₃ * Prior_Purchase_History + β₄ * Customer_Segment_Value_Tier + β₅ * Other_Promotions + ε`\n\nWhere:\n*   `Customer Spending` is the total monetary value of purchases made by a customer within the specified post-coupon period.\n*   `Discount_Coupon` is a binary treatment variable (1 if the customer received/used a discount coupon, 0 otherwise).\n*   `Customer_Engagement` will be operationalized as a numerical measure (e.g., average weekly interactions).\n*   `Prior_Purchase_History` will be operationalized as a numerical measure (e.g., total spending in the 3 months prior to coupon exposure).\n*   `Customer_Segment_Value_Tier` will be included as categorical dummy variables, if applicable, or a numerical score.\n*   `Other_Promotions` will be operationalized as a binary or categorical variable indicating exposure to other marketing efforts.\n*   `β₀` is the intercept.\n*   `β₁` is the coefficient representing the estimated causal effect of the discount coupon on customer spending, after controlling for confounders.\n*   `β₂, β₃, β₄, β₅` are coefficients for the respective confounding variables.\n*   `ε` is the error term.\n\n**Incorporation of Confounders:**\n\nEach re-identified confounding variable will be explicitly included as an independent variable in the regression model. This allows the model to statistically control for their influence on both the assignment of discount coupons (if they were used for targeting) and the customer's spending behavior, thereby isolating the effect attributable solely to the discount coupon.\n\n**Expected Outcome:**\n\nThe primary outcome will be the estimated coefficient `β₁`, which represents the re-estimated average causal effect of discount coupons on customer spending. This estimate will be accompanied by its standard error and p-value to assess its statistical significance.\n\nOBSERVED: The causal effect is re-estimated using multivariable linear regression, incorporating Customer Engagement, Prior Purchase History, Customer Segment/Value Tier, and Exposure to Other Concurrent Marketing Promotions as control variables, to yield an updated average causal effect (β₁) of discount coupons on customer spending.\nSTEP_STATUS: success"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalReplanner",
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalStepExecutor",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "The re-evaluation of the true causal effect is based directly on the re-estimated causal effect (`β₁`) obtained from the multivariable linear regression in the previous step. This refined understanding involves interpreting the estimated coefficient and considering its implications:\n\n1.  **Interpretation of `β₁`**:\n    *   The coefficient `β₁` quantifies the average change in customer spending (the dependent variable) attributable to the discount coupon (the treatment variable), holding all identified confounding variables constant.\n    *   If `β₁` is positive, it indicates that, on average, customers exposed to discount coupons spend `|β₁|` monetary units more than those not exposed, after accounting for Customer Engagement, Prior Purchase History, Customer Segment/Value Tier, and Exposure to Other Concurrent Marketing Promotions.\n    *   If `β₁` is negative, it suggests a decrease in spending.\n    *   If `β₁` is close to zero, it implies a negligible or no causal effect.\n\n2.  **Statistical Significance**:\n    *   The p-value associated with `β₁` will determine its statistical significance. A p-value below a chosen threshold (e.g., 0.05) would indicate that the observed effect is unlikely to have occurred by random chance, strengthening the claim that `β₁` represents a true causal effect.\n\n3.  **Magnitude and Practical Significance**:\n    *   Beyond statistical significance, the magnitude of `β₁` is crucial for practical interpretation. For instance, a statistically significant `β₁` of $5 might be less impactful for high-value purchases than a `β₁` of $50, even if both are statistically significant.\n\n4.  **Causality and Assumptions**:\n    *   The re-evaluated `β₁` is considered a more robust estimate of the true causal effect because the model explicitly controls for the re-identified confounders. This strengthens the claim of causality by reducing bias.\n    *   However, it's important to acknowledge that this \"true causal effect\" is conditional on the assumption that all significant confounders have been identified and correctly included in the model, and that there are no unmeasured confounders biasing the results.\n\nThe re-evaluation, therefore, provides a refined understanding by isolating the effect of discount coupons from other influencing factors, offering a more accurate and defensible estimate of their causal impact on customer spending.\n\nOBSERVED: The true causal effect is re-evaluated by interpreting the magnitude and statistical significance of the re-estimated causal effect (β₁) from the multivariable linear regression, after controlling for identified confounders, thus providing a more robust and refined understanding of the discount coupons' impact on customer spending.\nSTEP_STATUS: success"
+                    }
+                  ],
+                  "role": "model"
+                }
+              },
+              {
+                "author": "CausalSynthesizer",
+                "content": {
+                  "parts": [
+                    {
+                      "text": "The goal was to estimate the true causal effect of discount coupons on customer spending by identifying and accounting for confounders.\n\nThe causal pathway involved:\n1.  **Initial Confounder Identification**: Variables initially identified as influencing both coupon receipt and customer spending were 'Customer Engagement', 'Prior Purchase History', and 'Marketing Campaigns'.\n2.  **Defining Customer Spending**: Customer spending was defined as the total monetary value of purchases made by a customer within a specified post-coupon exposure period, serving as the dependent variable.\n3.  **Causal Effect Estimation**: The true causal effect was to be estimated using statistical or experimental methods.\n\n**Replanning and Refinement**:\nDuring the initial phase of identifying confounders, a failure occurred in processing the identified list. This prompted a replanning step, which led to:\n1.  **Re-identification of Confounders**: The list of confounding variables was refined and expanded to include 'Customer Engagement', 'Prior Purchase History', 'Customer Segment/Value Tier', and 'Exposure to Other Concurrent Marketing Promotions'. This more comprehensive set of confounders was deemed necessary for a robust causal analysis.\n2.  **Re-estimation of Causal Effect**: The causal effect is now to be re-estimated using **multivariable linear regression**. This method will incorporate the re-identified confounders (Customer Engagement, Prior Purchase History, Customer Segment/Value Tier, and Exposure to Other Concurrent Marketing Promotions) as control variables. The coefficient (`β₁`) associated with the discount coupon variable in this model will represent the average causal effect.\n3.  **Re-evaluation of True Causal Effect**: The true causal effect will be re-evaluated by interpreting the magnitude and statistical significance (e.g., p-value) of the re-estimated causal effect (`β₁`). This provides a more robust and refined understanding of the discount coupons' impact on customer spending, as it accounts for the identified confounding factors.\n\n**Key Quantitative Results (Expected)**:\nWhile the specific numerical result for `β₁` is not yet available, the plan outlines how it will be interpreted:\n*   `β₁` will quantify the average change in customer spending attributable to discount coupons, holding all identified confounders constant.\n*   A positive `β₁` would indicate an increase in spending, a negative `β₁` a decrease, and a value near zero would suggest a negligible effect.\n*   The statistical significance (p-value) of `β₁` will determine if the observed effect is likely due to the coupon or random chance. The practical significance will be assessed based on the magnitude of `β₁` in relation to business objectives.\n\nBy controlling for these identified confounders through multivariable linear regression, the analysis aims to provide a more accurate and unbiased estimate of the causal impact of discount coupons on customer spending, moving beyond simple correlation."
+                    }
+                  ],
+                  "role": "model"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

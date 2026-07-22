@@ -17,6 +17,12 @@ from vertexai.agent_engines.templates.adk import AdkApp
 
 from src.app_utils import services
 from src.causal.agents import build_root_agent
+from src._eval_compat import patch_agent_config_instruction
+
+# Let `agents-cli eval` introspect this agent tree: the causal agents use ADK
+# instruction providers (callables), which the Vertex eval SDK's AgentConfig
+# can't serialize. Behavior-preserving; no-op outside eval. See _eval_compat.py.
+patch_agent_config_instruction()
 
 # agents-cli injects GOOGLE_CLOUD_LOCATION=global, but this project's Gemini
 # quota on the global endpoint has been exhausted while europe-west2 (where
