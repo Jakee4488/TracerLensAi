@@ -28,3 +28,12 @@ python-multipart>=0.0.9
 
 # Causal reasoning engine (deterministic graph ops)
 networkx>=3.3
+
+# Statistical causal inference (deterministic identification + estimation).
+# Runs in-process in the CausalEstimator node — it cannot go in Gemini's code
+# sandbox or be an LLM tool (Vertex tool isolation). Pulls in pandas / scipy /
+# statsmodels / scikit-learn / sympy. Only the agent image needs this; the
+# proxy image does not ship src/.
+# NB: require >=0.12 — 0.11.x calls networkx.d_separated, removed in networkx
+# >=3.3 (this project pins networkx>=3.3), so 0.11.x fails identification.
+dowhy>=0.12

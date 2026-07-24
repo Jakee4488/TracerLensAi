@@ -7,12 +7,12 @@ output_schema, tools}. Constructing agents needs no credentials or network.
 """
 
 import pytest
-from google.adk.agents import Agent, LlmAgent, LoopAgent, SequentialAgent
+from google.adk.agents import Agent, BaseAgent, LlmAgent, LoopAgent, SequentialAgent
 from google.adk.code_executors import BuiltInCodeExecutor
 
 from src.causal import state_keys as sk
 from src.causal.agents import build_causal_pipeline, build_root_agent
-from src.causal.models import CausalDecomposition, ReplanResult
+from src.causal.models import CausalDecomposition, CausalEstimand, ReplanResult
 from src.causal.router import CausalRouterAgent, is_causal_request, strip_marker
 
 
@@ -60,19 +60,43 @@ def test_pipeline_shape(root):
     pipeline = root.sub_agents[1]
     assert isinstance(pipeline, SequentialAgent)
     names = [s.name for s in pipeline.sub_agents]
-    assert names[:3] == ["CausalDecomposer", "CausalExecutorLoop", "CausalSynthesizer"]
+    assert names[:5] == [
+        "CausalDecomposer", "CausalEstimandSpec", "CausalEstimator",
+        "CausalExecutorLoop", "CausalSynthesizer",
+    ]
 
-    loop = pipeline.sub_agents[1]
+    loop = pipeline.sub_agents[3]
     assert isinstance(loop, LoopAgent)
     assert loop.max_iterations == sk.LOOP_MAX_ITERATIONS
     assert [s.name for s in loop.sub_agents] == [
         "CausalStepExecutor", "CausalStepController", "CausalReplanner"]
 
 
+def test_estimand_stage_is_isolated_and_gated(root):
+    pipeline = root.sub_agents[1]
+    estimand_spec = pipeline.sub_agents[1]
+    estimator = pipeline.sub_agents[2]
+
+    # Spec LLM carries output_schema ONLY (no code executor / tools) and is
+    # skip-gated so it costs 0 LLM calls off the effect-estimation path.
+    assert isinstance(estimand_spec, LlmAgent)
+    assert estimand_spec.output_schema is CausalEstimand
+    assert estimand_spec.output_key == sk.KEY_ESTIMAND_SPEC_RAW
+    assert estimand_spec.code_executor is None and not estimand_spec.tools
+    assert estimand_spec.include_contents == "none"
+    assert estimand_spec.before_agent_callback is not None
+
+    # The estimator runs DoWhy deterministically: a BaseAgent, never an LlmAgent,
+    # so it carries no built-in tools and needs no isolation exemption.
+    assert isinstance(estimator, BaseAgent)
+    assert not isinstance(estimator, LlmAgent)
+    assert not estimator.sub_agents
+
+
 def test_decomposer_and_replanner_are_schema_only(root):
     pipeline = root.sub_agents[1]
     decomposer = pipeline.sub_agents[0]
-    loop = pipeline.sub_agents[1]
+    loop = pipeline.sub_agents[3]
     executor, _, replanner = loop.sub_agents
 
     assert decomposer.output_schema is CausalDecomposition
@@ -92,7 +116,7 @@ def test_decomposer_and_replanner_are_schema_only(root):
 
 
 def test_synthesizer_is_plain(root):
-    synthesizer = root.sub_agents[1].sub_agents[2]
+    synthesizer = root.sub_agents[1].sub_agents[4]
     assert synthesizer.output_key == sk.KEY_FINAL
     assert synthesizer.output_schema is None
     assert synthesizer.code_executor is None and not synthesizer.tools

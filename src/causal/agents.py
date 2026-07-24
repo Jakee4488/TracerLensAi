@@ -24,11 +24,13 @@ from src.causal.callbacks import (
     build_graph_and_plan,
     skip_if_aborted,
     skip_if_no_ready_step,
+    skip_unless_effect_query,
     skip_unless_replan_requested,
     splice_replan,
 )
 from src.causal.controller import CausalStepController
-from src.causal.models import CausalDecomposition, ReplanResult
+from src.causal.estimator import CausalEstimator
+from src.causal.models import CausalDecomposition, CausalEstimand, ReplanResult
 from src.causal.router import CausalRouterAgent
 
 MODEL = "gemini-2.5-flash"
@@ -73,6 +75,23 @@ def build_causal_pipeline() -> SequentialAgent:
         output_schema=CausalDecomposition,
         output_key=sk.KEY_DECOMPOSITION_RAW,
         after_agent_callback=build_graph_and_plan,
+        generate_content_config=_DETERMINISTIC,
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
+    )
+
+    # Structured variable-level DAG for DoWhy. Skip-gated: costs 0 LLM calls
+    # unless the query actually asks for a treatment effect. output_schema only
+    # (no code_executor/tools) keeps the Vertex tool-isolation invariant.
+    estimand_spec = LlmAgent(
+        name="CausalEstimandSpec",
+        model=MODEL,
+        description="Extracts a variable-level causal DAG + treatment/outcome as structured JSON.",
+        instruction=prompts.estimand_spec_instruction,
+        output_schema=CausalEstimand,
+        output_key=sk.KEY_ESTIMAND_SPEC_RAW,
+        include_contents="none",
+        before_agent_callback=skip_unless_effect_query,
         generate_content_config=_DETERMINISTIC,
         disallow_transfer_to_parent=True,
         disallow_transfer_to_peers=True,
@@ -127,8 +146,11 @@ def build_causal_pipeline() -> SequentialAgent:
 
     return SequentialAgent(
         name="CausalPipeline",
-        description="Causal reasoning pathway: decompose, plan, execute, replan, synthesize.",
-        sub_agents=[decomposer, loop, synthesizer, CausalFallbackEmitter()],
+        description="Causal reasoning pathway: decompose, identify, execute, replan, synthesize.",
+        sub_agents=[
+            decomposer, estimand_spec, CausalEstimator(), loop, synthesizer,
+            CausalFallbackEmitter(),
+        ],
     )
 
 

@@ -104,9 +104,11 @@ src/causal/
 ├── graph_engine.py                  # [pure] DAG build/repair, plan, impact propagation, splice
 ├── runtime.py                       # [pure] verdict parsing, ready-step selection, trace lines
 ├── ledger.py                        # [pure] append-only, capped change ledger
+├── estimation.py                    # [pure] DoWhy identify/estimate/refute (lazy dowhy/pandas)
 ├── prompts.py                       # instruction providers for each LLM agent
 ├── callbacks.py                     # deterministic glue between LLM agents and the engine
 ├── controller.py                    # CausalStepController: the loop's deterministic core
+├── estimator.py                     # CausalEstimator: deterministic DoWhy stage (zero LLM)
 ├── router.py                        # CausalRouterAgent: marker routing + per-turn state reset
 └── agents.py                        # factories wiring the ADK pipeline together
 ```
@@ -114,14 +116,16 @@ src/causal/
 | File | Role |
 |---|---|
 | `state_keys.py` | Single source of truth for the `[[causal:on]]` marker, all `causal_*` session keys, budget defaults (`DEFAULT_MAX_STEPS`, `DEFAULT_MAX_REPLANS`), graph caps, and the executor output-trailer regexes. |
-| `models.py` | Runtime models (`Component`, `CausalGraph`, `ExecutionPlan`, `PlanStep`, `ChangeRecord`, `CausalStatus`, …) and shallow LLM-facing schemas (`CausalDecomposition`, `ReplanResult`) for constrained decoding; plus `parse_model` and `slugify`. |
+| `models.py` | Runtime models (`Component`, `CausalGraph`, `ExecutionPlan`, `PlanStep`, `ChangeRecord`, `CausalStatus`, `IdentificationResult`, `EffectEstimate`, …) and shallow LLM-facing schemas (`CausalDecomposition`, `ReplanResult`, `CausalEstimand`) for constrained decoding; plus `parse_model` and `slugify`. |
 | `complexity.py` | Scores a query's complexity from cheap lexical features and maps it to a speed-biased `{max_steps, max_replans}` tier. |
 | `graph_engine.py` | `CausalTaskGraph` over `networkx`: validate/repair a DAG, derive the critical path and plan, propagate failure impact to descendants, invalidate steps, and splice localized replans. |
 | `runtime.py` | Pure decision helpers: parse the `OBSERVED:`/`STEP_STATUS:` verdict, pick the next ready step, budget checks, and human-readable UI trace lines. |
 | `ledger.py` | Append-only change ledger (returns new lists so `state_delta` semantics hold), capped at `LEDGER_CAP`. |
-| `prompts.py` | Callable instruction providers (decomposer, executor, replanner, synthesizer) that read bounded state, avoiding template `KeyError`s. |
-| `callbacks.py` | After/before-agent callbacks that build the graph+plan, skip agents on the happy path, and splice replans — all writes ride on `state_delta`. |
+| `estimation.py` | Deterministic DoWhy wrapper: `run_identification` does back-door/IV identification (data-free) and, with a parsed dataset, estimation + refutation; `parse_dataset`/`build_causal_graph` helpers. Lazily imports `dowhy`/`pandas`; never raises. |
+| `prompts.py` | Callable instruction providers (decomposer, estimand-spec, executor, replanner, synthesizer) that read bounded state, avoiding template `KeyError`s; `_estimand_grounding` injects the identified estimand. |
+| `callbacks.py` | After/before-agent callbacks that build the graph+plan, skip agents on the happy path (incl. `skip_unless_effect_query`), and splice replans — all writes ride on `state_delta`. |
 | `controller.py` | `CausalStepController` (custom `BaseAgent`, zero LLM calls): parses each step's verdict, updates the ledger and graph, requests a replan or escalates, and advances the plan. |
+| `estimator.py` | `CausalEstimator` (custom `BaseAgent`, zero LLM): runs `estimation.run_identification` and writes `causal_estimand`/`causal_effect`; a silent no-op when the estimand stage was skipped. |
 | `router.py` | `CausalRouterAgent`: routes by marker to the pipeline or the general assistant, and seeds complexity-sized budgets while resetting stale causal state each turn. |
 | `agents.py` | `build_causal_pipeline()` and `build_root_agent()` factories; enforces the isolation invariant (one built-in per `LlmAgent`). |
 

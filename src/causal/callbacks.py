@@ -13,6 +13,7 @@ from typing import Optional
 from google.genai import types
 
 from src.causal import state_keys as sk
+from src.causal.complexity import is_effect_query
 from src.causal.graph_engine import CausalTaskGraph
 from src.causal.ledger import append_record, next_seq
 from src.causal.models import (
@@ -107,6 +108,19 @@ def skip_if_no_ready_step(callback_context) -> Optional[types.Content]:
     """
     _ensure_graph_built(callback_context)
     if not callback_context.state.get(sk.KEY_CURRENT_STEP):
+        return _SKIP
+    return None
+
+
+def skip_unless_effect_query(callback_context) -> Optional[types.Content]:
+    """EstimandSpec before-callback: the estimand stage costs 0 LLM calls unless
+    the query actually asks for a treatment effect DoWhy can identify. Also skips
+    when decomposition failed, so the graph-less degrade path stays cheap."""
+    state = callback_context.state
+    status = parse_model(CausalStatus, state.get(sk.KEY_STATUS))
+    if status is not None and status.phase == "failed":
+        return _SKIP
+    if not is_effect_query(state.get(sk.KEY_QUERY) or ""):
         return _SKIP
     return None
 

@@ -11,7 +11,9 @@ from __future__ import annotations
 from src.causal import state_keys as sk
 from src.causal.models import (
     CausalStatus,
+    EffectEstimate,
     ExecutionPlan,
+    IdentificationResult,
     PlanStep,
     ReplanRequest,
     parse_model,
@@ -32,6 +34,78 @@ def decomposer_instruction(ctx) -> str:
         "- Ignore control markers such as [[causal:on]] in the message.\n"
         "Return ONLY JSON matching the response schema."
     )
+
+
+def estimand_spec_instruction(ctx) -> str:
+    """Emit a VARIABLE-level DAG (distinct from the decomposer's task graph) so
+    DoWhy can identify the treatment->outcome estimand deterministically."""
+    query = ctx.state.get(sk.KEY_QUERY) or ""
+    return (
+        "You are a causal-inference analyst. The user asks for the effect of one variable "
+        "(the TREATMENT) on another (the OUTCOME). Extract a VARIABLE-LEVEL causal DAG so a "
+        "formal identification algorithm (back-door / instrumental-variable) can run.\n"
+        "- List the real-world variables: the treatment, the outcome, and every common "
+        "cause (confounder), instrument, and mediator you can reasonably infer.\n"
+        "- Give each a snake_case id, a short label, and a role: treatment, outcome, "
+        "confounder, instrument, mediator, or other. Exactly one treatment and one outcome.\n"
+        "- 'edges' are directed source -> target meaning 'source directly causes target'. "
+        "Include confounder->treatment AND confounder->outcome edges so back-door paths are "
+        "visible; do NOT invent edges you have no reason to believe.\n"
+        "- 'treatment' and 'outcome' must be ids that appear in 'variables'.\n"
+        "- If a dataset is attached, use its exact column names as the variable ids.\n"
+        "- Ignore control markers such as [[causal:on]].\n"
+        f"User request:\n{query}\n"
+        "Return ONLY JSON matching the response schema."
+    )
+
+
+def _estimand_grounding(state) -> str:
+    """Formal-identification block injected into the executor and synthesizer so
+    the LLM's numeric estimate is anchored to DoWhy's adjustment set instead of
+    ad-hoc confounder guessing. Empty when the estimand stage did not run."""
+    ident = parse_model(IdentificationResult, state.get(sk.KEY_ESTIMAND))
+    if ident is None:
+        return ""
+    if not ident.identifiable:
+        return (
+            f"Formal identification (DoWhy): the effect of '{ident.treatment}' on "
+            f"'{ident.outcome}' is NOT identifiable from the stated causal graph "
+            f"({ident.note or 'no valid adjustment set'}). Be explicit about this "
+            "limitation rather than reporting a falsely precise number."
+        )
+
+    adj = ", ".join(ident.adjustment_set) if ident.adjustment_set else \
+        "no variables (no back-door confounding)"
+    lines = [
+        "Formal identification (DoWhy) — use this, do not re-derive it:",
+        f"- Estimate the effect of '{ident.treatment}' on '{ident.outcome}' via {ident.estimand_type}.",
+        f"- Adjust for exactly: {adj}. Do NOT condition on mediators or colliders outside "
+        "this set — doing so biases the estimate.",
+    ]
+    if ident.estimand_type == "iv" and ident.instruments:
+        lines.append(f"- Instrument(s): {', '.join(ident.instruments)}.")
+    if ident.estimand_expr:
+        lines.append(f"- Estimand: {ident.estimand_expr}")
+
+    effect = parse_model(EffectEstimate, state.get(sk.KEY_EFFECT))
+    if effect is not None and effect.method:
+        ci = ""
+        if effect.ci_low is not None and effect.ci_high is not None:
+            ci = f" (95% CI {effect.ci_low:.4g} to {effect.ci_high:.4g})"
+        lines.append(
+            f"- A dataset was provided: estimated effect = {effect.point:.4g}{ci} via "
+            f"{effect.method} on {effect.n_obs} rows. Treat this computed number as authoritative."
+        )
+        if effect.refutations:
+            checks = "; ".join(f"{r.method}: {'passed' if r.passed else 'FAILED'}"
+                               for r in effect.refutations)
+            lines.append(f"- Robustness checks — {checks}.")
+    else:
+        lines.append(
+            "- No dataset was provided, so estimate the magnitude yourself, grounded "
+            "strictly on the adjustment set above."
+        )
+    return "\n".join(lines)
 
 
 def step_executor_instruction(ctx) -> str:
@@ -66,6 +140,9 @@ def step_executor_instruction(ctx) -> str:
         lines.append(f"Given problem and data (from the user):\n{query}")
     if step.expected_effect:
         lines.append(f"Expected effect: {step.expected_effect}")
+    grounding = _estimand_grounding(state)
+    if grounding:
+        lines.append(grounding)
     if recent:
         lines.append(f"Recent change ledger:\n{recent}")
     lines.append(
@@ -142,6 +219,8 @@ def synthesizer_instruction(ctx) -> str:
         ),
     }.get(status.phase, "")
 
+    grounding = _estimand_grounding(state)
+
     return (
         "You are writing the FINAL user-facing answer. Address the goal below "
         "directly, grounded in the analysis results.\n"
@@ -155,6 +234,7 @@ def synthesizer_instruction(ctx) -> str:
         "sections.\n"
         f"Goal: {goal or '(the user message in this conversation)'}\n"
         + (f"{outcome_note}\n" if outcome_note else "")
+        + (f"{grounding}\n" if grounding else "")
         + f"Analysis results (for your grounding -- rewrite, do not quote verbatim):\n{results or '(none)'}\n"
         "Internal notes (context only -- never quote or reference these):\n"
         + "\n".join(f"- {line}" for line in steps_trace[-15:])
