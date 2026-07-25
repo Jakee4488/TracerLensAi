@@ -26,7 +26,7 @@ CausalRouterAgent  (custom, 0 LLM)         ── marker routing + state reset +
     ├── CausalDecomposer  (LlmAgent, 1)     ── output_schema=CausalDecomposition
     │     └─ after: build_graph_and_plan     ── DAG + plan (deterministic)
     ├── CausalEstimandSpec (LlmAgent, ≤1)   ── output_schema=CausalEstimand; skip-gated to effect queries
-    ├── CausalEstimator   (custom, 0 LLM)   ── DoWhy identify (+ estimate/refute if data)
+    ├── CausalEstimator   (custom, 0 LLM)   ── DoWhy identify (+ estimate/refute/counterfactual if data)
     ├── CausalExecutorLoop  (LoopAgent, ≤16)
     │     ├── CausalStepExecutor (LlmAgent) ── one step, BuiltInCodeExecutor
     │     ├── CausalStepController (custom) ── verdict, ledger, impact, replan-req
@@ -41,7 +41,7 @@ CausalRouterAgent  (custom, 0 LLM)         ── marker routing + state reset +
 | `CausalRouterAgent` | 0 | Routes by the `[[causal:on]]` marker; on a causal turn, resets stale `causal_*` state and seeds complexity-sized budgets. |
 | `CausalDecomposer` | 1 | Emits `CausalDecomposition` (components + directed causal edges) via constrained decoding. |
 | `CausalEstimandSpec` | ≤1 | On effect queries only, emits a **variable-level** DAG + treatment/outcome (`CausalEstimand`); skip-gated otherwise (§5). |
-| `CausalEstimator` | 0 | Deterministic DoWhy identification (always) + estimation/refutation (only with a dataset). See §5. |
+| `CausalEstimator` | 0 | Deterministic DoWhy identification (always) + estimation/refutation and gcm counterfactuals (only with a dataset). See §5. |
 | `CausalStepExecutor` | 1/step | Executes exactly one plan step, using Python where it helps; ends with an `OBSERVED:`/`STEP_STATUS:` trailer. |
 | `CausalStepController` | 0 | The deterministic heart — see §6. |
 | `CausalReplanner` | ≤1/failure | Produces replacement steps **only** for the affected subgraph; skipped unless a replan was requested. |
@@ -70,8 +70,8 @@ flowchart TD
         IDN["identify_effect · data-free<br/>back-door / IV adjustment set"]
         IDN --> DATA{"dataset in<br/>message?"}
         DATA -->|no| WE1["write causal_estimand"]
-        DATA -->|yes| EM["estimate_effect + refute<br/>random-common-cause · placebo"]
-        EM --> WE2["write causal_estimand + causal_effect"]
+        DATA -->|yes| EM["estimate_effect + refute<br/>(+ gcm counterfactual if asked)"]
+        EM --> WE2["write causal_estimand + causal_effect<br/>(+ causal_counterfactual)"]
     end
 
     subgraph LOOP["CausalExecutorLoop · LoopAgent · ≤16 iterations"]
@@ -165,14 +165,15 @@ Structural graph reasoning (the component DAG in §4) is not statistical causal 
 
 Two agents, inserted between the decomposer and the executor loop:
 
-- **`CausalEstimandSpec`** — a schema-only `LlmAgent` that emits a **variable-level** DAG (`CausalEstimand`: variables with roles + directed edges + which is treatment/outcome). This is a different abstraction from the decomposer's *task* graph, so it gets its own shallow schema. A before-callback (`skip_unless_effect_query`) returns `_SKIP` unless the query is a genuine effect-estimation ask (`complexity.is_effect_query`), so the common path spends **0** extra LLM calls.
+- **`CausalEstimandSpec`** — a schema-only `LlmAgent` that emits a **variable-level** DAG (`CausalEstimand`: variables with roles + directed edges + which is treatment/outcome, plus optional counterfactual anchor values). This is a different abstraction from the decomposer's *task* graph, so it gets its own shallow schema. A before-callback (`skip_unless_effect_query`) returns `_SKIP` unless the query is an effect-estimation ask — detected by the lexical `complexity.is_effect_query` **OR-ed with the decomposer's semantic `is_effect_query` flag** (the decomposer is already a structured call, so paraphrases the regex misses still get the formal path at zero extra cost). When a dataset is attached, its column headers are pinned into the prompt (`estimation.dataset_headers`) so the LLM's variable ids line up with the columns estimation will need.
 - **`CausalEstimator`** ([`estimator.py`](../src/causal/estimator.py)) — a deterministic `BaseAgent` (0 LLM) that runs [`estimation.run_identification`](../src/causal/estimation.py):
-  - **Identification (always, data-free):** builds a DoWhy `CausalModel` from the variable DAG and calls `identify_effect` → the back-door adjustment set / instruments, the estimand type, and whether the effect is identifiable at all. This needs no dataset because identification is purely symbolic — which is why it fits a project whose queries usually carry no data.
-  - **Estimation + refutation (only with data):** if a CSV/TSV was attached (`parse_dataset` extracts it from the `--- Attached file ---` block the proxy injects), it runs `estimate_effect` (back-door linear regression / IV) plus two refuters (`random_common_cause`, `placebo_treatment_refuter`) for a point estimate, CI, and robustness flags.
+  - **Identification (always, data-free):** builds a DoWhy `CausalModel` from the variable DAG and calls `identify_effect` → the back-door adjustment set / instruments, the estimand type, and whether the effect is identifiable at all. This needs no dataset because identification is purely symbolic — which is why it fits a project whose queries usually carry no data. Variables declared in the graph but absent from the data are treated by DoWhy as **unobserved** confounders, correctly forcing IV (or honest non-identifiability) instead of a biased back-door estimate.
+  - **Estimation + refutation (only with data):** if a CSV/TSV was attached (`parse_dataset` extracts it from the `--- Attached file ---` block the proxy injects), it runs `estimate_effect` — the method matched to the identified estimand (back-door linear regression / `iv.instrumental_variable` / `frontdoor.two_stage_regression`) — plus two refuters (`random_common_cause`, `placebo_treatment_refuter`). Refutation verdicts use the refuter's own **significance test (p > 0.05 ⇒ survived)** when DoWhy provides one; a 15% tolerance is only the fallback.
+  - **Counterfactuals (rung 3, data + counterfactual phrasing only):** for "what would Y have been had T…" queries (`complexity.is_counterfactual_query`), `estimation.run_counterfactual` fits a full SCM with `dowhy.gcm` and compares average outcomes under `do(T=baseline)` vs `do(T=intervention)` — anchor values come from the query when named, else the treatment's 25th/75th percentiles.
 
-Both write results to `causal_estimand` / `causal_effect` as one `state_delta` (one write, two purposes). The identified estimand is injected into the executor and synthesizer prompts (`prompts._estimand_grounding`), so the LLM's numeric estimate is anchored to the formal adjustment set instead of ad-hoc confounders — identification moves *out* of the LLM, the same "determinism where it counts" principle as the rest of the engine.
+All results ride one `state_delta` (`causal_estimand` / `causal_effect` / `causal_counterfactual`; one write, two purposes). The identified estimand — and the counterfactual contrast when computed — is injected into the executor and synthesizer prompts (`prompts._estimand_grounding`), so the LLM's numeric answer is anchored to the formal adjustment set instead of ad-hoc confounders — identification moves *out* of the LLM, the same "determinism where it counts" principle as the rest of the engine.
 
-**Never fatal:** any DoWhy or dataset problem degrades to a noted, not-identifiable `IdentificationResult`; the pipeline keeps running and the LLM still answers. Requires `dowhy>=0.12` (0.11.x is incompatible with `networkx>=3.3`).
+**Never fatal:** any DoWhy or dataset problem degrades to a noted, not-identifiable `IdentificationResult` (counterfactuals simply don't emit); the pipeline keeps running and the LLM still answers. Requires `dowhy>=0.12` (0.11.x is incompatible with `networkx>=3.3`).
 
 ---
 
@@ -203,11 +204,12 @@ All pipeline state lives under `causal_*` session keys ([`src/causal/state_keys.
 | `causal_status` | `CausalStatus` (phase + counters) | ✅ → `causal_status` |
 | `causal_final_answer` | synthesizer's answer | ✅ → `response` |
 | `causal_graph_full` | full `CausalGraph` for rehydration | internal |
-| `causal_estimand` | `IdentificationResult` (adjustment set, estimand type, identifiability) | internal (UI: phase 2) |
-| `causal_effect` | `EffectEstimate` (point, CI, refutations) or null | internal (UI: phase 2) |
+| `causal_estimand` | `IdentificationResult` (adjustment set, estimand type, identifiability) | ✅ → `causal_estimand` |
+| `causal_effect` | `EffectEstimate` (point, CI, refutations + p-values) or null | ✅ → `causal_effect` |
+| `causal_counterfactual` | `CounterfactualResult` (do-contrast outcomes + delta) or null | ✅ → `causal_counterfactual` |
 | `causal_plan`, `causal_ledger`, `causal_current_step`, `causal_budgets`, `causal_estimand_spec_raw`, … | pipeline internals | internal |
 
-The proxy collects every `causal_*` key it sees in each event's `actions.state_delta` and returns the four UI-facing fields. Because the marker and the `causal_` prefix are the only knowledge shared between the two backends, the proxy duplicates just those two constants (it does not ship `src/`).
+The proxy collects every `causal_*` key it sees in each event's `actions.state_delta` and returns the UI-facing fields. Because the marker and the `causal_` prefix are the only knowledge shared between the two backends, the proxy duplicates just those two constants (it does not ship `src/`).
 
 **Transport fallback.** If a proxy can't read state deltas, running the agent with `CAUSAL_TEXT_FALLBACK=1` makes `CausalFallbackEmitter` emit the results as a fenced ` ```causal-json ` block; the proxy's `_extract_causal_fallback` parses it and strips it from the visible answer. This path is silent (zero LLM calls) by default.
 
@@ -215,9 +217,11 @@ The proxy collects every `causal_*` key it sees in each event's `actions.state_d
 
 ## 8. Rendering in the UI
 
-[`proxy/static/causal-agent.js`](../proxy/static/causal-agent.js) turns the payload into the **Causal reasoning** panel: a phase badge, the step trace (tagged `[ok]`/`[FAIL]`/etc.), and a **Mermaid flowchart** of the graph. Node status maps to colors (pending/active/done/failed/affected), critical-path edges are thickened, and `informs`/`constrains` relations render dashed. Because node ids and labels come from the LLM, they are treated as untrusted and whitelist-sanitized before Mermaid renders (which itself runs with `securityLevel: "strict"`).
+[`proxy/static/causal-agent.js`](../proxy/static/causal-agent.js) turns the payload into the **Causal reasoning** panel: a phase badge, a **Formal identification card**, the step trace (tagged `[ok]`/`[FAIL]`/etc.), and a **Mermaid flowchart** of the graph. Node status maps to colors (pending/active/done/failed/affected), critical-path edges are thickened, and `informs`/`constrains` relations render dashed. Because node ids and labels come from the LLM, they are treated as untrusted and whitelist-sanitized before Mermaid renders (which itself runs with `securityLevel: "strict"`).
 
-In the proxy's mock mode (no `AGENT_ENGINE_ENDPOINT`), a canned 3-node graph and step trace are returned so the entire causal UI is developable offline.
+The identification card (`buildEstimandCard`) shows the estimand-type chip (backdoor/iv/frontdoor, amber when not identifiable), `treatment → outcome`, the adjustment-set pills, and — when a dataset produced numbers — the effect ± CI, method, n, pass/fail refutation badges (p-value in the tooltip), and the counterfactual do-contrast. Everything renders through `textContent` (never `innerHTML`), so LLM/DoWhy strings stay inert.
+
+In the proxy's mock mode (no `AGENT_ENGINE_ENDPOINT`), a canned 3-node graph, step trace, and identification card payload are returned so the entire causal UI is developable offline.
 
 ---
 
@@ -238,7 +242,8 @@ Structural constants (not env-overridable) live in `state_keys.py`: `MAX_COMPONE
 | File | Covers |
 |---|---|
 | `tests/test_causal_agents.py` | Agent-tree wiring and the built-in-tool isolation invariant. |
-| `tests/test_causal_estimation.py` | DoWhy identification correctness (confounder/mediator/collider), effect recovery + refutation, dataset parsing, and the effect-query gate. |
+| `tests/test_causal_estimation.py` | DoWhy identification correctness (confounder/mediator/collider), effect recovery + refutation, gcm counterfactuals, dataset/header parsing, and the effect/counterfactual query gates. |
+| `tests/test_causal_benchmark.py` | Ground-truth benchmark: synthetic SCMs with known ATEs (confounders, mediator/collider traps, irrelevant covariate, unobserved confounder → IV) across seeds. |
 | `tests/test_causal_complexity.py` | Complexity scoring → budget tiers. |
 | `tests/test_causal_engine.py` | Graph build/repair, critical path, plan derivation, impact, splice. |
 | `tests/test_causal_runtime.py` | Verdict parsing and decision helpers. |
@@ -246,3 +251,5 @@ Structural constants (not env-overridable) live in `state_keys.py`: `MAX_COMPONE
 | `tests/test_main_causal.py` | Proxy transport: marker prepend, `state_delta` collection, fenced-block fallback, mock graph. |
 
 The pure modules (`state_keys`, `models`, `complexity`, `graph_engine`, `runtime`, `ledger`, `estimation`) have no ADK/Vertex imports, so these tests run fast and hermetically. `estimation` lazily imports `dowhy`/`pandas` inside its functions, so importing it stays cheap; the DoWhy correctness tests `importorskip("dowhy")` and are the only ones that need the heavy dependency.
+
+**LLM-in-the-loop tier.** `tests/eval/datasets/causal-inference-dataset.json` runs the same ground truths *end-to-end through the deployed pipeline* (marker included in the prompts): back-door identification with and without data, the mediator/collider traps, and a counterfactual — graded by the LLM judge in `tests/eval/metrics.py`, whose `causal_correctness` axis is weighted highest. Run with `agents-cli eval generate --dataset tests/eval/datasets/causal-inference-dataset.json` then `agents-cli eval grade`.

@@ -13,6 +13,7 @@ from typing import Optional
 
 from src.causal.models import (
     CausalStatus,
+    CounterfactualResult,
     EffectEstimate,
     ExecutionPlan,
     IdentificationResult,
@@ -129,7 +130,20 @@ def summarize_effect_line(effect: EffectEstimate) -> str:
     if effect.ci_low is not None and effect.ci_high is not None:
         line += f" (95% CI {effect.ci_low:.4g} to {effect.ci_high:.4g})"
     if effect.refutations:
-        checks = ", ".join(f"{r.method.split('_')[0]}:{'pass' if r.passed else 'FAIL'}"
-                           for r in effect.refutations)
+        checks = ", ".join(
+            f"{r.method.split('_')[0]}:{'pass' if r.passed else 'FAIL'}"
+            + (f"(p={r.p_value:.2f})" if r.p_value is not None else "")
+            for r in effect.refutations
+        )
         line += f"; robustness {checks}"
     return line[:200]
+
+
+def summarize_counterfactual_line(cf: CounterfactualResult) -> str:
+    """One-line record of the gcm counterfactual comparison (rung 3)."""
+    return (
+        f"[counterfactual] do({cf.treatment}={cf.intervention_value:.4g}) -> "
+        f"{cf.outcome} {cf.intervention_outcome:.4g} vs "
+        f"do({cf.treatment}={cf.baseline_value:.4g}) -> {cf.baseline_outcome:.4g}; "
+        f"delta {cf.delta:+.4g}"
+    )[:200]

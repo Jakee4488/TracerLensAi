@@ -19,9 +19,14 @@ from google.adk.agents import BaseAgent
 from google.adk.events import Event, EventActions
 
 from src.causal import state_keys as sk
-from src.causal.estimation import parse_dataset, run_identification
+from src.causal.complexity import is_counterfactual_query
+from src.causal.estimation import parse_dataset, run_counterfactual, run_identification
 from src.causal.models import CausalEstimand, parse_model
-from src.causal.runtime import summarize_effect_line, summarize_estimand_line
+from src.causal.runtime import (
+    summarize_counterfactual_line,
+    summarize_effect_line,
+    summarize_estimand_line,
+)
 
 
 class CausalEstimator(BaseAgent):
@@ -47,14 +52,24 @@ class CausalEstimator(BaseAgent):
 
         ident, effect = run_identification(spec, df)
 
+        # Rung 3: only for counterfactual-phrased queries with a dataset (an
+        # SCM must be fitted); run_counterfactual returns None on any failure.
+        counterfactual = None
+        if df is not None and is_counterfactual_query(state.get(sk.KEY_QUERY) or ""):
+            counterfactual = run_counterfactual(spec, df)
+
         trace = list(state.get(sk.KEY_STEPS) or [])
         trace.append(summarize_estimand_line(ident))
         if effect is not None:
             trace.append(summarize_effect_line(effect))
+        if counterfactual is not None:
+            trace.append(summarize_counterfactual_line(counterfactual))
 
         delta = {
             sk.KEY_ESTIMAND: ident.model_dump(mode="json"),
             sk.KEY_EFFECT: effect.model_dump(mode="json") if effect is not None else None,
+            sk.KEY_COUNTERFACTUAL: (counterfactual.model_dump(mode="json")
+                                    if counterfactual is not None else None),
             sk.KEY_STEPS: trace,
         }
         yield Event(

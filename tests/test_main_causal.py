@@ -79,11 +79,16 @@ def test_no_marker_when_causal_disabled(client: TestClient, monkeypatch):
 def test_state_delta_populates_causal_fields(client: TestClient, monkeypatch):
     graph = {"nodes": [{"id": "a", "label": "A", "kind": "process", "status": "done"}],
              "edges": [], "critical_path": ["a"], "version": 1}
+    estimand = {"treatment": "t", "outcome": "y", "identifiable": True,
+                "estimand_type": "backdoor", "adjustment_set": ["z"]}
+    effect = {"method": "backdoor.linear_regression", "point": 2.0}
     events = [
         {"content": {"parts": [{"text": '{"goal": "intermediate json"}'}]},
          "usage_metadata": {"total_token_count": 100}},
         {"actions": {"state_delta": {"causal_steps": ["[graph] decomposed"],
-                                     "causal_graph": graph}}},
+                                     "causal_graph": graph,
+                                     "causal_estimand": estimand,
+                                     "causal_effect": effect}}},
         {"content": {"parts": [{"text": "step output noise"}]},
          "usage_metadata": {"total_token_count": 50}},
         {"actions": {"state_delta": {"causal_final_answer": "The clean answer.",
@@ -99,6 +104,9 @@ def test_state_delta_populates_causal_fields(client: TestClient, monkeypatch):
     assert data["causal_reasoning_steps"] == ["[graph] decomposed"]
     assert data["causal_graph"] == graph
     assert data["causal_status"] == {"phase": "complete"}
+    # DoWhy identification/effect ride the same transport.
+    assert data["causal_estimand"] == estimand
+    assert data["causal_effect"] == effect
     # Token counts are summed across the multi-agent turn.
     assert data["total_token_count"] == 175
 
@@ -128,7 +136,10 @@ def test_non_causal_response_unchanged(client: TestClient, monkeypatch):
 
 def test_fenced_block_fallback(client: TestClient, monkeypatch):
     payload = {"steps": ["s1 ok"], "graph": {"nodes": [{"id": "a"}], "edges": []},
-               "status": {"phase": "complete"}, "final_answer": "Fallback answer."}
+               "status": {"phase": "complete"},
+               "estimand": {"treatment": "t", "outcome": "y", "identifiable": True},
+               "effect": {"method": "backdoor.linear_regression", "point": 1.0},
+               "final_answer": "Fallback answer."}
     text = f"intermediate noise\n```causal-json\n{json.dumps(payload)}\n```"
     events = [{"content": {"parts": [{"text": text}]}}]
     install_dummy_engine(monkeypatch, events)
@@ -136,6 +147,8 @@ def test_fenced_block_fallback(client: TestClient, monkeypatch):
     assert data["response"] == "Fallback answer."
     assert data["causal_reasoning_steps"] == ["s1 ok"]
     assert data["causal_graph"]["nodes"] == [{"id": "a"}]
+    assert data["causal_estimand"]["treatment"] == "t"
+    assert data["causal_effect"]["point"] == 1.0
 
 
 def test_fallback_not_parsed_when_causal_disabled(client: TestClient, monkeypatch):
@@ -160,6 +173,11 @@ def test_mock_path_returns_canned_graph(client: TestClient, monkeypatch):
     assert len(data["causal_reasoning_steps"]) == 3
     assert {n["id"] for n in data["causal_graph"]["nodes"]} == {"inputs", "analysis", "outcome"}
     assert data["causal_status"] == {"phase": "complete"}
+    # Canned identification/effect so the estimand card develops offline.
+    assert data["causal_estimand"]["identifiable"] is True
+    assert data["causal_estimand"]["adjustment_set"] == ["season", "income"]
+    assert data["causal_effect"]["method"]
+    assert len(data["causal_effect"]["refutations"]) == 2
 
 
 def test_mock_path_no_graph_when_disabled(client: TestClient, monkeypatch):
@@ -167,6 +185,8 @@ def test_mock_path_no_graph_when_disabled(client: TestClient, monkeypatch):
     data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": False}).json()
     assert data["causal_reasoning_steps"] == []
     assert data["causal_graph"] is None
+    assert data["causal_estimand"] is None
+    assert data["causal_effect"] is None
 
 
 # ── Fallback extractor unit tests ─────────────────────────────────────────────

@@ -2,6 +2,17 @@
 
 This directory contains evaluation datasets for testing agent behavior.
 
+## Datasets
+
+- `basic-dataset.json` — sanity + qualitative causal-reasoning cases (general assistant path).
+- `causal-inference-dataset.json` — **ground-truth causal-inference cases for the
+  `[[causal:on]]` pipeline**: back-door identification with/without data, mediator and
+  collider traps, and a counterfactual. The CSV cases embed data generated from known
+  SCMs (true ATE 2.0; price slope −1.5), so the judge's `reference` carries real ground
+  truth — regenerate via the SCM recipe in the references if the data ever needs
+  refreshing. The deterministic (no-LLM) counterpart of these checks lives in
+  `tests/test_causal_benchmark.py`.
+
 ## Running Evaluations
 
 ### Default Dataset

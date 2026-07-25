@@ -115,14 +115,21 @@ def skip_if_no_ready_step(callback_context) -> Optional[types.Content]:
 def skip_unless_effect_query(callback_context) -> Optional[types.Content]:
     """EstimandSpec before-callback: the estimand stage costs 0 LLM calls unless
     the query actually asks for a treatment effect DoWhy can identify. Also skips
-    when decomposition failed, so the graph-less degrade path stays cheap."""
+    when decomposition failed, so the graph-less degrade path stays cheap.
+
+    Effect detection is the lexical regex OR-ed with the decomposer's semantic
+    is_effect_query flag (the decomposer runs first), so paraphrases the regex
+    misses still get the formal path."""
     state = callback_context.state
     status = parse_model(CausalStatus, state.get(sk.KEY_STATUS))
     if status is not None and status.phase == "failed":
         return _SKIP
-    if not is_effect_query(state.get(sk.KEY_QUERY) or ""):
-        return _SKIP
-    return None
+    if is_effect_query(state.get(sk.KEY_QUERY) or ""):
+        return None
+    dec = parse_model(CausalDecomposition, state.get(sk.KEY_DECOMPOSITION_RAW))
+    if dec is not None and dec.is_effect_query:
+        return None
+    return _SKIP
 
 
 def skip_unless_replan_requested(callback_context) -> Optional[types.Content]:

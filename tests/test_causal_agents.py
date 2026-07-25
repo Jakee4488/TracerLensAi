@@ -129,6 +129,35 @@ def test_build_causal_pipeline_is_reusable():
     assert p1.sub_agents[0] is not p2.sub_agents[0]
 
 
+# ── Semantic effect-gate ──────────────────────────────────────────────────────
+
+def _ctx(state: dict):
+    from types import SimpleNamespace
+    return SimpleNamespace(state=state)
+
+
+def test_effect_gate_lexical_or_decomposer_flag():
+    from src.causal.callbacks import skip_unless_effect_query
+
+    # Lexical hit alone runs the stage (returns None = don't skip).
+    assert skip_unless_effect_query(_ctx({sk.KEY_QUERY: "effect of price on demand?"})) is None
+
+    # Regex miss + no decomposer flag -> skipped.
+    miss = "How much would a 10% price rise reduce demand?"
+    assert skip_unless_effect_query(_ctx({sk.KEY_QUERY: miss})) is not None
+
+    # Regex miss but the decomposer's semantic flag rescues it.
+    dec = {"goal": "g", "components": [], "edges": [], "is_effect_query": True}
+    assert skip_unless_effect_query(
+        _ctx({sk.KEY_QUERY: miss, sk.KEY_DECOMPOSITION_RAW: dec})) is None
+
+    # Failed decomposition always skips, flag or not.
+    assert skip_unless_effect_query(_ctx({
+        sk.KEY_QUERY: "effect of x on y",
+        sk.KEY_STATUS: {"phase": "failed"},
+    })) is not None
+
+
 # ── Marker helpers ────────────────────────────────────────────────────────────
 
 def test_marker_detection_and_strip():

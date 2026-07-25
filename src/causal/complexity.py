@@ -131,3 +131,26 @@ def is_effect_query(query: str) -> bool:
     and no extra LLM call is spent (mirrors the other skip-guards)."""
     text = _ATTACHMENT_BLOCK_RE.sub(" ", query or "")
     return bool(_EFFECT_QUERY_RE.search(text))
+
+
+# Rung-3 (counterfactual) phrasings: "what would Y have been had X ...",
+# "if X had (not) ...". Gates the gcm counterfactual computation, which also
+# requires a dataset — so false negatives just fall back to the effect path.
+_COUNTERFACTUAL_RE = re.compile(
+    r"\b(?:"
+    r"counterfactual"
+    r"|what\s+would\b.*\b(?:have|be)\b"
+    r"|would\s+have\s+(?:been|happened)"
+    r"|had\b.+\b(?:not|never|stayed|remained|been)\b"
+    r"|if\b.+\bhad\b"
+    r"|instead\s+of\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def is_counterfactual_query(query: str) -> bool:
+    """True when the query asks a counterfactual ('what would have happened')
+    rather than a forward effect question."""
+    text = _ATTACHMENT_BLOCK_RE.sub(" ", query or "")
+    return bool(_COUNTERFACTUAL_RE.search(text))
