@@ -1,6 +1,6 @@
 # Causal Reasoning Pipeline
 
-The causal-reasoning pipeline is TracerLensAi's core capability. When the UI's **Causal** toggle is on, the agent doesn't just answer — it builds a **causal graph** of the problem, derives a **plan** along the critical path, **executes** it step-by-step with code, **propagates the impact** of any failure through the graph, **replans only the affected subgraph**, and finally **synthesizes** a grounded answer. Everything except the five LLM roles is deterministic Python.
+The causal-reasoning pipeline is TracerLensAi's core capability. When the UI's **Causal** toggle is on, the agent doesn't just answer — it builds a **causal graph** of the problem, **formally identifies** any treatment effect with DoWhy (and estimates it from data when a dataset is present), derives a **plan** along the critical path, **executes** it step-by-step with code, **propagates the impact** of any failure through the graph, **replans only the affected subgraph**, and finally **synthesizes** a grounded answer. Everything except the five LLM roles is deterministic Python.
 
 This document is the deep-dive. For where the files live, see the [Repository Structure Guide](repository_structure.md); for the surrounding architecture, see the [Developer Guide](developer_guide.md).
 
@@ -8,8 +8,8 @@ This document is the deep-dive. For where the files live, see the [Repository St
 
 ## 1. Design Principles
 
-1. **Determinism where it counts.** Routing, graph construction/repair, impact propagation, plan derivation, verdict parsing, and replan splicing are pure Python (`networkx` + pydantic). LLMs are used only for the four things they're good at: decomposing, executing a step, replanning a subgraph, and writing the final answer.
-2. **Bounded cost.** The LLM budget per turn is `1 (decompose) + ≤max_steps (execute) + ≤max_replans (replan) + 1 (synthesize)`. Budgets are sized per query by complexity and clamped by env ceilings. The loop has a hard structural ceiling (`LOOP_MAX_ITERATIONS=16`).
+1. **Determinism where it counts.** Routing, graph construction/repair, impact propagation, plan derivation, verdict parsing, replan splicing, and **statistical identification/estimation (DoWhy)** are pure Python (`networkx` + pydantic + `dowhy`). LLMs are used only for the five things they're good at: decomposing, naming the estimand variables, executing a step, replanning a subgraph, and writing the final answer.
+2. **Bounded cost.** The LLM budget per turn is `1 (decompose) + [≤1 (estimand spec — effect queries only)] + ≤max_steps (execute) + ≤max_replans (replan) + 1 (synthesize)`. The estimand-spec stage is skip-gated (§5), and DoWhy identification/estimation add **0** LLM calls. Budgets are sized per query by complexity and clamped by env ceilings. The loop has a hard structural ceiling (`LOOP_MAX_ITERATIONS=16`).
 3. **Vertex tool isolation.** Vertex rejects mixing built-in tools (code execution) with function declarations, so **no `FunctionTool`s** are used. Each `LlmAgent` carries at most one of `{code_executor, output_schema, tools}`; all deterministic work lives in callbacks and custom `BaseAgent`s. This invariant is enforced by `tests/test_causal_agents.py`.
 4. **One write, two purposes.** Every deterministic step writes to ADK session state via `actions.state_delta`. That single write is simultaneously the **persistence** record and the **UI transport** the proxy reads — no separate reporting channel.
 
@@ -25,6 +25,8 @@ CausalRouterAgent  (custom, 0 LLM)         ── marker routing + state reset +
 └── CausalPipeline  (SequentialAgent)
     ├── CausalDecomposer  (LlmAgent, 1)     ── output_schema=CausalDecomposition
     │     └─ after: build_graph_and_plan     ── DAG + plan (deterministic)
+    ├── CausalEstimandSpec (LlmAgent, ≤1)   ── output_schema=CausalEstimand; skip-gated to effect queries
+    ├── CausalEstimator   (custom, 0 LLM)   ── DoWhy identify (+ estimate/refute if data)
     ├── CausalExecutorLoop  (LoopAgent, ≤16)
     │     ├── CausalStepExecutor (LlmAgent) ── one step, BuiltInCodeExecutor
     │     ├── CausalStepController (custom) ── verdict, ledger, impact, replan-req
@@ -38,11 +40,77 @@ CausalRouterAgent  (custom, 0 LLM)         ── marker routing + state reset +
 |---|---|---|
 | `CausalRouterAgent` | 0 | Routes by the `[[causal:on]]` marker; on a causal turn, resets stale `causal_*` state and seeds complexity-sized budgets. |
 | `CausalDecomposer` | 1 | Emits `CausalDecomposition` (components + directed causal edges) via constrained decoding. |
+| `CausalEstimandSpec` | ≤1 | On effect queries only, emits a **variable-level** DAG + treatment/outcome (`CausalEstimand`); skip-gated otherwise (§5). |
+| `CausalEstimator` | 0 | Deterministic DoWhy identification (always) + estimation/refutation (only with a dataset). See §5. |
 | `CausalStepExecutor` | 1/step | Executes exactly one plan step, using Python where it helps; ends with an `OBSERVED:`/`STEP_STATUS:` trailer. |
-| `CausalStepController` | 0 | The deterministic heart — see §5. |
+| `CausalStepController` | 0 | The deterministic heart — see §6. |
 | `CausalReplanner` | ≤1/failure | Produces replacement steps **only** for the affected subgraph; skipped unless a replan was requested. |
 | `CausalSynthesizer` | 1 | Writes the final user-facing answer grounded in the executed plan. |
 | `CausalFallbackEmitter` | 0 | Optional text transport for proxies that can't read state deltas. |
+
+### End-to-end execution flow
+
+One turn, start to finish. **Orange** nodes are the (up to five) LLM calls; **green** nodes are deterministic Python (zero LLM); **diamonds** are deterministic gates. The happy path is the straight line down the middle — the branches are the skip-gates, the DoWhy stage, and the failure/replan loop. Dotted edges show the identified estimand *grounding* the executor and synthesizer prompts.
+
+```mermaid
+flowchart TD
+    U(["User message"]) --> RT{"Contains<br/>&#91;&#91;causal:on&#93;&#93; ?"}
+    RT -->|no| GA["general_assistant<br/>LLM + code executor"]
+    GA --> OUT(["Response to user"])
+
+    RT -->|yes| RST["CausalRouterAgent · 0 LLM<br/>reset causal_* · complexity → budgets<br/>store causal_query"]
+    RST --> DEC["CausalDecomposer · LLM<br/>→ CausalDecomposition"]
+    DEC --> BGP["build_graph_and_plan · 0 LLM<br/>DAG build / repair · critical path · plan"]
+    BGP --> DECOK{"decomposition<br/>parseable?"}
+    DECOK -->|yes| EG{"is_effect_query?"}
+    EG -->|yes| ESP["CausalEstimandSpec · LLM<br/>→ CausalEstimand · variable-level DAG"]
+
+    subgraph ESTG["CausalEstimator · 0 LLM · DoWhy"]
+        direction TB
+        IDN["identify_effect · data-free<br/>back-door / IV adjustment set"]
+        IDN --> DATA{"dataset in<br/>message?"}
+        DATA -->|no| WE1["write causal_estimand"]
+        DATA -->|yes| EM["estimate_effect + refute<br/>random-common-cause · placebo"]
+        EM --> WE2["write causal_estimand + causal_effect"]
+    end
+
+    subgraph LOOP["CausalExecutorLoop · LoopAgent · ≤16 iterations"]
+        direction TB
+        RDY{"next ready<br/>step?"}
+        RDY -->|yes| EXE["CausalStepExecutor · LLM<br/>code execution + estimand grounding<br/>ends OBSERVED: / STEP_STATUS:"]
+        EXE --> CTL["CausalStepController · 0 LLM<br/>parse verdict · ledger · graph"]
+        CTL --> VD{"verdict?"}
+        VD -->|success| DN{"plan done or<br/>budget spent?"}
+        DN -->|more steps| RDY
+        VD -->|failure / deviation| PROP["propagate_impact → invalidate<br/>affected subgraph"]
+        PROP --> RPB{"replan<br/>budget?"}
+        RPB -->|yes| RPL["CausalReplanner · LLM<br/>→ ReplanResult · affected only"]
+        RPL --> SPL["splice_replan · 0 LLM<br/>insert steps · bump plan version"]
+        SPL --> RDY
+        RDY -->|none / deadlock| EXIT(["exit loop"])
+        DN -->|done| EXIT
+        RPB -->|no| EXIT
+    end
+
+    ESP --> IDN
+    EG -->|no| RDY
+    WE1 --> RDY
+    WE2 --> RDY
+    DECOK -->|no| SYN
+    EXIT --> SYN["CausalSynthesizer · LLM<br/>final answer + estimand grounding<br/>→ causal_final_answer"]
+    SYN --> FB["CausalFallbackEmitter · 0 LLM<br/>fenced causal-json · opt-in"]
+    FB --> OUT
+
+    IDN -. grounds .-> EXE
+    IDN -. grounds .-> SYN
+
+    classDef llm fill:#fde3c4,stroke:#e08a2e,color:#1a1a1a;
+    classDef det fill:#d6ebd4,stroke:#4e9a4e,color:#1a1a1a;
+    class GA,DEC,ESP,EXE,RPL,SYN llm;
+    class RST,BGP,IDN,EM,WE1,WE2,CTL,PROP,SPL,FB det;
+```
+
+Reading it: the five LLM calls (orange) are `decompose → estimand-spec → execute-step → replan → synthesize`; everything else — routing, graph build/repair, DoWhy identification & estimation, verdict/impact/replan bookkeeping, transport — is deterministic. Both skip-gates (`is_effect_query`, `next ready step?`) and the replanner's own guard keep the common path cheap.
 
 ---
 
@@ -91,7 +159,24 @@ All repairs are recorded in `repair_notes` and surfaced as `[graph] repair: …`
 
 ---
 
-## 5. The Execution Loop
+## 5. Formal Identification & Estimation (DoWhy)
+
+Structural graph reasoning (the component DAG in §4) is not statistical causal inference. For **treatment-effect** questions the pipeline adds a deterministic DoWhy stage so *identification* — deciding which variables to adjust for — is a graph algorithm, not the LLM's guess (LLMs quietly over-adjust for mediators/colliders, biasing the estimand).
+
+Two agents, inserted between the decomposer and the executor loop:
+
+- **`CausalEstimandSpec`** — a schema-only `LlmAgent` that emits a **variable-level** DAG (`CausalEstimand`: variables with roles + directed edges + which is treatment/outcome). This is a different abstraction from the decomposer's *task* graph, so it gets its own shallow schema. A before-callback (`skip_unless_effect_query`) returns `_SKIP` unless the query is a genuine effect-estimation ask (`complexity.is_effect_query`), so the common path spends **0** extra LLM calls.
+- **`CausalEstimator`** ([`estimator.py`](../src/causal/estimator.py)) — a deterministic `BaseAgent` (0 LLM) that runs [`estimation.run_identification`](../src/causal/estimation.py):
+  - **Identification (always, data-free):** builds a DoWhy `CausalModel` from the variable DAG and calls `identify_effect` → the back-door adjustment set / instruments, the estimand type, and whether the effect is identifiable at all. This needs no dataset because identification is purely symbolic — which is why it fits a project whose queries usually carry no data.
+  - **Estimation + refutation (only with data):** if a CSV/TSV was attached (`parse_dataset` extracts it from the `--- Attached file ---` block the proxy injects), it runs `estimate_effect` (back-door linear regression / IV) plus two refuters (`random_common_cause`, `placebo_treatment_refuter`) for a point estimate, CI, and robustness flags.
+
+Both write results to `causal_estimand` / `causal_effect` as one `state_delta` (one write, two purposes). The identified estimand is injected into the executor and synthesizer prompts (`prompts._estimand_grounding`), so the LLM's numeric estimate is anchored to the formal adjustment set instead of ad-hoc confounders — identification moves *out* of the LLM, the same "determinism where it counts" principle as the rest of the engine.
+
+**Never fatal:** any DoWhy or dataset problem degrades to a noted, not-identifiable `IdentificationResult`; the pipeline keeps running and the LLM still answers. Requires `dowhy>=0.12` (0.11.x is incompatible with `networkx>=3.3`).
+
+---
+
+## 6. The Execution Loop
 
 The `LoopAgent` runs three sub-agents per iteration: **executor → controller → replanner**. The controller ([`src/causal/controller.py`](../src/causal/controller.py)) is where the determinism lives — it runs after the executor on every iteration and yields exactly one event whose `state_delta` is both the persistence write and the UI transport.
 
@@ -107,7 +192,7 @@ If decomposition is unparseable, the pipeline degrades gracefully: it sets `phas
 
 ---
 
-## 6. State-Key Contract & Transport
+## 7. State-Key Contract & Transport
 
 All pipeline state lives under `causal_*` session keys ([`src/causal/state_keys.py`](../src/causal/state_keys.py)):
 
@@ -118,7 +203,9 @@ All pipeline state lives under `causal_*` session keys ([`src/causal/state_keys.
 | `causal_status` | `CausalStatus` (phase + counters) | ✅ → `causal_status` |
 | `causal_final_answer` | synthesizer's answer | ✅ → `response` |
 | `causal_graph_full` | full `CausalGraph` for rehydration | internal |
-| `causal_plan`, `causal_ledger`, `causal_current_step`, `causal_budgets`, … | pipeline internals | internal |
+| `causal_estimand` | `IdentificationResult` (adjustment set, estimand type, identifiability) | internal (UI: phase 2) |
+| `causal_effect` | `EffectEstimate` (point, CI, refutations) or null | internal (UI: phase 2) |
+| `causal_plan`, `causal_ledger`, `causal_current_step`, `causal_budgets`, `causal_estimand_spec_raw`, … | pipeline internals | internal |
 
 The proxy collects every `causal_*` key it sees in each event's `actions.state_delta` and returns the four UI-facing fields. Because the marker and the `causal_` prefix are the only knowledge shared between the two backends, the proxy duplicates just those two constants (it does not ship `src/`).
 
@@ -126,7 +213,7 @@ The proxy collects every `causal_*` key it sees in each event's `actions.state_d
 
 ---
 
-## 7. Rendering in the UI
+## 8. Rendering in the UI
 
 [`proxy/static/causal-agent.js`](../proxy/static/causal-agent.js) turns the payload into the **Causal reasoning** panel: a phase badge, the step trace (tagged `[ok]`/`[FAIL]`/etc.), and a **Mermaid flowchart** of the graph. Node status maps to colors (pending/active/done/failed/affected), critical-path edges are thickened, and `informs`/`constrains` relations render dashed. Because node ids and labels come from the LLM, they are treated as untrusted and whitelist-sanitized before Mermaid renders (which itself runs with `securityLevel: "strict"`).
 
@@ -134,7 +221,7 @@ In the proxy's mock mode (no `AGENT_ENGINE_ENDPOINT`), a canned 3-node graph and
 
 ---
 
-## 8. Environment Variables
+## 9. Environment Variables
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -146,15 +233,16 @@ Structural constants (not env-overridable) live in `state_keys.py`: `MAX_COMPONE
 
 ---
 
-## 9. Tests
+## 10. Tests
 
 | File | Covers |
 |---|---|
 | `tests/test_causal_agents.py` | Agent-tree wiring and the built-in-tool isolation invariant. |
+| `tests/test_causal_estimation.py` | DoWhy identification correctness (confounder/mediator/collider), effect recovery + refutation, dataset parsing, and the effect-query gate. |
 | `tests/test_causal_complexity.py` | Complexity scoring → budget tiers. |
 | `tests/test_causal_engine.py` | Graph build/repair, critical path, plan derivation, impact, splice. |
 | `tests/test_causal_runtime.py` | Verdict parsing and decision helpers. |
 | `tests/test_causal_pipeline_flow.py` | End-to-end flow over the engine. |
 | `tests/test_main_causal.py` | Proxy transport: marker prepend, `state_delta` collection, fenced-block fallback, mock graph. |
 
-The pure modules (`state_keys`, `models`, `complexity`, `graph_engine`, `runtime`, `ledger`) have no ADK/Vertex imports, so these tests run fast and hermetically.
+The pure modules (`state_keys`, `models`, `complexity`, `graph_engine`, `runtime`, `ledger`, `estimation`) have no ADK/Vertex imports, so these tests run fast and hermetically. `estimation` lazily imports `dowhy`/`pandas` inside its functions, so importing it stays cheap; the DoWhy correctness tests `importorskip("dowhy")` and are the only ones that need the heavy dependency.

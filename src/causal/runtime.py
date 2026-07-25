@@ -11,7 +11,15 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from src.causal.models import CausalStatus, ExecutionPlan, PlanStep, ReplanEvent, Verdict
+from src.causal.models import (
+    CausalStatus,
+    EffectEstimate,
+    ExecutionPlan,
+    IdentificationResult,
+    PlanStep,
+    ReplanEvent,
+    Verdict,
+)
 from src.causal.state_keys import OBSERVED_RE, STEP_STATUS_RE
 
 _STATUS_RE = re.compile(STEP_STATUS_RE, re.IGNORECASE)
@@ -98,3 +106,30 @@ def summarize_decomposition_line(n_components: int, n_edges: int) -> str:
 
 def summarize_pathway_line(rationale: str) -> str:
     return f"[plan] {rationale}"
+
+
+def summarize_estimand_line(ident: IdentificationResult) -> str:
+    """One-line record of DoWhy's (data-free) identification result."""
+    if not ident.identifiable:
+        detail = ident.note or "no valid adjustment set for the stated graph"
+        return f"[estimand] effect of {ident.treatment} on {ident.outcome} not identifiable — {detail}"[:200]
+    adj = ", ".join(ident.adjustment_set) if ident.adjustment_set else "nothing (no back-door confounding)"
+    line = (f"[estimand] effect of {ident.treatment} on {ident.outcome} "
+            f"identifiable via {ident.estimand_type}; adjust for {adj}")
+    if ident.estimand_type == "iv" and ident.instruments:
+        line += f"; instruments {', '.join(ident.instruments)}"
+    return line[:200]
+
+
+def summarize_effect_line(effect: EffectEstimate) -> str:
+    """One-line record of DoWhy's numeric estimate + robustness checks."""
+    if not effect.method:
+        return f"[effect] {effect.note or 'no numeric estimate produced'}"[:200]
+    line = f"[effect] estimated effect ({effect.method}) = {effect.point:.4g}"
+    if effect.ci_low is not None and effect.ci_high is not None:
+        line += f" (95% CI {effect.ci_low:.4g} to {effect.ci_high:.4g})"
+    if effect.refutations:
+        checks = ", ".join(f"{r.method.split('_')[0]}:{'pass' if r.passed else 'FAIL'}"
+                           for r in effect.refutations)
+        line += f"; robustness {checks}"
+    return line[:200]

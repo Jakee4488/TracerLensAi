@@ -45,6 +45,24 @@ _COMPARISON_RE = re.compile(
 )
 _CONJUNCTION_RE = re.compile(r"\b(and|or|but|while|whereas|as well as)\b", re.IGNORECASE)
 
+# A quantitative *treatment-effect* question — the only kind DoWhy can identify
+# an estimand for. Narrower than _CAUSAL_RE (which fires on any causal wording):
+# it wants an explicit effect-of-X-on-Y / how-much-does-X-affect-Y framing, or
+# an econometric term of art. Gates the (skippable) estimand-spec LLM stage.
+_EFFECT_QUERY_RE = re.compile(
+    r"\b(?:"
+    r"(?:causal|treatment|marginal|average|net)\s+effect"
+    r"|(?:effect|impact|influence)\s+of\b"
+    r"|effect\s+on\b"
+    r"|how\s+(?:much|many|far)\b.*\b(?:affect|impact|change|increase|decrease|raise|lower)"
+    r"|does\b.*\b(?:affect|impact|cause|influence|change|increase|decrease|drive)\b"
+    r"|elasticit\w+|\bATE\b|\bATT\b|\bCATE\b"
+    r"|counterfactual|intervention|do\s*\(|confound\w+"
+    r"|controlling\s+for|adjust(?:ing|ed)?\s+for|holding\b.*\bconstant"
+    r")",
+    re.IGNORECASE,
+)
+
 # The proxy prepends attached-file contents as "--- Attached file: NAME ---
 # ... --- End of file: NAME ---" blocks (see proxy/main.py _attachment_context).
 # Complexity must reflect the *question*, not the size of pasted-in data — a
@@ -105,3 +123,11 @@ def tier_for_query(query: str) -> str:
 def budgets_for_query(query: str) -> dict:
     """Speed-biased ``{"max_steps", "max_replans"}`` for a query's complexity."""
     return dict(TIER_BUDGETS[tier_for_query(query)])
+
+
+def is_effect_query(query: str) -> bool:
+    """True when the query asks for a treatment-effect estimate DoWhy can
+    identify. Gate for the estimand-spec stage: on a False the stage is skipped
+    and no extra LLM call is spent (mirrors the other skip-guards)."""
+    text = _ATTACHMENT_BLOCK_RE.sub(" ", query or "")
+    return bool(_EFFECT_QUERY_RE.search(text))

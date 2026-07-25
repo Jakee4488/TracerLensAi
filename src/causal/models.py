@@ -146,6 +146,53 @@ class CausalStatus(BaseModel):
     note: str = ""
 
 
+# ── Statistical-inference results (produced deterministically by DoWhy) ──────
+
+class RefutationResult(BaseModel):
+    """One DoWhy robustness check on an estimated effect."""
+    method: str
+    original_effect: float = 0.0
+    new_effect: float = 0.0
+    passed: bool = False
+
+
+class IdentificationResult(BaseModel):
+    """DoWhy's data-free identification of a treatment->outcome estimand.
+
+    Produced from the variable-level DAG alone, so it is available even when no
+    dataset was supplied — this is the formal replacement for the LLM's ad-hoc
+    confounder guessing."""
+    treatment: str = ""
+    outcome: str = ""
+    identifiable: bool = False
+    estimand_type: str = ""                       # backdoor | iv | frontdoor | none
+    adjustment_set: list[str] = Field(default_factory=list)
+    instruments: list[str] = Field(default_factory=list)
+    estimand_expr: str = ""
+    note: str = ""
+
+    @field_validator("estimand_expr", "note")
+    @classmethod
+    def _cap_text(cls, v: str) -> str:
+        return (v or "").strip()[:300]
+
+
+class EffectEstimate(BaseModel):
+    """DoWhy's numeric effect estimate + refutations (data path only)."""
+    method: str = ""
+    point: float = 0.0
+    ci_low: Optional[float] = None
+    ci_high: Optional[float] = None
+    n_obs: int = 0
+    refutations: list[RefutationResult] = Field(default_factory=list)
+    note: str = ""
+
+    @field_validator("note")
+    @classmethod
+    def _cap_note(cls, v: str) -> str:
+        return (v or "").strip()[:300]
+
+
 # ── LLM-facing schemas (kept shallow for constrained decoding) ───────────────
 
 class ComponentDraft(BaseModel):
@@ -186,6 +233,53 @@ class ReplanRequest(BaseModel):
     subgraph_components: list[Component] = Field(default_factory=list)
     subgraph_edges: list[CausalEdge] = Field(default_factory=list)
     max_new_steps: int = 4
+
+
+VariableRole = Literal["treatment", "outcome", "confounder", "instrument", "mediator", "other"]
+
+
+class CausalVariable(BaseModel):
+    """A variable-level node the estimand-spec LLM emits (distinct from the
+    task-level Component graph): something measurable in the world."""
+    id: str
+    label: str = ""
+    role: VariableRole = "other"
+
+    @field_validator("id")
+    @classmethod
+    def _slug_id(cls, v: str) -> str:
+        return slugify(v)
+
+    @field_validator("label")
+    @classmethod
+    def _cap_label(cls, v: str) -> str:
+        return v.strip()[:60]
+
+
+class VarEdge(BaseModel):
+    """Directed causal relation between two variables (source causes target)."""
+    source: str
+    target: str
+
+    @field_validator("source", "target")
+    @classmethod
+    def _slug_ends(cls, v: str) -> str:
+        return slugify(v)
+
+
+class CausalEstimand(BaseModel):
+    """Structured output of the estimand-spec LLM: a variable-level causal DAG
+    plus which variable is the treatment and which is the outcome, so DoWhy can
+    identify the effect deterministically."""
+    treatment: str
+    outcome: str
+    variables: list[CausalVariable] = Field(default_factory=list)
+    edges: list[VarEdge] = Field(default_factory=list)
+
+    @field_validator("treatment", "outcome")
+    @classmethod
+    def _slug_ends(cls, v: str) -> str:
+        return slugify(v)
 
 
 def parse_model(model_cls: type[BaseModel], raw) -> Optional[BaseModel]:
