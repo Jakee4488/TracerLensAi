@@ -344,6 +344,8 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         _persist_if_signed_in(user, req, mock_text, 10, attachment_names)
         mock_graph = None
         mock_steps = []
+        mock_estimand = None
+        mock_effect = None
         if req.causal_reasoning:
             # Canned graph so the UI panel/diagram is developable offline.
             mock_steps = [
@@ -364,6 +366,26 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
                 "critical_path": ["inputs", "analysis", "outcome"],
                 "version": 1,
             }
+            # Canned identification/effect so the estimand card is developable
+            # offline too (shapes mirror IdentificationResult/EffectEstimate).
+            mock_estimand = {
+                "treatment": "price", "outcome": "demand",
+                "identifiable": True, "estimand_type": "backdoor",
+                "adjustment_set": ["season", "income"], "instruments": [],
+                "estimand_expr": "E[demand | do(price)]; adjust for: income, season",
+                "note": "",
+            }
+            mock_effect = {
+                "method": "backdoor.linear_regression",
+                "point": -1.42, "ci_low": -1.61, "ci_high": -1.23, "n_obs": 120,
+                "refutations": [
+                    {"method": "random_common_cause", "original_effect": -1.42,
+                     "new_effect": -1.40, "passed": True, "p_value": 0.86},
+                    {"method": "placebo_treatment_refuter", "original_effect": -1.42,
+                     "new_effect": 0.03, "passed": True, "p_value": 0.61},
+                ],
+                "note": "",
+            }
         return {
             "status": "success",
             "response": mock_text,
@@ -371,6 +393,9 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
             "causal_reasoning_steps": mock_steps,
             "causal_graph": mock_graph,
             "causal_status": {"phase": "complete"} if req.causal_reasoning else None,
+            "causal_estimand": mock_estimand,
+            "causal_effect": mock_effect,
+            "causal_counterfactual": None,
         }
 
     # Derive the streaming endpoint from the base query URL
@@ -470,6 +495,9 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         causal_steps = causal_state.get("causal_steps") or []
         causal_graph = causal_state.get("causal_graph")
         causal_status = causal_state.get("causal_status")
+        causal_estimand = causal_state.get("causal_estimand")
+        causal_effect = causal_state.get("causal_effect")
+        causal_counterfactual = causal_state.get("causal_counterfactual")
         if req.causal_reasoning and not causal_state:
             # Fallback transport (agent ran with CAUSAL_TEXT_FALLBACK=1).
             payload_json, response_text = _extract_causal_fallback(response_text)
@@ -478,6 +506,9 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
                 causal_steps = payload_json.get("steps") or []
                 causal_graph = payload_json.get("graph")
                 causal_status = payload_json.get("status")
+                causal_estimand = payload_json.get("estimand")
+                causal_effect = payload_json.get("effect")
+                causal_counterfactual = payload_json.get("counterfactual")
 
         response_text = response_text.replace(CAUSAL_MODE_MARKER, "").strip() or "(no response)"
         _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names)
@@ -488,6 +519,9 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
             "causal_reasoning_steps": causal_steps,
             "causal_graph": causal_graph,
             "causal_status": causal_status,
+            "causal_estimand": causal_estimand,
+            "causal_effect": causal_effect,
+            "causal_counterfactual": causal_counterfactual,
         }
     except httpx.HTTPStatusError as e:
         import traceback

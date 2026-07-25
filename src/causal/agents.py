@@ -54,6 +54,9 @@ class CausalFallbackEmitter(BaseAgent):
             "steps": state.get(sk.KEY_STEPS) or [],
             "graph": state.get(sk.KEY_GRAPH),
             "status": state.get(sk.KEY_STATUS),
+            "estimand": state.get(sk.KEY_ESTIMAND),
+            "effect": state.get(sk.KEY_EFFECT),
+            "counterfactual": state.get(sk.KEY_COUNTERFACTUAL),
             "final_answer": state.get(sk.KEY_FINAL) or "",
         }
         block = f"```{sk.FENCED_BLOCK_LANG}\n{json.dumps(payload)}\n```"

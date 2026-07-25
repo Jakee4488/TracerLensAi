@@ -1,6 +1,6 @@
 # Causal Reasoning Pipeline — End-to-End Flow
 
-One turn, start to finish. **Orange** = LLM call · **green** = deterministic (0 LLM) · **diamonds** = deterministic gates. This mirrors the diagram embedded in [causal_reasoning.md](causal_reasoning.md) (§2, "End-to-end execution flow"); the raw Mermaid source is in [causal_flow.mmd](causal_flow.mmd).
+One turn, start to finish. **Orange** = LLM call · **green** = deterministic (0 LLM) · **diamonds** = deterministic gates. This mirrors the diagram embedded in [causal_reasoning.md](causal_reasoning.md) (§2, "End-to-end execution flow") — keep the two in sync when the pipeline changes.
 
 ```mermaid
 flowchart TD
@@ -20,8 +20,8 @@ flowchart TD
         IDN["identify_effect · data-free<br/>back-door / IV adjustment set"]
         IDN --> DATA{"dataset in<br/>message?"}
         DATA -->|no| WE1["write causal_estimand"]
-        DATA -->|yes| EM["estimate_effect + refute<br/>random-common-cause · placebo"]
-        EM --> WE2["write causal_estimand + causal_effect"]
+        DATA -->|yes| EM["estimate_effect + refute<br/>(+ gcm counterfactual if asked)"]
+        EM --> WE2["write causal_estimand + causal_effect<br/>(+ causal_counterfactual)"]
     end
 
     subgraph LOOP["CausalExecutorLoop · LoopAgent · ≤16 iterations"]

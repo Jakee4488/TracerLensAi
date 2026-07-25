@@ -187,8 +187,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const steps = report.causal_reasoning_steps || [];
         const graph = report.causal_graph;
         const hasGraph = !!(graph && graph.nodes && graph.nodes.length);
-        if (steps.length > 0 || hasGraph) {
-            bubble.appendChild(buildCausalPanel(steps, graph, hasGraph, report.causal_status));
+        const estimand = report.causal_estimand;
+        if (steps.length > 0 || hasGraph || estimand) {
+            bubble.appendChild(buildCausalPanel(
+                steps, graph, hasGraph, report.causal_status,
+                estimand, report.causal_effect, report.causal_counterfactual));
         }
 
         messagesInner.appendChild(msg);
@@ -196,7 +199,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return msg;
     }
 
-    function buildCausalPanel(steps, graph, hasGraph, status) {
+    function buildCausalPanel(steps, graph, hasGraph, status, estimand, effect, counterfactual) {
         const panel = el("div", "causal-panel");
         const head = el("div", "causal-head", "⚯ Causal reasoning");
         const phase = status && status.phase;
@@ -204,6 +207,10 @@ document.addEventListener("DOMContentLoaded", () => {
             head.appendChild(el("span", "phase-badge", String(phase).replace(/_/g, " ")));
         }
         panel.appendChild(head);
+
+        if (estimand) {
+            panel.appendChild(buildEstimandCard(estimand, effect, counterfactual));
+        }
 
         if (steps.length > 0) {
             const list = el("ul", "causal-steps");
@@ -248,6 +255,89 @@ document.addEventListener("DOMContentLoaded", () => {
             renderCausalGraph(container, graph);
         }
         return panel;
+    }
+
+    // ── Formal identification card (DoWhy estimand / effect) ────────────────
+    // All values originate from LLM/DoWhy output: rendered exclusively through
+    // el()/textContent (never innerHTML), so they are inert text.
+
+    function fmtNum(value, digits) {
+        const n = Number(value);
+        if (!isFinite(n)) return "?";
+        return n.toPrecision(digits || 3).replace(/\.?0+$/, "");
+    }
+
+    function buildEstimandCard(estimand, effect, counterfactual) {
+        const card = el("div", "estimand-card");
+        const head = el("div", "estimand-head", "Formal identification");
+        const type = estimand.estimand_type || "none";
+        head.appendChild(el("span",
+            "estimand-chip" + (estimand.identifiable ? "" : " warn"),
+            estimand.identifiable ? type : "not identifiable"));
+        card.appendChild(head);
+
+        const pair = el("div", "estimand-row",
+            `${estimand.treatment || "?"} → ${estimand.outcome || "?"}`);
+        card.appendChild(pair);
+
+        if (!estimand.identifiable) {
+            card.appendChild(el("div", "estimand-note",
+                estimand.note || "No valid adjustment set for the stated causal graph."));
+            return card;
+        }
+
+        const adjRow = el("div", "estimand-row");
+        adjRow.appendChild(el("span", "estimand-label", "adjust for"));
+        const adj = estimand.adjustment_set || [];
+        if (adj.length === 0) {
+            adjRow.appendChild(el("span", "adjust-pill none", "nothing (no back-door confounding)"));
+        } else {
+            adj.forEach((v) => adjRow.appendChild(el("span", "adjust-pill", String(v))));
+        }
+        card.appendChild(adjRow);
+
+        if ((estimand.instruments || []).length > 0) {
+            const ivRow = el("div", "estimand-row");
+            ivRow.appendChild(el("span", "estimand-label", "instruments"));
+            estimand.instruments.forEach((v) => ivRow.appendChild(el("span", "adjust-pill", String(v))));
+            card.appendChild(ivRow);
+        }
+
+        if (effect && effect.method) {
+            const effRow = el("div", "estimand-row effect");
+            let text = `effect ${fmtNum(effect.point)}`;
+            if (effect.ci_low != null && effect.ci_high != null) {
+                text += ` (95% CI ${fmtNum(effect.ci_low)} to ${fmtNum(effect.ci_high)})`;
+            }
+            effRow.appendChild(el("span", "effect-value", text));
+            effRow.appendChild(el("span", "estimand-note",
+                `${effect.method}${effect.n_obs ? ` · n=${effect.n_obs}` : ""}`));
+            card.appendChild(effRow);
+
+            if ((effect.refutations || []).length > 0) {
+                const refRow = el("div", "estimand-row");
+                refRow.appendChild(el("span", "estimand-label", "robustness"));
+                effect.refutations.forEach((r) => {
+                    const badge = el("span", "refute-badge " + (r.passed ? "pass" : "fail"),
+                        `${String(r.method || "").split("_")[0]} ${r.passed ? "✓" : "✗"}`);
+                    if (r.p_value != null) badge.title = `p = ${fmtNum(r.p_value, 2)}`;
+                    refRow.appendChild(badge);
+                });
+                card.appendChild(refRow);
+            }
+        }
+
+        if (counterfactual && counterfactual.delta != null) {
+            const cfRow = el("div", "estimand-row");
+            cfRow.appendChild(el("span", "estimand-label", "counterfactual"));
+            cfRow.appendChild(el("span", "effect-value",
+                `do(${counterfactual.treatment}=${fmtNum(counterfactual.intervention_value)}) vs ` +
+                `do(${counterfactual.treatment}=${fmtNum(counterfactual.baseline_value)}): ` +
+                `Δ ${counterfactual.outcome} = ${fmtNum(counterfactual.delta)}`));
+            card.appendChild(cfRow);
+        }
+
+        return card;
     }
 
     // ── Causal graph rendering (Mermaid) ────────────────────────────────────

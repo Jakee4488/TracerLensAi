@@ -11,6 +11,7 @@ from __future__ import annotations
 from src.causal import state_keys as sk
 from src.causal.models import (
     CausalStatus,
+    CounterfactualResult,
     EffectEstimate,
     ExecutionPlan,
     IdentificationResult,
@@ -31,6 +32,9 @@ def decomposer_instruction(ctx) -> str:
         "with relation (causes, enables, constrains, informs) and confidence 0-1 "
         "plus a one-line rationale.\n"
         "- 'goal' is a one-sentence restatement of what the user wants.\n"
+        "- Set is_effect_query=true ONLY when the user asks for the quantitative "
+        "effect of one variable on another (effect/impact of X on Y, treatment "
+        "effect, elasticity, 'how much would X change Y'); false otherwise.\n"
         "- Ignore control markers such as [[causal:on]] in the message.\n"
         "Return ONLY JSON matching the response schema."
     )
@@ -39,7 +43,14 @@ def decomposer_instruction(ctx) -> str:
 def estimand_spec_instruction(ctx) -> str:
     """Emit a VARIABLE-level DAG (distinct from the decomposer's task graph) so
     DoWhy can identify the treatment->outcome estimand deterministically."""
+    from src.causal.estimation import dataset_headers
+
     query = ctx.state.get(sk.KEY_QUERY) or ""
+    headers = dataset_headers(query)
+    header_line = (
+        f"- Dataset columns detected (use these EXACT ids for any variable that "
+        f"matches a column, so estimation can find them): {', '.join(headers)}.\n"
+    ) if headers else ""
     return (
         "You are a causal-inference analyst. The user asks for the effect of one variable "
         "(the TREATMENT) on another (the OUTCOME). Extract a VARIABLE-LEVEL causal DAG so a "
@@ -52,7 +63,10 @@ def estimand_spec_instruction(ctx) -> str:
         "Include confounder->treatment AND confounder->outcome edges so back-door paths are "
         "visible; do NOT invent edges you have no reason to believe.\n"
         "- 'treatment' and 'outcome' must be ids that appear in 'variables'.\n"
-        "- If a dataset is attached, use its exact column names as the variable ids.\n"
+        + header_line +
+        "- If the question is counterfactual and names concrete treatment values "
+        "('had price stayed at 10 instead of 12'), set baseline_value and "
+        "intervention_value to those numbers; otherwise leave them null.\n"
         "- Ignore control markers such as [[causal:on]].\n"
         f"User request:\n{query}\n"
         "Return ONLY JSON matching the response schema."
@@ -104,6 +118,16 @@ def _estimand_grounding(state) -> str:
         lines.append(
             "- No dataset was provided, so estimate the magnitude yourself, grounded "
             "strictly on the adjustment set above."
+        )
+
+    cf = parse_model(CounterfactualResult, state.get(sk.KEY_COUNTERFACTUAL))
+    if cf is not None:
+        lines.append(
+            f"- Counterfactual (SCM fitted on the data): under do({cf.treatment}="
+            f"{cf.intervention_value:.4g}) the average {cf.outcome} is "
+            f"{cf.intervention_outcome:.4g}, vs {cf.baseline_outcome:.4g} under "
+            f"do({cf.treatment}={cf.baseline_value:.4g}) — difference {cf.delta:+.4g}. "
+            "Treat these computed values as authoritative."
         )
     return "\n".join(lines)
 

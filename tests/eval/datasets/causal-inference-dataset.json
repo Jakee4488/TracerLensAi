@@ -1,0 +1,130 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "estimand_no_data_confounders",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] What is the effect of daily exercise on resting heart rate, controlling for age and baseline fitness?"
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Exercise lowers resting heart rate. Correct identification adjusts for the confounders age and baseline fitness (both affect exercise habits and heart rate), i.e. a back-door adjustment set {age, baseline fitness}. Typical magnitude: regular aerobic exercise lowers resting HR by roughly 5-10 bpm. The answer should name the adjustment set explicitly and must not claim a precise data-derived number, since no dataset was provided."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "ate_recovery_confounder_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: study.csv ---\nz,t,y\n0.305,-1.500,-3.055\n-1.040,-0.959,-3.388\n0.750,0.613,2.462\n0.941,1.151,4.392\n-1.951,-0.459,-3.428\n-1.302,0.012,-1.751\n0.128,-0.272,0.379\n-0.316,-0.652,-2.373\n-0.017,0.848,1.351\n-0.853,-0.703,-3.149\n0.879,-0.748,-0.372\n0.778,-0.667,-0.855\n0.066,-0.880,-1.343\n1.127,1.174,3.927\n0.468,0.423,0.812\n-0.859,0.175,-1.447\n0.369,-0.206,0.298\n-0.959,-0.417,-1.853\n0.878,1.153,4.621\n-0.050,-0.339,0.703\n-0.185,0.346,0.622\n-0.681,-1.070,-3.657\n1.223,0.370,1.509\n-0.155,-0.474,-1.047\n-0.428,-1.453,-3.955\n-0.352,0.276,-0.184\n0.532,-0.150,0.192\n0.365,0.232,0.941\n0.413,0.728,2.609\n0.431,0.705,2.135\n2.142,1.950,7.034\n-0.406,-0.342,-1.812\n-0.512,-0.731,-3.067\n-0.814,-0.568,-2.600\n0.616,-1.318,-1.738\n1.129,-0.770,1.038\n-0.114,-1.391,-2.888\n-0.840,-1.501,-3.772\n-0.824,-0.095,-1.676\n0.651,-0.515,-0.647\n0.743,0.068,0.768\n0.543,1.625,3.702\n-0.666,-0.756,-1.445\n0.232,0.877,1.691\n0.117,-0.864,-1.133\n0.219,-0.074,-0.272\n0.871,-0.427,0.919\n0.224,-0.205,0.118\n0.679,1.248,3.435\n0.068,-1.687,-3.293\n0.289,0.608,1.322\n0.631,0.617,2.403\n-1.457,-1.468,-5.350\n-0.320,-1.638,-4.368\n-0.470,-0.210,-1.765\n-0.639,-0.913,-2.698\n-0.275,0.068,0.512\n1.495,0.919,4.160\n-0.866,1.082,0.806\n0.968,0.342,2.279\n--- End of file: study.csv ---\nUsing the attached data, what is the causal effect of t on y? z is a common cause of both."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The causal effect of t on y is approximately +2.0 (data generated with true ATE 2.0). Correct analysis adjusts for the confounder z (back-door); the naive unadjusted regression overstates the effect. A good answer reports an estimate near 2 with uncertainty and names z as the adjustment."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "price_elasticity_season_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: sales.csv ---\nprice,demand,season\n9.733,85.401,0.000\n10.733,83.179,0.000\n8.939,86.908,0.000\n12.025,87.866,1.000\n9.613,87.674,0.000\n11.738,89.967,1.000\n10.802,84.183,0.000\n10.430,83.591,0.000\n13.070,85.283,1.000\n9.876,86.377,0.000\n11.443,89.098,1.000\n11.821,88.749,1.000\n10.194,82.964,0.000\n10.141,85.716,0.000\n9.132,86.756,0.000\n12.072,86.781,1.000\n12.183,87.255,1.000\n12.014,82.243,0.000\n11.501,82.800,0.000\n9.317,85.732,0.000\n9.770,85.241,0.000\n10.829,89.504,1.000\n11.527,88.861,1.000\n10.252,86.093,0.000\n12.965,83.986,1.000\n9.417,85.638,0.000\n9.477,85.961,0.000\n10.282,90.873,1.000\n11.870,87.823,1.000\n11.150,87.518,1.000\n9.576,85.963,0.000\n9.299,87.780,0.000\n9.925,83.579,0.000\n8.594,87.973,0.000\n10.826,89.432,1.000\n13.703,85.384,1.000\n8.970,85.492,0.000\n11.123,88.982,1.000\n11.470,84.096,0.000\n14.324,85.097,1.000\n9.063,88.138,0.000\n9.705,86.619,0.000\n12.273,88.029,1.000\n11.383,84.669,0.000\n9.211,86.623,0.000\n9.804,86.122,0.000\n10.622,83.771,0.000\n10.348,84.545,0.000\n9.699,84.754,0.000\n11.893,89.150,1.000\n10.900,88.472,1.000\n9.809,86.068,0.000\n9.787,85.129,0.000\n12.186,88.893,1.000\n11.556,89.417,1.000\n12.377,89.255,1.000\n12.810,87.516,1.000\n12.124,86.241,1.000\n10.281,84.511,0.000\n10.043,83.764,0.000\n--- End of file: sales.csv ---\nEstimate the effect of price on demand. Season affects both price and demand."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Adjusting for the confounder season, a unit price increase reduces demand by about 1.5 units (true slope -1.5). The unadjusted estimate is biased because summer raises both price and demand. The answer should adjust for season and report a negative effect near -1.5."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "mediator_must_not_be_adjusted",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] What is the total effect of job training on earnings? Training raises skills, and skills raise earnings; family background affects both training uptake and earnings. Should the analysis control for skills?"
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "No - skills is a MEDIATOR on the causal path training -> skills -> earnings. Controlling for it would block part of the effect and bias the total effect toward zero (overadjustment). The correct back-door adjustment set is {family background} only. Adjust for confounders, never for mediators, when estimating a total effect."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "collider_must_not_be_adjusted",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] We study whether exercise affects heart disease. Both exercise and heart disease influence hospital admission. Should we restrict the analysis to hospitalized patients or control for hospitalization?"
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "No - hospitalization is a COLLIDER (exercise -> hospitalization <- heart disease). Conditioning on it (restriction or adjustment) opens a spurious association between exercise and heart disease (collider/selection bias, Berkson's paradox). The analysis must NOT condition on hospitalization."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "counterfactual_price_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: sales.csv ---\nprice,demand,season\n9.733,85.401,0.000\n10.733,83.179,0.000\n8.939,86.908,0.000\n12.025,87.866,1.000\n9.613,87.674,0.000\n11.738,89.967,1.000\n10.802,84.183,0.000\n10.430,83.591,0.000\n13.070,85.283,1.000\n9.876,86.377,0.000\n11.443,89.098,1.000\n11.821,88.749,1.000\n10.194,82.964,0.000\n10.141,85.716,0.000\n9.132,86.756,0.000\n12.072,86.781,1.000\n12.183,87.255,1.000\n12.014,82.243,0.000\n11.501,82.800,0.000\n9.317,85.732,0.000\n9.770,85.241,0.000\n10.829,89.504,1.000\n11.527,88.861,1.000\n10.252,86.093,0.000\n12.965,83.986,1.000\n9.417,85.638,0.000\n9.477,85.961,0.000\n10.282,90.873,1.000\n11.870,87.823,1.000\n11.150,87.518,1.000\n9.576,85.963,0.000\n9.299,87.780,0.000\n9.925,83.579,0.000\n8.594,87.973,0.000\n10.826,89.432,1.000\n13.703,85.384,1.000\n8.970,85.492,0.000\n11.123,88.982,1.000\n11.470,84.096,0.000\n14.324,85.097,1.000\n9.063,88.138,0.000\n9.705,86.619,0.000\n12.273,88.029,1.000\n11.383,84.669,0.000\n9.211,86.623,0.000\n9.804,86.122,0.000\n10.622,83.771,0.000\n10.348,84.545,0.000\n9.699,84.754,0.000\n11.893,89.150,1.000\n10.900,88.472,1.000\n9.809,86.068,0.000\n9.787,85.129,0.000\n12.186,88.893,1.000\n11.556,89.417,1.000\n12.377,89.255,1.000\n12.810,87.516,1.000\n12.124,86.241,1.000\n10.281,84.511,0.000\n10.043,83.764,0.000\n--- End of file: sales.csv ---\nWhat would average demand have been if price had stayed at 10 instead of 12? Season confounds price and demand."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "With a true causal slope of -1.5, holding price at 10 rather than 12 raises average demand by about +3 units (=-1.5 x (10-12)). A good answer computes the do(price=10) vs do(price=12) contrast (adjusting for season), reports a difference near +3, and frames it as a counterfactual/interventional quantity, not a correlation."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

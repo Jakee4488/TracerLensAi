@@ -154,6 +154,9 @@ class RefutationResult(BaseModel):
     original_effect: float = 0.0
     new_effect: float = 0.0
     passed: bool = False
+    # Significance of the refuter's test when DoWhy provides it (p > 0.05 means
+    # the estimate survived); None -> the tolerance fallback decided `passed`.
+    p_value: Optional[float] = None
 
 
 class IdentificationResult(BaseModel):
@@ -193,6 +196,24 @@ class EffectEstimate(BaseModel):
         return (v or "").strip()[:300]
 
 
+class CounterfactualResult(BaseModel):
+    """Rung-3 answer computed by dowhy.gcm on a fitted SCM (data path only):
+    average outcome under do(T=intervention) vs do(T=baseline)."""
+    treatment: str = ""
+    outcome: str = ""
+    baseline_value: float = 0.0
+    intervention_value: float = 0.0
+    baseline_outcome: float = 0.0
+    intervention_outcome: float = 0.0
+    delta: float = 0.0
+    note: str = ""
+
+    @field_validator("note")
+    @classmethod
+    def _cap_note(cls, v: str) -> str:
+        return (v or "").strip()[:300]
+
+
 # ── LLM-facing schemas (kept shallow for constrained decoding) ───────────────
 
 class ComponentDraft(BaseModel):
@@ -208,6 +229,11 @@ class CausalDecomposition(BaseModel):
     goal: str
     components: list[ComponentDraft]
     edges: list[CausalEdge]
+    # Semantic gate for the estimand stage: the decomposer is already a
+    # structured call, so this flag upgrades effect-query detection from the
+    # lexical regex to the LLM's judgment at zero extra cost (OR-ed with the
+    # regex in skip_unless_effect_query).
+    is_effect_query: bool = False
 
 
 class NewStepDraft(BaseModel):
@@ -275,6 +301,11 @@ class CausalEstimand(BaseModel):
     outcome: str
     variables: list[CausalVariable] = Field(default_factory=list)
     edges: list[VarEdge] = Field(default_factory=list)
+    # Counterfactual anchors (rung 3): filled by the LLM only when the query
+    # names concrete values ("had price stayed at 10 instead of 12"); when
+    # absent, the gcm path compares treatment quartiles from the data.
+    baseline_value: Optional[float] = None
+    intervention_value: Optional[float] = None
 
     @field_validator("treatment", "outcome")
     @classmethod

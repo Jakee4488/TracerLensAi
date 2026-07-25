@@ -8,9 +8,16 @@ isn't installed.
 
 import pytest
 
-from src.causal.complexity import is_effect_query
-from src.causal.estimation import _acyclic_edges, build_causal_graph, run_identification
-from src.causal.models import CausalEstimand, CausalVariable, VarEdge
+from src.causal.complexity import is_counterfactual_query, is_effect_query
+from src.causal.estimation import (
+    _acyclic_edges,
+    _method_for,
+    build_causal_graph,
+    dataset_headers,
+    run_counterfactual,
+    run_identification,
+)
+from src.causal.models import CausalEstimand, CausalVariable, IdentificationResult, VarEdge
 
 
 def _spec(treatment, outcome, variables, edges):
@@ -83,6 +90,55 @@ def test_run_identification_rejects_same_treatment_and_outcome():
     assert not ident.identifiable
     assert ident.estimand_type == "none"
     assert effect is None
+
+
+# ── Pure: counterfactual-query gate ──────────────────────────────────────────
+
+@pytest.mark.parametrize("query", [
+    "What would demand have been had we not raised the price?",
+    "If trade winds had stayed constant, what would SST be?",
+    "Give me the counterfactual outcome for store 12.",
+    "What would sales be if we had used campaign A instead of B?",
+])
+def test_is_counterfactual_query_true(query):
+    assert is_counterfactual_query(query)
+
+
+@pytest.mark.parametrize("query", [
+    "What is the effect of price on demand?",
+    "Why is revenue down?",
+    "Forecast next quarter's sales.",
+])
+def test_is_counterfactual_query_false(query):
+    assert not is_counterfactual_query(query)
+
+
+# ── Pure: header sniffing (no pandas) ────────────────────────────────────────
+
+def test_dataset_headers_from_attachment_block():
+    msg = ("--- Attached file: data.csv ---\n"
+           "Price,Weekly Demand,season\n1,10,0\n2,9,1\n"
+           "--- End of file: data.csv ---\nWhat is the effect of price on demand?")
+    assert dataset_headers(msg) == ["price", "weekly_demand", "season"]
+
+
+def test_dataset_headers_from_fenced_block_tsv():
+    msg = "```\nprice\tdemand\n1\t10\n2\t9\n```"
+    assert dataset_headers(msg) == ["price", "demand"]
+
+
+def test_dataset_headers_none_without_table():
+    assert dataset_headers("no data here, just a question") == []
+
+
+# ── Pure: estimator method selection ─────────────────────────────────────────
+
+def test_method_for_matches_estimand_type():
+    assert _method_for(IdentificationResult(estimand_type="backdoor")) == "backdoor.linear_regression"
+    assert _method_for(IdentificationResult(estimand_type="iv", instruments=["z"])) == "iv.instrumental_variable"
+    assert _method_for(IdentificationResult(estimand_type="frontdoor")) == "frontdoor.two_stage_regression"
+    # IV identified but no instrument extracted -> fall back to backdoor.
+    assert _method_for(IdentificationResult(estimand_type="iv")) == "backdoor.linear_regression"
 
 
 # ── Pure (pandas only): dataset extraction ───────────────────────────────────
@@ -173,3 +229,56 @@ def test_estimation_recovers_known_effect_and_refutes():
     assert effect.refutations  # robustness checks ran
     for r in effect.refutations:
         assert np.isfinite(r.new_effect)
+        if r.p_value is not None:  # p-value drives the verdict when present
+            assert 0.0 <= r.p_value <= 1.0
+
+
+# ── DoWhy gcm: counterfactuals (rung 3) ──────────────────────────────────────
+
+def _linear_scm_df(np, pd, n=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    z = rng.normal(size=n)
+    t = 0.5 * z + rng.normal(size=n)
+    y = 2.0 * t + 1.5 * z + rng.normal(size=n)  # true effect of t on y is 2.0
+    return pd.DataFrame({"z": z, "t": t, "y": y})
+
+
+def test_counterfactual_matches_linear_ate():
+    pytest.importorskip("dowhy")
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+
+    spec = _spec("t", "y",
+                 [("z", "confounder"), ("t", "treatment"), ("y", "outcome")],
+                 [("z", "t"), ("z", "y"), ("t", "y")])
+    spec.baseline_value = 0.0
+    spec.intervention_value = 1.0
+    cf = run_counterfactual(spec, _linear_scm_df(np, pd))
+
+    assert cf is not None
+    assert cf.baseline_value == 0.0 and cf.intervention_value == 1.0
+    # In a linear SCM, delta under do(t: 0 -> 1) equals the ATE (2.0).
+    assert abs(cf.delta - 2.0) < 0.4
+
+
+def test_counterfactual_defaults_to_quartiles():
+    pytest.importorskip("dowhy")
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+
+    spec = _spec("t", "y",
+                 [("z", "confounder"), ("t", "treatment"), ("y", "outcome")],
+                 [("z", "t"), ("z", "y"), ("t", "y")])
+    df = _linear_scm_df(np, pd)
+    cf = run_counterfactual(spec, df)
+
+    assert cf is not None
+    assert cf.baseline_value == pytest.approx(float(df["t"].quantile(0.25)))
+    assert cf.intervention_value == pytest.approx(float(df["t"].quantile(0.75)))
+    expected = 2.0 * (cf.intervention_value - cf.baseline_value)
+    assert abs(cf.delta - expected) < 0.5
+
+
+def test_counterfactual_requires_data():
+    spec = _spec("t", "y", [("t", "treatment"), ("y", "outcome")], [("t", "y")])
+    assert run_counterfactual(spec, None) is None

@@ -28,6 +28,7 @@ import networkx as nx
 
 from src.causal.models import (
     CausalEstimand,
+    CounterfactualResult,
     EffectEstimate,
     IdentificationResult,
     RefutationResult,
@@ -57,6 +58,23 @@ def _candidate_blocks(text: str) -> list[tuple[str, str]]:
     for m in _FENCED_RE.finditer(text or ""):
         blocks.append(("", m.group("body") or ""))
     return blocks
+
+
+def dataset_headers(text: str, max_cols: int = 40) -> list[str]:
+    """Column ids of the first plausible tabular block, WITHOUT importing
+    pandas — safe to call from prompt providers (hermetic imports). Best-effort:
+    first line of the first multi-line candidate block, split on tab/comma,
+    slugified so they match the ids parse_dataset will produce."""
+    for _name, body in _candidate_blocks(text or ""):
+        body = body.strip()
+        if not body or "\n" not in body:
+            continue
+        header = body.splitlines()[0]
+        sep = "\t" if ("\t" in header and "," not in header) else ","
+        cols = [slugify(c) for c in header.split(sep) if c.strip()]
+        if len(cols) >= 2:
+            return cols[:max_cols]
+    return []
 
 
 def parse_dataset(text: str, min_rows: int = 3, min_cols: int = 2) -> "Optional[pd.DataFrame]":
@@ -184,6 +202,11 @@ def _extract_identification(estimand: CausalEstimand, identified) -> Identificat
 def _method_for(ident: IdentificationResult) -> str:
     if ident.estimand_type == "iv" and ident.instruments:
         return "iv.instrumental_variable"
+    if ident.estimand_type == "frontdoor":
+        # Matches the identified estimand instead of falling through to a
+        # backdoor method that was never identified (estimation's try/except
+        # degrades with a note if the installed dowhy lacks the method).
+        return "frontdoor.two_stage_regression"
     return "backdoor.linear_regression"
 
 
@@ -217,7 +240,11 @@ def _estimate(model, identified, ident: IdentificationResult, df) -> EffectEstim
 
 def _refute(model, identified, estimate, point: float) -> list[RefutationResult]:
     """Two standard robustness checks. A random common cause should barely move
-    the estimate; a placebo treatment should drive it to ~0."""
+    the estimate; a placebo treatment should drive it to ~0.
+
+    Verdict comes from the refuter's own significance test when DoWhy provides
+    one (p > 0.05 -> the estimate survived the refutation); the ad-hoc 15%
+    tolerance is only the fallback for refuters/versions without a p-value."""
     tol = max(0.15 * abs(point), 1e-6)
     checks = (
         ("random_common_cause", lambda new: abs(new - point) <= tol),
@@ -228,13 +255,27 @@ def _refute(model, identified, estimate, point: float) -> list[RefutationResult]
         try:
             res = model.refute_estimate(identified, estimate, method_name=method)
             new_effect = _scalar(res.new_effect)
+            p_value = _refutation_p_value(res)
+            passed = (p_value > 0.05) if p_value is not None else bool(ok(new_effect))
             out.append(RefutationResult(
                 method=method, original_effect=point,
-                new_effect=new_effect, passed=bool(ok(new_effect)),
+                new_effect=new_effect, passed=passed, p_value=p_value,
             ))
         except Exception:
             continue
     return out
+
+
+def _refutation_p_value(res) -> Optional[float]:
+    """The refuter's test p-value, defensively (dict shape varies by version)."""
+    raw = getattr(res, "refutation_result", None)
+    if isinstance(raw, dict):
+        try:
+            p = raw.get("p_value")
+            return float(p) if p is not None else None
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def run_identification(
@@ -287,6 +328,62 @@ def run_identification(
     except Exception as exc:
         effect = EffectEstimate(method="", note=f"estimation failed ({type(exc).__name__})")
     return ident, effect
+
+
+# ── Counterfactuals (rung 3, dowhy.gcm, data-only) ───────────────────────────
+
+def run_counterfactual(estimand: CausalEstimand, df) -> Optional[CounterfactualResult]:
+    """Average outcome under do(T=intervention) vs do(T=baseline) from a
+    gcm-fitted SCM. Data-only (an SCM must be fitted); anchors default to the
+    treatment's 25th/75th percentiles when the query named no values.
+
+    Returns None — never raises — when gcm is unavailable, the SCM can't be
+    fitted, or treatment/outcome aren't observed columns; the pipeline then
+    simply answers at rung 2."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    treatment, outcome = estimand.treatment, estimand.outcome
+    if not treatment or not outcome or treatment == outcome:
+        return None
+    try:
+        from dowhy import gcm
+    except Exception:
+        return None
+
+    try:
+        _gml, nodes, edges = build_causal_graph(estimand)
+        observed = [n for n in nodes if n in df.columns]
+        if treatment not in observed or outcome not in observed:
+            return None
+        obs_set = set(observed)
+        g = nx.DiGraph()
+        g.add_nodes_from(observed)
+        g.add_edges_from((s, t) for s, t in edges if s in obs_set and t in obs_set)
+
+        data = df[observed].dropna()
+        scm = gcm.StructuralCausalModel(g)
+        gcm.auto.assign_causal_mechanisms(scm, data)
+        gcm.fit(scm, data)
+
+        t0 = (estimand.baseline_value if estimand.baseline_value is not None
+              else float(data[treatment].quantile(0.25)))
+        t1 = (estimand.intervention_value if estimand.intervention_value is not None
+              else float(data[treatment].quantile(0.75)))
+
+        s0 = gcm.interventional_samples(scm, {treatment: lambda x: t0},
+                                        num_samples_to_draw=500)
+        s1 = gcm.interventional_samples(scm, {treatment: lambda x: t1},
+                                        num_samples_to_draw=500)
+        y0 = float(s0[outcome].mean())
+        y1 = float(s1[outcome].mean())
+        return CounterfactualResult(
+            treatment=treatment, outcome=outcome,
+            baseline_value=t0, intervention_value=t1,
+            baseline_outcome=y0, intervention_outcome=y1,
+            delta=y1 - y0,
+        )
+    except Exception:
+        return None
 
 
 # ── Numeric normalization (DoWhy returns scalars, numpy arrays, or nested) ────
