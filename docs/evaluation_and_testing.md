@@ -35,8 +35,10 @@ message ──▶ CausalRouterAgent
               ├─ no marker  ─▶ general_assistant        (1 LLM call, BuiltInCodeExecutor)
               │
               └─ [[causal:on]] ─▶ CausalPipeline
-                                    decompose ▶ execute-loop ▶ synthesize
+                                    [web] ▶ decompose ▶ [identify/estimate] ▶ execute-loop ▶ synthesize
 ```
+
+(The `[web]` and `[identify/estimate]` stages are skip-gated — web runs only under `[[web:on]]`, formal identification only for treatment-effect questions — so a simple causal query still runs just decompose ▶ execute-loop ▶ synthesize.)
 
 Evaluation must exercise **both** branches, and the only thing that selects the
 branch is the marker. That single fact drives the whole eval-dataset design:
@@ -111,11 +113,15 @@ Prompt: `"[[causal:on]] ... estimate the ATE of X on Y adjusting for Z ..."`
 
 ```text
 user prompt ─▶ CausalRouterAgent
-                 │  strips marker, RESETS causal_* state,
+                 │  strips markers, RESETS causal_* state,
                  │  seeds budgets + causal_query  ◀── see note below
                  ▼
+             [CausalWebSearch]      → CSV data / evidence (only under [[web:on]])
+                 ▼  (CausalWebIngestor parses it, 0 LLM)
               CausalDecomposer      → components + causal edges (structured JSON)
                  ▼  (build_graph_and_plan)
+             [CausalEstimandSpec]   → variable DAG + treatment/outcome (effect queries only)
+                 ▼  (CausalEstimator: DAG discovery + DoWhy identify/estimate, 0 LLM)
               CausalExecutorLoop    → per step: CausalStepExecutor (Python) →
                  │                    CausalStepController (verdict/impact) →
                  │                    CausalReplanner (only if a step failed)
@@ -123,9 +129,11 @@ user prompt ─▶ CausalRouterAgent
               CausalSynthesizer     → final user-facing answer
 ```
 
-The trace has **one turn but many authoring agents** (`CausalDecomposer`,
-`CausalStepExecutor` ×N, `CausalReplanner`, `CausalSynthesizer`). The last
-`CausalSynthesizer` event is the answer that gets graded.
+The trace has **one turn but many authoring agents** (optionally `CausalWebSearch`,
+then `CausalDecomposer`, optionally `CausalEstimandSpec`, `CausalStepExecutor` ×N,
+`CausalReplanner`, `CausalSynthesizer`). The last `CausalSynthesizer` event is the
+answer that gets graded. The bracketed stages are skip-gated (§1), so a plain
+causal query without data authors only decompose ▶ execute ▶ synthesize.
 
 > **Data-plumbing note (why `causal_query` exists).** The `CausalStepExecutor`
 > runs with `include_contents="none"` to bound its context — which means it does
@@ -224,6 +232,27 @@ holds five cases spanning both pathways, each with a golden `reference` answer:
 The first three run the general assistant; the last two force the causal pipeline
 via the marker. Each `reference` is a hand-verified golden answer (the ATE case's
 reference states the exact `+0.139` result and the stratum math).
+
+### 5a. The causal-inference dataset
+
+[`tests/eval/datasets/causal-inference-dataset.json`](../tests/eval/datasets/causal-inference-dataset.json)
+drives the same ground truths **end-to-end through the causal pipeline** (every
+prompt carries `[[causal:on]]`), exercising the formal-identification stage the
+basic dataset doesn't:
+
+| `eval_case_id` | Data? | Tests |
+|---|:---:|---|
+| `estimand_no_data_confounders` | — | Data-free back-door identification; must name the adjustment set and **not** invent a number |
+| `ate_recovery_confounder_csv` | CSV | ATE recovery adjusting for a confounder (true ATE ≈ +2.0) |
+| `price_elasticity_season_csv` | CSV | Negative effect with a confounder (true slope ≈ −1.5) |
+| `mediator_must_not_be_adjusted` | — | The mediator trap — must **not** adjust for a mediator |
+| `collider_must_not_be_adjusted` | — | The collider trap — must **not** condition on a collider |
+| `counterfactual_price_csv` | CSV | `do()`-contrast counterfactual (Δ ≈ +3) |
+
+Graded by the same multi-axis judge (§4b), whose `causal_correctness` axis is
+weighted highest. Run it explicitly:
+`agents-cli eval generate --dataset tests/eval/datasets/causal-inference-dataset.json`
+then `agents-cli eval grade`.
 
 > **Extending it:** copy a case, give it a unique `eval_case_id`, and add a
 > `reference`. To test the pipeline, prefix the prompt with `[[causal:on]]`.
@@ -333,6 +362,9 @@ runs on every push. It's the CI gate
 | [`test_causal_pipeline_flow.py`](../tests/test_causal_pipeline_flow.py) | Control flow | Drives the deterministic pieces (decomposer callback, controller, replan splice) against **fake contexts** exactly as the `LoopAgent` sequences them — plan derivation, success advance, failure + impact propagation, localized replan, budget exhaustion, graceful degradation. **No LLM, no ADK runtime.** |
 | [`test_causal_runtime.py`](../tests/test_causal_runtime.py) | Runtime | Runtime wiring of the pipeline. |
 | [`test_causal_engine.py`](../tests/test_causal_engine.py) | Graph ops | The deterministic `networkx` graph engine (construction, impact, subgraph). |
+| [`test_causal_estimation.py`](../tests/test_causal_estimation.py) | Identification | DoWhy identification (confounder/mediator/collider), effect recovery + refutation, `gcm` counterfactuals, dataset/header/web-output parsing, and the effect/counterfactual query gates. `importorskip("dowhy")`. |
+| [`test_causal_discovery.py`](../tests/test_causal_discovery.py) | DAG discovery | Data-driven DAG correction: a correct DAG is left untouched; a reversed edge / omitted confounder is corrected; untestable/no-data guards; never-raises. `importorskip("causallearn")`. |
+| [`test_causal_benchmark.py`](../tests/test_causal_benchmark.py) | Ground truth | Synthetic SCMs with known ATEs (confounders, mediator/collider traps, unobserved confounder → IV) across seeds. `importorskip("dowhy")`. |
 | [`test_causal_complexity.py`](../tests/test_causal_complexity.py) | Budgeting | Complexity tiering → budget sizing from query text. |
 | [`test_main.py`](../tests/test_main.py) | Proxy | The Cloud Run proxy (FastAPI `TestClient`) with a **fake Firestore** — routing, history, uploads. |
 | [`test_main_causal.py`](../tests/test_main_causal.py) | Proxy transport | The causal transport: marker detection and `state_delta` streaming through the proxy. |

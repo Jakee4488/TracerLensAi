@@ -99,10 +99,10 @@ A single FastAPI app that the browser calls. It is deliberately lightweight and 
 
 1. Resolve any `attachments` (owner-checked) and render them as context blocks.
 2. **Mock path** — if `AGENT_ENGINE_ENDPOINT` is unset, return a canned response (plus a sample 3-node causal graph when `causal_reasoning` is true) so the UI is developable offline; still persists history for signed-in users.
-3. **Real path** — derive the `:streamQuery` URL, obtain ADC credentials, build the outbound message (`{attachment context}{prompt}`, with the `[[causal:on]]` marker prepended when causal mode is on), and stream `class_method: "stream_query"` to the Agent Engine.
+3. **Real path** — derive the `:streamQuery` URL, obtain ADC credentials, build the outbound message (`{attachment context}{prompt}`, with the `[[causal:on]]` marker prepended when causal mode is on, plus `[[web:on]]` when the Web toggle is on too), and stream `class_method: "stream_query"` to the Agent Engine.
 4. For each streamed event: concatenate text parts, collect every `causal_*` key from `actions.state_delta` (camelCase tolerated), and **sum** each `usage_metadata.total_token_count` (ADK emits one per LLM call in the turn).
 5. Prefer the synthesizer's `causal_final_answer` over the raw concatenation; if causal mode produced no state (agent ran with `CAUSAL_TEXT_FALLBACK=1`), parse the fenced ` ```causal-json ` block instead.
-6. Strip the marker, persist the exchange (best-effort — never fails the response), and return `response`, `total_token_count`, `causal_reasoning_steps`, `causal_graph` (`{nodes, edges, critical_path, version}`), and `causal_status`.
+6. Strip the markers, persist the exchange (best-effort — never fails the response), and return `response`, `total_token_count`, `causal_reasoning_steps`, `causal_graph` (`{nodes, edges, critical_path, version}`), `causal_status`, and the formal-inference / discovery / web fields `causal_estimand`, `causal_effect`, `causal_counterfactual`, `causal_graph_reconcile`, and `causal_web_retrieval`.
 
 ### CORS
 
@@ -125,14 +125,18 @@ On import the module rewrites `GOOGLE_CLOUD_LOCATION=global` (injected by agents
 
 ## 5. Causal Reasoning Pathway — `src/causal/`
 
-When the UI's **Causal Reasoning** toggle is on, the agent runs a multi-agent pipeline that (1) decomposes the problem into components and directed causal relations, (2) derives a global pathway (plan) from the graph, (3) executes it step-by-step while recording a change ledger, (4) propagates impact through graph descendants when a step fails, and (5) replans **only the affected subgraph**. Full walkthrough in [Causal Reasoning](causal_reasoning.md); summary here.
+When the UI's **Causal Reasoning** toggle is on, the agent runs a multi-agent pipeline that (1) optionally fetches observational data / evidence from the web, (2) decomposes the problem into components and directed causal relations, (3) for treatment-effect questions, formally identifies the adjustment set with DoWhy — correcting the variable DAG against real data via causal discovery when a dataset is present — and estimates the effect when data is available, (4) derives a global pathway (plan) from the graph and executes it step-by-step while recording a change ledger, (5) propagates impact through graph descendants when a step fails, and (6) replans **only the affected subgraph**. Full walkthrough in [Causal Reasoning](causal_reasoning.md); summary here.
 
 ### Agent tree
 
 | Agent | Type | LLM calls | Role |
 |---|---|---|---|
-| `TracerLensAi_Agent` | `CausalRouterAgent` (custom) | 0 | Marker routing + per-turn causal state reset + complexity-sized budgets |
+| `TracerLensAi_Agent` | `CausalRouterAgent` (custom) | 0 | Marker routing + per-turn causal state reset + complexity-sized budgets; records the `[[web:on]]` flag |
+| `CausalWebSearch` | `LlmAgent` + `google_search` | ≤1 | On `[[web:on]]` only: fetches best-effort observational data (CSV) / evidence; skip-gated otherwise |
+| `CausalWebIngestor` | custom `BaseAgent` | 0 | Parses the search output into `causal_web_dataset` / `causal_web_evidence` |
 | `CausalDecomposer` | `LlmAgent` | 1 | Structured extraction (`output_schema=CausalDecomposition`); after-callback builds the DAG + plan deterministically |
+| `CausalEstimandSpec` | `LlmAgent` | ≤1 | On effect queries only: emits a variable-level DAG + treatment/outcome (`output_schema=CausalEstimand`); skip-gated otherwise |
+| `CausalEstimator` | custom `BaseAgent` | 0 | Deterministic DoWhy stage: corrects the DAG via causal-learn discovery (with data), identifies the adjustment set, and estimates/refutes + computes counterfactuals when data is present |
 | `CausalExecutorLoop` | `LoopAgent` (`max_iterations=16`) | — | Bounded execute/verify/replan loop |
 | `CausalStepExecutor` | `LlmAgent` + `BuiltInCodeExecutor` | 1/step | Executes exactly one step; ends with an `OBSERVED:` / `STEP_STATUS:` trailer |
 | `CausalStepController` | custom `BaseAgent` | 0 | Verdict parsing, change ledger, `nx.descendants` impact propagation, invalidation, replan request or escalation |
@@ -144,7 +148,7 @@ When the UI's **Causal Reasoning** toggle is on, the agent runs a multi-agent pi
 
 ### State-key contract
 
-All pipeline state lives in ADK session state under `causal_*` keys (`src/causal/state_keys.py`): `causal_graph` (UI shape), `causal_graph_full`, `causal_plan`, `causal_steps` (trace lines), `causal_ledger`, `causal_status`, `causal_current_step`, `causal_final_answer`, `causal_budgets`, plus internal handoff keys. Every write rides on an event's `actions.state_delta`, which is simultaneously the persistence write and the transport the proxy reads. The proxy duplicates only the marker and the `causal_` prefix (it doesn't ship `src/`).
+All pipeline state lives in ADK session state under `causal_*` keys (`src/causal/state_keys.py`): `causal_graph` (UI shape), `causal_graph_full`, `causal_plan`, `causal_steps` (trace lines), `causal_ledger`, `causal_status`, `causal_current_step`, `causal_final_answer`, `causal_budgets`, the formal-inference results `causal_estimand` / `causal_effect` / `causal_counterfactual`, the discovery result `causal_graph_reconcile`, the web result `causal_web_retrieval` (plus `causal_web_requested` / `causal_web_dataset` / `causal_web_evidence`), and internal handoff keys. Every write rides on an event's `actions.state_delta`, which is simultaneously the persistence write and the transport the proxy reads. The proxy duplicates only the markers (`[[causal:on]]`, `[[web:on]]`) and the `causal_` prefix (it doesn't ship `src/`).
 
 ### Environment variables
 
@@ -191,7 +195,7 @@ Grouped by concern:
 | Theme | `applyTheme` (persists to `localStorage`, re-themes Mermaid) |
 | Markdown | `renderMarkdown` (marked → **DOMPurify sanitize**, escaped fallback), `highlightCode`, `escapeHtml`, `parseJsonResponse` (tolerates non-JSON gateway errors) |
 | Messages | `addUserMessage`, `addAiMessage`, `showTyping`, `addErrorMessage`, `addGreeting`, `scrollToBottom` |
-| Causal panel | `buildCausalPanel` (phase badge, step list, graph card + legend) |
+| Causal panel | `buildCausalPanel` (phase badge, web / graph-fix badges, step list, formal-identification card via `buildEstimandCard`, graph card + legend) |
 | Causal graph | `buildMermaidFlowchart`, `renderCausalGraph`, `sanitizeGraphId`, `sanitizeGraphLabel` (LLM output is untrusted → whitelist-sanitized before Mermaid) |
 | Uploads | `handleFiles`, `uploadFile`, `chipNode`, `removeAttachment`, drag-depth overlay handlers |
 | Send flow | `sendMessage` (posts `/analyze-prompt` with toggles, model, `chat_id`, attachment ids; updates token badge) |
@@ -235,8 +239,8 @@ Run the agent server in Docker Compose and point the proxy at its streaming endp
 | File | What it covers |
 |---|---|
 | `tests/test_main.py` | Health, mock + real `/analyze-prompt`, token summing, auth (401 paths), Firestore history (via a `FakeStore`), uploads (415/413, path-traversal, ownership), attachment persistence & context injection |
-| `tests/test_main_causal.py` | Causal marker prepend, `state_delta` collection (snake/camel case), fenced-block fallback, mock-path canned graph |
-| `tests/test_causal_*.py` | The pure causal engine: agent wiring & isolation, complexity tiers, graph build/repair/plan/impact/splice, runtime verdict parsing, end-to-end pipeline flow |
+| `tests/test_main_causal.py` | Causal + web marker prepend, `state_delta` collection (snake/camel case, incl. `causal_graph_reconcile` / `causal_web_retrieval`), fenced-block fallback, mock-path canned graph/web |
+| `tests/test_causal_*.py` | The pure causal engine: agent wiring & isolation, complexity tiers, graph build/repair/plan/impact/splice, runtime verdict parsing, end-to-end pipeline flow, DoWhy identification/estimation/counterfactuals (`test_causal_estimation.py`), data-driven DAG correction (`test_causal_discovery.py`), and ground-truth ATE recovery (`test_causal_benchmark.py`) |
 | `tests/ui_tests/test_ui.py` | Playwright E2E against the mock proxy: page load, theme persistence, mock round-trip, causal graph render, upload flow, sanitization |
 
 CI (`ci.yml`) runs the pytest suite excluding `ui_tests` (they need a live browser stack and are run locally with `requirements-dev.txt`).

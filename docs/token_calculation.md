@@ -14,7 +14,7 @@ if isinstance(usage, dict):
         total_token_count += count
 ```
 
-This matters most in **causal mode**: a single turn fans out into multiple LLM calls — decompose (1) + up to `max_steps` executor calls + up to `max_replans` replanner calls + synthesize (1) — and ADK emits a `usage_metadata` block per call. Summing them yields the true per-turn total the UI shows in its token badge. The proxy returns this as `total_token_count`, the frontend adds it to the running `sessionTotalTokens`, and for signed-in users it is accumulated onto the Firestore conversation via `total_tokens` (`gcf.Increment`).
+This matters most in **causal mode**: a single turn fans out into multiple LLM calls — an optional web-search (≤1, only under `[[web:on]]`) + decompose (1) + an optional estimand-spec (≤1, effect queries only) + up to `max_steps` executor calls + up to `max_replans` replanner calls + synthesize (1) — and ADK emits a `usage_metadata` block per call. (The deterministic DoWhy / causal-discovery stages add **0** LLM calls.) Summing them yields the true per-turn total the UI shows in its token badge. The proxy returns this as `total_token_count`, the frontend adds it to the running `sessionTotalTokens`, and for signed-in users it is accumulated onto the Firestore conversation via `total_tokens` (`gcf.Increment`).
 
 > The number of executor/replanner calls — and therefore the token total — is
 > bounded by the causal budgets (`CAUSAL_MAX_STEPS`, `CAUSAL_MAX_REPLANS`) and

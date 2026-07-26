@@ -55,7 +55,7 @@ proxy/
 
 | File | Role |
 |---|---|
-| `proxy/main.py` | Endpoints: `GET /` (redirect to UI), `GET /health`, `GET /history` & `GET /history/{chat_id}` (Firestore-backed, auth required), `POST /upload` (text file attachments), `POST /analyze-prompt` (streams to the Agent Engine, collects causal `state_delta`s, sums token usage, persists to Firestore). Optional Firebase auth and CORS allow-list. |
+| `proxy/main.py` | Endpoints: `GET /` (redirect to UI), `GET /health`, `GET /history` & `GET /history/{chat_id}` (Firestore-backed, auth required), `POST /upload` (text file attachments), `POST /analyze-prompt` (prepends the `[[causal:on]]`/`[[web:on]]` markers, streams to the Agent Engine, collects every causal `state_delta` incl. `causal_estimand`/`causal_effect`/`causal_counterfactual`/`causal_graph_reconcile`/`causal_web_retrieval`, sums token usage, persists to Firestore). Optional Firebase auth and CORS allow-list. |
 | `proxy/static/index.html` | Two-panel layout (collapsible sidebar + chat area); loads `marked`, `DOMPurify`, `highlight.js`, `mermaid` from CDNs; wires the Firebase Google Sign-In bridge (`window.tracerAuth`) and the API base URL. |
 | `proxy/static/causal-agent.js` | Sends prompts, renders sanitized Markdown, draws the causal graph as a Mermaid flowchart, manages uploads (drag-drop + chips), and loads conversation history. |
 | `proxy/static/styles.css` | CSS design system: theme variables, causal panel, graph legend, composer, and responsive layout. |
@@ -104,13 +104,14 @@ src/causal/
 ├── graph_engine.py                  # [pure] DAG build/repair, plan, impact propagation, splice
 ├── runtime.py                       # [pure] verdict parsing, ready-step selection, trace lines
 ├── ledger.py                        # [pure] append-only, capped change ledger
-├── estimation.py                    # [pure] DoWhy identify/estimate/refute (lazy dowhy/pandas)
+├── estimation.py                    # [pure] DoWhy identify/estimate/refute + counterfactual + web parsing (lazy dowhy/pandas)
+├── discovery.py                     # [pure] data-driven DAG correction (causal-learn PC + LiNGAM; lazy, soft dep)
 ├── prompts.py                       # instruction providers for each LLM agent
 ├── callbacks.py                     # deterministic glue between LLM agents and the engine
 ├── controller.py                    # CausalStepController: the loop's deterministic core
-├── estimator.py                     # CausalEstimator: deterministic DoWhy stage (zero LLM)
+├── estimator.py                     # CausalEstimator: deterministic DoWhy + discovery stage (zero LLM)
 ├── router.py                        # CausalRouterAgent: marker routing + per-turn state reset
-└── agents.py                        # factories wiring the ADK pipeline together
+└── agents.py                        # factories wiring the ADK pipeline together (incl. web-search + ingest agents)
 ```
 
 | File | Role |
@@ -121,13 +122,14 @@ src/causal/
 | `graph_engine.py` | `CausalTaskGraph` over `networkx`: validate/repair a DAG, derive the critical path and plan, propagate failure impact to descendants, invalidate steps, and splice localized replans. |
 | `runtime.py` | Pure decision helpers: parse the `OBSERVED:`/`STEP_STATUS:` verdict, pick the next ready step, budget checks, and human-readable UI trace lines. |
 | `ledger.py` | Append-only change ledger (returns new lists so `state_delta` semantics hold), capped at `LEDGER_CAP`. |
-| `estimation.py` | Deterministic DoWhy wrapper: `run_identification` does back-door/IV identification (data-free) and, with a parsed dataset, estimation + refutation; `parse_dataset`/`build_causal_graph` helpers. Lazily imports `dowhy`/`pandas`; never raises. |
-| `prompts.py` | Callable instruction providers (decomposer, estimand-spec, executor, replanner, synthesizer) that read bounded state, avoiding template `KeyError`s; `_estimand_grounding` injects the identified estimand. |
-| `callbacks.py` | After/before-agent callbacks that build the graph+plan, skip agents on the happy path (incl. `skip_unless_effect_query`), and splice replans — all writes ride on `state_delta`. |
+| `estimation.py` | Deterministic DoWhy wrapper: `run_identification` does back-door/IV identification (data-free) and, with a parsed dataset, estimation + refutation; `run_counterfactual` fits a `dowhy.gcm` SCM for do-contrast queries; `acquire_dataframe`/`parse_dataset`/`parse_web_retrieval`/`build_causal_graph` helpers. Lazily imports `dowhy`/`pandas`; never raises. |
+| `discovery.py` | Data-driven correction of the LLM-asserted **variable** DAG: `reconcile_graph` runs constraint-based discovery (causal-learn PC, FisherZ) + DirectLiNGAM and conservatively reconciles them against the LLM prior, returning a `GraphReconciliation` (verdict, edits, latent confounders). Lazily imports `causallearn`; a soft dependency that degrades to a no-op (returns `None`) when absent; never raises. |
+| `prompts.py` | Callable instruction providers (web-search, decomposer, estimand-spec, executor, replanner, synthesizer) that read bounded state, avoiding template `KeyError`s; `_estimand_grounding` injects the identified estimand (and any reconciliation caution / web evidence). |
+| `callbacks.py` | After/before-agent callbacks that build the graph+plan, skip agents on the happy path (incl. `skip_unless_effect_query`, `skip_unless_web_requested`), and splice replans — all writes ride on `state_delta`. |
 | `controller.py` | `CausalStepController` (custom `BaseAgent`, zero LLM calls): parses each step's verdict, updates the ledger and graph, requests a replan or escalates, and advances the plan. |
-| `estimator.py` | `CausalEstimator` (custom `BaseAgent`, zero LLM): runs `estimation.run_identification` and writes `causal_estimand`/`causal_effect`; a silent no-op when the estimand stage was skipped. |
-| `router.py` | `CausalRouterAgent`: routes by marker to the pipeline or the general assistant, and seeds complexity-sized budgets while resetting stale causal state each turn. |
-| `agents.py` | `build_causal_pipeline()` and `build_root_agent()` factories; enforces the isolation invariant (one built-in per `LlmAgent`). |
+| `estimator.py` | `CausalEstimator` (custom `BaseAgent`, zero LLM): acquires a dataframe (attached or web), runs `discovery.reconcile_graph` (when data is present) then `estimation.run_identification`/`run_counterfactual`, and writes `causal_graph_reconcile`/`causal_estimand`/`causal_effect`/`causal_counterfactual`; a silent no-op when the estimand stage was skipped. |
+| `router.py` | `CausalRouterAgent`: routes by marker to the pipeline or the general assistant, records the `[[web:on]]` flag, and seeds complexity-sized budgets while resetting stale causal state each turn. |
+| `agents.py` | `build_causal_pipeline()` and `build_root_agent()` factories; the `CausalWebSearch`/`CausalWebIngestor` and `CausalFallbackEmitter` custom agents; enforces the isolation invariant (one built-in per `LlmAgent`). |
 
 ---
 
@@ -184,10 +186,13 @@ terraform/
 tests/
 ├── conftest.py                      # `client` TestClient fixture for the proxy app
 ├── test_main.py                     # Proxy: health, mock/real analyze-prompt, auth, history, uploads
-├── test_main_causal.py              # Proxy: causal marker + state_delta / fenced-block transport
+├── test_main_causal.py              # Proxy: causal + web marker, state_delta / fenced-block transport
 ├── test_causal_agents.py            # Causal: agent-tree wiring & isolation invariant
 ├── test_causal_complexity.py        # Causal: complexity scoring → budget tiers
 ├── test_causal_engine.py            # Causal: graph build/repair, plan, impact, splice
+├── test_causal_estimation.py        # Causal: DoWhy identify/estimate/refute, counterfactuals, web parsing
+├── test_causal_discovery.py         # Causal: data-driven DAG correction (importorskip causallearn)
+├── test_causal_benchmark.py         # Causal: ground-truth ATE recovery over synthetic SCMs
 ├── test_causal_pipeline_flow.py     # Causal: end-to-end pipeline flow over the engine
 ├── test_causal_runtime.py           # Causal: verdict parsing & decision helpers
 ├── ui_tests/
@@ -195,10 +200,11 @@ tests/
 │   └── test_ui.py                   # Browser E2E against the mock-mode proxy
 └── eval/
     ├── eval_config.yaml             # agents-cli eval config (LLM-as-judge)
-    ├── metrics.py                   # Custom response-quality metric
+    ├── metrics.py                   # Custom multi-axis causal judge
     └── datasets/
         ├── README.md
-        └── basic-dataset.json       # Eval cases
+        ├── basic-dataset.json       # Eval cases (both pathways)
+        └── causal-inference-dataset.json  # Causal-pipeline ground truths (identification, traps, counterfactual)
 ```
 
 The proxy tests use FastAPI's `TestClient` and a `FakeStore` that mimics
@@ -216,7 +222,7 @@ UI tests drive the mock-mode proxy in a real browser via Playwright and are
 | `Dockerfile` | Multi-stage build for the **ADK agent server** (`src/`); runs `uvicorn src.fast_api_app:app`. |
 | `Dockerfile.proxy` | Multi-stage build for the **Cloud Run proxy** (`proxy/`); runs `uvicorn proxy.main:app`. |
 | `docker-compose.dev.yml` | Services: `tracerlensai-app` (hot-reload agent server), `test-runner` (pytest, `--profile test`), `causal-agent-ui-test` (Playwright, `--profile ui-test`). |
-| `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, google-adk[gcp], google-agents-cli, a2a-sdk, google-cloud-logging, firebase-admin, python-multipart, networkx, pytest, flake8. |
+| `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, google-adk[gcp], google-agents-cli, a2a-sdk, google-cloud-logging, firebase-admin, python-multipart, networkx, dowhy (identification/estimation), causal-learn (DAG discovery), pytest, flake8. |
 | `requirements-dev.txt` | Playwright + pytest-playwright (dev-only; kept out of prod images). |
 | `agents-cli-manifest.yaml` | Deploy config: `agent_directory: src`, `region: europe-west2`, `deployment_target: agent_runtime`, `session_type: in_memory`. |
 | `deployment_metadata.json` | The deployed Agent Engine's `remote_agent_runtime_id`; `deploy_to_gcp.sh` reads it to point the proxy at the engine. |

@@ -2,7 +2,7 @@
 
 🌐 **[Live Application](https://tracerlensai.com/)** · ![Build](https://github.com/Jakee4488/TracerLensAi/actions/workflows/deploy.yml/badge.svg)
 
-**TracerLensAi** is a cloud-native AI chat interface built on the **Gemini Enterprise Agent Platform**. It pairs a general-purpose Gemini assistant with a deterministic **causal-reasoning pipeline** that decomposes a problem into a causal graph, plans and executes it step-by-step, propagates the impact of failures through the graph, and replans only the affected subgraph — all rendered live in the UI as a Mermaid diagram. The stack is a production-grade GCP deployment: an ADK agent on Vertex AI Agent Runtime, a lightweight FastAPI proxy on Cloud Run, Firebase Auth + Firestore for per-user history, and Firebase Hosting on a custom domain.
+**TracerLensAi** is a cloud-native AI chat interface built on the **Gemini Enterprise Agent Platform**. It pairs a general-purpose Gemini assistant with a deterministic **causal-reasoning pipeline** that decomposes a problem into a causal graph, formally identifies any treatment effect with DoWhy (correcting the graph against real data via causal discovery when a dataset is present), plans and executes it step-by-step, propagates the impact of failures through the graph, and replans only the affected subgraph — all rendered live in the UI as a Mermaid diagram. It can pull observational data or evidence from the web to ground that analysis. The stack is a production-grade GCP deployment: an ADK agent on Vertex AI Agent Runtime, a lightweight FastAPI proxy on Cloud Run, Firebase Auth + Firestore for per-user history, and Firebase Hosting on a custom domain.
 
 ---
 
@@ -10,8 +10,11 @@
 
 | Feature | Description |
 |---|---|
-| **Causal Reasoning Pipeline** | A multi-agent ADK pipeline (decompose → plan → execute → replan → synthesize) with deterministic graph engineering in Python. See [Causal Reasoning](docs/causal_reasoning.md). |
-| **Live Causal Graph** | The reasoning graph (nodes, causal edges, critical path, per-step status) streams to the browser and renders as a Mermaid diagram with a status legend. |
+| **Causal Reasoning Pipeline** | A multi-agent ADK pipeline (decompose → identify → execute → replan → synthesize) with deterministic graph engineering in Python. See [Causal Reasoning](docs/causal_reasoning.md). |
+| **Formal Identification (DoWhy)** | For treatment-effect questions, a deterministic DoWhy stage identifies the back-door/IV adjustment set from the variable DAG (0 LLM calls) and, when a dataset is present, estimates the effect, runs refutation tests, and computes counterfactuals — so the numeric answer is grounded in a real adjustment set, not the LLM's guess. |
+| **Data-Driven DAG Correction** | With a dataset available, causal discovery (causal-learn PC + DirectLiNGAM) conservatively corrects the LLM-asserted graph — reversing, dropping, or adding edges only when the data disagrees strongly and directionally — so a wrong edge changes the *answer*, not just an annotation. |
+| **Web Data & Evidence Retrieval** | An optional **Web** toggle lets the causal pipeline fetch best-effort observational data (a CSV) or supporting evidence from the web to feed identification, estimation, and DAG correction. |
+| **Live Causal Graph** | The reasoning graph (nodes, causal edges, critical path, per-step status) streams to the browser and renders as a Mermaid diagram with a status legend, an identification card, and web/graph-fix badges. |
 | **Gemini Enterprise Agent** | Built with the Agent Development Kit (ADK) and deployed to Vertex AI Agent Runtime, reachable over the reasoning-engine and A2A (Agent2Agent) contracts. |
 | **Code Execution** | Gemini can write and run Python safely inside the Agent Sandbox to compute, model, and verify results. |
 | **Google Sign-In & History** | Firebase Google auth; each signed-in user's conversations are persisted to Firestore and listed in the sidebar. |
@@ -48,12 +51,17 @@ The app is split into two backends: a **proxy gateway** (`proxy/`, on Cloud Run)
       │                                   │ (ADK Agent Runtime)   │
       │                                   │                       │
       │                                   │  Router → Causal      │
-      │                                   │  Pipeline / General   │
-      │                                   │  Assistant + sessions │
+      │                                   │  Pipeline (web →      │
+      │                                   │  decompose → DoWhy    │
+      │                                   │  identify/estimate →  │
+      │                                   │  execute → replan →   │
+      │                                   │  synthesize) /        │
+      │                                   │  General Assistant    │
+      │                                   │  + sessions           │
       └───────────────────────────────── └──────────────────────┘
 ```
 
-**Flow:** The browser sends a prompt (with an optional Firebase ID token and any uploaded attachment ids) to the proxy. The proxy authenticates the user, resolves attachments, prepends the `[[causal:on]]` marker when causal mode is on, and streams the request to the Agent Engine with Application Default Credentials. The agent's **root router** dispatches to the **causal pipeline** (when marked) or the **general assistant**. Pipeline progress rides on ADK event `state_delta`s, which the proxy collects into `causal_graph`, `causal_reasoning_steps`, and `causal_status`. The proxy sums per-call token usage, persists the exchange to Firestore for signed-in users, and returns JSON. The frontend renders the Markdown answer, highlights code, draws the causal graph, and updates the token counter.
+**Flow:** The browser sends a prompt (with an optional Firebase ID token and any uploaded attachment ids) to the proxy. The proxy authenticates the user, resolves attachments, prepends the `[[causal:on]]` marker when causal mode is on (and `[[web:on]]` when the Web toggle is on too), and streams the request to the Agent Engine with Application Default Credentials. The agent's **root router** dispatches to the **causal pipeline** (when marked) or the **general assistant**. In the pipeline, an optional web-search stage fetches data/evidence, the decomposer builds the graph, a deterministic DoWhy stage identifies (and, with data, estimates) the effect and corrects the DAG against the data, and the executor loop runs the plan. Pipeline progress rides on ADK event `state_delta`s, which the proxy collects into `causal_graph`, `causal_reasoning_steps`, `causal_status`, `causal_estimand`, `causal_effect`, `causal_counterfactual`, `causal_graph_reconcile`, and `causal_web_retrieval`. The proxy sums per-call token usage, persists the exchange to Firestore for signed-in users, and returns JSON. The frontend renders the Markdown answer, highlights code, draws the causal graph with its identification card, and updates the token counter.
 
 ---
 
@@ -159,7 +167,7 @@ See the [Deployment Guide](docs/deployment_guide.md) and [Advanced Deployment](d
 |---|---|
 | [Developer Guide](docs/developer_guide.md) | Architecture deep-dive, full API reference, and function-level docs for every source file |
 | [Repository Structure](docs/repository_structure.md) | Directory-by-directory, file-by-file breakdown |
-| [Causal Reasoning](docs/causal_reasoning.md) | How the causal pipeline decomposes, plans, executes, and replans |
+| [Causal Reasoning](docs/causal_reasoning.md) | How the causal pipeline retrieves data, decomposes, identifies/estimates (DoWhy + causal discovery), executes, and replans |
 | [Evaluation & Testing](docs/evaluation_and_testing.md) | How both chat pathways are executed under test and scored — the `pytest` suite and the `agents-cli eval` flywheel |
 | [Local Development (Vertex AI)](docs/local_development_vertex_agent.md) | Running the full stack locally against a real ADK agent |
 | [Deployment Guide](docs/deployment_guide.md) | Step-by-step deployment methods and infrastructure provisioning |
