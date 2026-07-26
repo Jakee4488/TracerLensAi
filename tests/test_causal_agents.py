@@ -13,7 +13,12 @@ from google.adk.code_executors import BuiltInCodeExecutor
 from src.causal import state_keys as sk
 from src.causal.agents import build_causal_pipeline, build_root_agent
 from src.causal.models import CausalDecomposition, CausalEstimand, ReplanResult
-from src.causal.router import CausalRouterAgent, is_causal_request, strip_marker
+from src.causal.router import (
+    CausalRouterAgent,
+    is_causal_request,
+    is_web_request,
+    strip_marker,
+)
 
 
 @pytest.fixture(scope="module")
@@ -60,22 +65,43 @@ def test_pipeline_shape(root):
     pipeline = root.sub_agents[1]
     assert isinstance(pipeline, SequentialAgent)
     names = [s.name for s in pipeline.sub_agents]
-    assert names[:5] == [
-        "CausalDecomposer", "CausalEstimandSpec", "CausalEstimator",
-        "CausalExecutorLoop", "CausalSynthesizer",
+    # Web retrieval leads (skip-gated), then the usual decompose->synth spine.
+    assert names == [
+        "CausalWebSearch", "CausalWebIngestor", "CausalDecomposer",
+        "CausalEstimandSpec", "CausalEstimator", "CausalExecutorLoop",
+        "CausalSynthesizer", "CausalFallbackEmitter",
     ]
 
-    loop = pipeline.sub_agents[3]
+    loop = pipeline.sub_agents[5]
     assert isinstance(loop, LoopAgent)
     assert loop.max_iterations == sk.LOOP_MAX_ITERATIONS
     assert [s.name for s in loop.sub_agents] == [
         "CausalStepExecutor", "CausalStepController", "CausalReplanner"]
 
 
+def test_web_search_is_search_only_and_gated(root):
+    pipeline = root.sub_agents[1]
+    web_search = pipeline.sub_agents[0]
+    ingestor = pipeline.sub_agents[1]
+
+    # Search-only LlmAgent: tools ONLY (no code_executor / output_schema), so the
+    # Vertex tool-isolation invariant holds; skip-gated on the web toggle.
+    assert isinstance(web_search, LlmAgent)
+    assert bool(web_search.tools)
+    assert web_search.output_schema is None and web_search.code_executor is None
+    assert web_search.output_key == sk.KEY_WEB_SEARCH_RAW
+    assert web_search.include_contents == "none"
+    assert web_search.before_agent_callback is not None
+
+    # Deterministic ingestor: a BaseAgent, never an LlmAgent.
+    assert isinstance(ingestor, BaseAgent) and not isinstance(ingestor, LlmAgent)
+    assert not ingestor.sub_agents
+
+
 def test_estimand_stage_is_isolated_and_gated(root):
     pipeline = root.sub_agents[1]
-    estimand_spec = pipeline.sub_agents[1]
-    estimator = pipeline.sub_agents[2]
+    estimand_spec = pipeline.sub_agents[3]
+    estimator = pipeline.sub_agents[4]
 
     # Spec LLM carries output_schema ONLY (no code executor / tools) and is
     # skip-gated so it costs 0 LLM calls off the effect-estimation path.
@@ -95,8 +121,8 @@ def test_estimand_stage_is_isolated_and_gated(root):
 
 def test_decomposer_and_replanner_are_schema_only(root):
     pipeline = root.sub_agents[1]
-    decomposer = pipeline.sub_agents[0]
-    loop = pipeline.sub_agents[3]
+    decomposer = pipeline.sub_agents[2]
+    loop = pipeline.sub_agents[5]
     executor, _, replanner = loop.sub_agents
 
     assert decomposer.output_schema is CausalDecomposition
@@ -116,7 +142,7 @@ def test_decomposer_and_replanner_are_schema_only(root):
 
 
 def test_synthesizer_is_plain(root):
-    synthesizer = root.sub_agents[1].sub_agents[4]
+    synthesizer = root.sub_agents[1].sub_agents[6]
     assert synthesizer.output_key == sk.KEY_FINAL
     assert synthesizer.output_schema is None
     assert synthesizer.code_executor is None and not synthesizer.tools
@@ -167,3 +193,21 @@ def test_marker_detection_and_strip():
     assert not is_causal_request("")
     assert strip_marker(f"{sk.CAUSAL_MODE_MARKER} hello") == "hello"
     assert strip_marker("no marker") == "no marker"
+
+
+def test_web_marker_detection_and_strip():
+    both = f"{sk.CAUSAL_MODE_MARKER} {sk.WEB_MODE_MARKER} effect of x on y?"
+    assert is_web_request(both)
+    assert not is_web_request(f"{sk.CAUSAL_MODE_MARKER} no web here")
+    # Both markers are stripped, leaving the clean query.
+    assert strip_marker(both) == "effect of x on y?"
+
+
+def test_web_skip_gate():
+    from src.causal.callbacks import skip_unless_web_requested
+
+    # Off by default -> skip; on -> run.
+    assert skip_unless_web_requested(_ctx({})) is not None
+    assert skip_unless_web_requested(_ctx({sk.KEY_WEB_REQUESTED: True})) is None
+    assert skip_unless_web_requested(_ctx({
+        sk.KEY_WEB_REQUESTED: True, sk.KEY_STATUS: {"phase": "failed"}})) is not None

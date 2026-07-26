@@ -23,8 +23,12 @@ def is_causal_request(text: str) -> bool:
     return sk.CAUSAL_MODE_MARKER in (text or "")
 
 
+def is_web_request(text: str) -> bool:
+    return sk.WEB_MODE_MARKER in (text or "")
+
+
 def strip_marker(text: str) -> str:
-    return (text or "").replace(sk.CAUSAL_MODE_MARKER, "").strip()
+    return (text or "").replace(sk.CAUSAL_MODE_MARKER, "").replace(sk.WEB_MODE_MARKER, "").strip()
 
 
 def _budgets_from_env() -> dict:
@@ -93,6 +97,9 @@ class CausalRouterAgent(BaseAgent):
         budgets, tier = _budgets_for_query(query)
         reset: dict = {key: None for key in sk.ALL_KEYS}
         reset[sk.KEY_BUDGETS] = budgets
+        # Web-retrieval branch opt-in (proxy injects [[web:on]] when the toggle
+        # is on); the Search agent is skip-gated on this flag.
+        reset[sk.KEY_WEB_REQUESTED] = is_web_request(text)
         # Persist the original problem text so the step executor -- which runs
         # with include_contents="none" and therefore never sees the user
         # message -- can access the raw data it needs to compute on.

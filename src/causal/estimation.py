@@ -32,6 +32,7 @@ from src.causal.models import (
     EffectEstimate,
     IdentificationResult,
     RefutationResult,
+    WebRetrieval,
     slugify,
 )
 
@@ -98,6 +99,72 @@ def parse_dataset(text: str, min_rows: int = 3, min_cols: int = 2) -> "Optional[
             df = df.rename(columns=lambda c: slugify(str(c)))
             return df.loc[:, ~df.columns.duplicated()]
     return None
+
+
+def acquire_dataframe(text: str, web_csv: "Optional[str]" = None) -> "Optional[pd.DataFrame]":
+    """The estimator's single source of data: prefer a user-attached/pasted
+    dataset in the message, else a CSV fetched by the web-search branch. Returns
+    None when neither yields a usable table, so the pipeline runs
+    identification-only exactly as before."""
+    try:
+        df = parse_dataset(text or "")
+    except Exception:
+        df = None
+    if df is not None:
+        return df
+    if web_csv:
+        try:
+            return parse_dataset(web_csv)
+        except Exception:
+            return None
+    return None
+
+
+# ── Web-search output parsing ────────────────────────────────────────────────
+
+_EVIDENCE_RE = re.compile(r"^\s*EVIDENCE:\s*(?P<body>.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_SOURCE_LINE_RE = re.compile(r"^\s*SOURCES?:\s*(?P<body>.+?)\s*$", re.IGNORECASE | re.MULTILINE)
+_URL_RE = re.compile(r"https?://[^\s)>\]]+")
+
+
+def parse_web_retrieval(text: str) -> "tuple[WebRetrieval, Optional[str]]":
+    """Parse the CausalWebSearch agent's marker-delimited output into a
+    WebRetrieval plus the fenced CSV text (if any) to persist for the estimator.
+    Never raises: unparseable output degrades to mode='none'."""
+    text = text or ""
+    sources: list[str] = []
+    for m in _SOURCE_LINE_RE.finditer(text):
+        sources.extend(_URL_RE.findall(m.group("body")))
+    # Any bare URLs elsewhere are acceptable sources too, deduped in order.
+    for url in _URL_RE.findall(text):
+        if url not in sources:
+            sources.append(url)
+    seen: set = set()
+    sources = [s for s in sources if not (s in seen or seen.add(s))][:5]
+
+    # Priority 1: a fenced CSV block that actually parses.
+    for m in _FENCED_RE.finditer(text):
+        body = (m.group("body") or "").strip()
+        if not body:
+            continue
+        fenced = f"```csv\n{body}\n```"
+        try:
+            df = parse_dataset(fenced)
+        except Exception:
+            df = None
+        if df is not None:
+            web = WebRetrieval(mode="dataset", row_count=int(df.shape[0]),
+                               n_sources=len(sources), sources=sources)
+            return web, fenced
+
+    # Priority 2: EVIDENCE bullets.
+    evidence = [m.group("body").strip() for m in _EVIDENCE_RE.finditer(text) if m.group("body").strip()]
+    if evidence:
+        web = WebRetrieval(mode="evidence", evidence=evidence,
+                           n_sources=len(sources), sources=sources)
+        return web, None
+
+    return WebRetrieval(mode="none", n_sources=len(sources), sources=sources), None
 
 
 # ── Graph construction ───────────────────────────────────────────────────────

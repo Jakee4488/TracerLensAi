@@ -74,6 +74,23 @@ def test_no_marker_when_causal_disabled(client: TestClient, monkeypatch):
     assert captured["payload"]["input"]["message"] == "Why?"
 
 
+def test_web_marker_added_only_with_causal_and_web(client: TestClient, monkeypatch):
+    captured = {}
+    install_dummy_engine(monkeypatch, [{"content": {"parts": [{"text": "hi"}]}}], captured)
+    client.post("/analyze-prompt",
+                json={"prompt": "effect of x on y?", "causal_reasoning": True, "web_search": True})
+    message = captured["payload"]["input"]["message"]
+    assert proxy_main.CAUSAL_MODE_MARKER in message and proxy_main.WEB_MODE_MARKER in message
+
+
+def test_web_marker_absent_without_causal(client: TestClient, monkeypatch):
+    captured = {}
+    install_dummy_engine(monkeypatch, [{"content": {"parts": [{"text": "hi"}]}}], captured)
+    # Web toggle alone (no causal) does not inject the web marker.
+    client.post("/analyze-prompt", json={"prompt": "Why?", "web_search": True})
+    assert proxy_main.WEB_MODE_MARKER not in captured["payload"]["input"]["message"]
+
+
 # ── state_delta transport ─────────────────────────────────────────────────────
 
 def test_state_delta_populates_causal_fields(client: TestClient, monkeypatch):
@@ -109,6 +126,25 @@ def test_state_delta_populates_causal_fields(client: TestClient, monkeypatch):
     assert data["causal_effect"] == effect
     # Token counts are summed across the multi-agent turn.
     assert data["total_token_count"] == 175
+
+
+def test_state_delta_carries_reconcile_and_web(client: TestClient, monkeypatch):
+    reconcile = {"verdict": "corrected", "n_changes": 1,
+                 "changes": [{"kind": "reverse", "source": "y", "target": "x", "reason": "r"}],
+                 "corrected_edges": [], "latent_confounders": [], "note": ""}
+    web = {"mode": "dataset", "row_count": 42, "n_sources": 1,
+           "evidence": [], "sources": ["https://example.org"], "note": ""}
+    events = [
+        {"actions": {"state_delta": {
+            "causal_graph_reconcile": reconcile,
+            "causal_web_retrieval": web,
+            "causal_final_answer": "done"}}},
+    ]
+    install_dummy_engine(monkeypatch, events)
+    data = client.post("/analyze-prompt",
+                       json={"prompt": "Q", "causal_reasoning": True, "web_search": True}).json()
+    assert data["causal_graph_reconcile"] == reconcile
+    assert data["causal_web_retrieval"] == web
 
 
 def test_state_delta_camel_case_accepted(client: TestClient, monkeypatch):
@@ -170,7 +206,8 @@ def test_marker_stripped_from_response_text(client: TestClient, monkeypatch):
 def test_mock_path_returns_canned_graph(client: TestClient, monkeypatch):
     monkeypatch.delenv("AGENT_ENGINE_ENDPOINT", raising=False)
     data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}).json()
-    assert len(data["causal_reasoning_steps"]) == 3
+    # 3 base steps + the canned graph-fix line.
+    assert len(data["causal_reasoning_steps"]) == 4
     assert {n["id"] for n in data["causal_graph"]["nodes"]} == {"inputs", "analysis", "outcome"}
     assert data["causal_status"] == {"phase": "complete"}
     # Canned identification/effect so the estimand card develops offline.
@@ -178,6 +215,17 @@ def test_mock_path_returns_canned_graph(client: TestClient, monkeypatch):
     assert data["causal_estimand"]["adjustment_set"] == ["season", "income"]
     assert data["causal_effect"]["method"]
     assert len(data["causal_effect"]["refutations"]) == 2
+    # Canned graph-fix so the graph-fix badge develops offline; web None off.
+    assert data["causal_graph_reconcile"]["verdict"] == "corrected"
+    assert data["causal_web_retrieval"] is None
+
+
+def test_mock_path_web_on_returns_dataset(client: TestClient, monkeypatch):
+    monkeypatch.delenv("AGENT_ENGINE_ENDPOINT", raising=False)
+    data = client.post("/analyze-prompt",
+                       json={"prompt": "Q", "causal_reasoning": True, "web_search": True}).json()
+    assert data["causal_web_retrieval"]["mode"] == "dataset"
+    assert any(s.startswith("[web]") for s in data["causal_reasoning_steps"])
 
 
 def test_mock_path_no_graph_when_disabled(client: TestClient, monkeypatch):
@@ -187,6 +235,8 @@ def test_mock_path_no_graph_when_disabled(client: TestClient, monkeypatch):
     assert data["causal_graph"] is None
     assert data["causal_estimand"] is None
     assert data["causal_effect"] is None
+    assert data["causal_graph_reconcile"] is None
+    assert data["causal_web_retrieval"] is None
 
 
 # ── Fallback extractor unit tests ─────────────────────────────────────────────

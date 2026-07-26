@@ -15,7 +15,8 @@ from typing import AsyncGenerator
 
 from google.adk.agents import BaseAgent, LlmAgent, LoopAgent, SequentialAgent
 from google.adk.code_executors import BuiltInCodeExecutor
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
+from google.adk.tools import google_search
 from google.genai import types
 
 from src.causal import prompts
@@ -26,16 +27,49 @@ from src.causal.callbacks import (
     skip_if_no_ready_step,
     skip_unless_effect_query,
     skip_unless_replan_requested,
+    skip_unless_web_requested,
     splice_replan,
 )
 from src.causal.controller import CausalStepController
+from src.causal.estimation import parse_web_retrieval
 from src.causal.estimator import CausalEstimator
 from src.causal.models import CausalDecomposition, CausalEstimand, ReplanResult
 from src.causal.router import CausalRouterAgent
+from src.causal.runtime import summarize_web_line
 
 MODEL = "gemini-2.5-flash"
 
 _DETERMINISTIC = types.GenerateContentConfig(temperature=0)
+
+
+class CausalWebIngestor(BaseAgent):
+    """Deterministic parser (0 LLM) for the CausalWebSearch output: extracts a
+    fetched CSV or evidence bullets into state so downstream stages can use them.
+    No-op unless the web toggle was on. Never raises."""
+
+    def __init__(self, name: str = "CausalWebIngestor", **kwargs):
+        super().__init__(name=name, description="Parses web-search output into data/evidence.", **kwargs)
+
+    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+        state = ctx.session.state
+        if not state.get(sk.KEY_WEB_REQUESTED):
+            return
+        web, csv_text = parse_web_retrieval(state.get(sk.KEY_WEB_SEARCH_RAW) or "")
+        trace = list(state.get(sk.KEY_STEPS) or [])
+        trace.append(summarize_web_line(web))
+        delta = {
+            sk.KEY_WEB_DATASET: csv_text,
+            sk.KEY_WEB_EVIDENCE: web.evidence,
+            sk.KEY_WEB_SOURCES: web.sources,
+            sk.KEY_WEB_RETRIEVAL: web.model_dump(mode="json"),
+            sk.KEY_STEPS: trace,
+        }
+        yield Event(
+            author=self.name,
+            invocation_id=ctx.invocation_id,
+            branch=getattr(ctx, "branch", None),
+            actions=EventActions(state_delta=delta),
+        )
 
 
 class CausalFallbackEmitter(BaseAgent):
@@ -57,6 +91,8 @@ class CausalFallbackEmitter(BaseAgent):
             "estimand": state.get(sk.KEY_ESTIMAND),
             "effect": state.get(sk.KEY_EFFECT),
             "counterfactual": state.get(sk.KEY_COUNTERFACTUAL),
+            "graph_reconcile": state.get(sk.KEY_GRAPH_RECONCILE),
+            "web_retrieval": state.get(sk.KEY_WEB_RETRIEVAL),
             "final_answer": state.get(sk.KEY_FINAL) or "",
         }
         block = f"```{sk.FENCED_BLOCK_LANG}\n{json.dumps(payload)}\n```"
@@ -69,7 +105,23 @@ class CausalFallbackEmitter(BaseAgent):
 
 
 def build_causal_pipeline() -> SequentialAgent:
-    """Decomposer -> bounded executor loop -> synthesizer (-> fallback)."""
+    """[web search] -> decomposer -> bounded executor loop -> synthesizer (-> fallback)."""
+    # Search-only LlmAgent: carries ONLY tools=[google_search] (no code_executor
+    # / output_schema), keeping the Vertex tool-isolation invariant. Skip-gated:
+    # 0 LLM calls unless the 'Add observation data from the web' toggle is on.
+    web_search = LlmAgent(
+        name="CausalWebSearch",
+        model=MODEL,
+        description="Fetches best-effort observational data / evidence from the web.",
+        instruction=prompts.web_search_instruction,
+        tools=[google_search],
+        include_contents="none",
+        output_key=sk.KEY_WEB_SEARCH_RAW,
+        before_agent_callback=skip_unless_web_requested,
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
+    )
+
     decomposer = LlmAgent(
         name="CausalDecomposer",
         model=MODEL,
@@ -151,8 +203,8 @@ def build_causal_pipeline() -> SequentialAgent:
         name="CausalPipeline",
         description="Causal reasoning pathway: decompose, identify, execute, replan, synthesize.",
         sub_agents=[
-            decomposer, estimand_spec, CausalEstimator(), loop, synthesizer,
-            CausalFallbackEmitter(),
+            web_search, CausalWebIngestor(), decomposer, estimand_spec,
+            CausalEstimator(), loop, synthesizer, CausalFallbackEmitter(),
         ],
     )
 

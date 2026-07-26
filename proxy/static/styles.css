@@ -899,6 +899,56 @@ html[data-theme="light"] .token-badge {
     border: 1px solid rgba(248, 113, 113, 0.35);
 }
 
+/* Data-driven graph correction (causal discovery) verdict, in the estimand
+   card head. Mirrors .refute-badge sizing. */
+.graphfix-badge,
+.web-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 1px 8px;
+    border-radius: 999px;
+    cursor: default;
+}
+
+.graphfix-badge.consistent {
+    color: var(--ok);
+    background: rgba(52, 211, 153, 0.12);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+}
+
+.graphfix-badge.corrected {
+    color: var(--warn);
+    background: rgba(251, 191, 36, 0.12);
+    border: 1px solid rgba(251, 191, 36, 0.4);
+}
+
+.graphfix-badge.untestable {
+    color: var(--text-3);
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.32);
+}
+
+/* Web-retrieval status badge in the causal-panel head. */
+.web-badge.dataset {
+    color: var(--cyan);
+    background: rgba(34, 211, 238, 0.12);
+    border: 1px solid rgba(34, 211, 238, 0.35);
+}
+
+.web-badge.evidence {
+    color: var(--violet);
+    background: rgba(139, 92, 246, 0.14);
+    border: 1px solid rgba(139, 92, 246, 0.4);
+}
+
+.web-badge.none {
+    color: var(--text-3);
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.32);
+}
+
 .causal-steps {
     margin: 0 0 12px;
     padding: 0;

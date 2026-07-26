@@ -16,10 +16,12 @@ from src.causal.models import (
     CounterfactualResult,
     EffectEstimate,
     ExecutionPlan,
+    GraphReconciliation,
     IdentificationResult,
     PlanStep,
     ReplanEvent,
     Verdict,
+    WebRetrieval,
 )
 from src.causal.state_keys import OBSERVED_RE, STEP_STATUS_RE
 
@@ -137,6 +139,37 @@ def summarize_effect_line(effect: EffectEstimate) -> str:
         )
         line += f"; robustness {checks}"
     return line[:200]
+
+
+def _plural(n: int) -> str:
+    return "" if n == 1 else "s"
+
+
+def summarize_web_line(web: WebRetrieval) -> str:
+    """One-line record of what the web-search branch fetched."""
+    if web.mode == "dataset":
+        return (f"[web] fetched {web.row_count}-row observational dataset "
+                f"({web.n_sources} source{_plural(web.n_sources)})")[:200]
+    if web.mode == "evidence":
+        return (f"[web] no dataset found; grounded the DAG with {len(web.evidence)} "
+                f"evidence snippet{_plural(len(web.evidence))} "
+                f"({web.n_sources} source{_plural(web.n_sources)})")[:200]
+    return "[web] search returned no usable data"
+
+
+def summarize_reconcile_line(recon: GraphReconciliation) -> str:
+    """One-line record of the data-driven DAG correction (causal discovery)."""
+    if recon.verdict == "corrected":
+        ex = "; ".join(f"{c.kind} {c.source}->{c.target}" for c in recon.changes[:2])
+        line = f"[graph-fix] data corrected the DAG: {recon.n_changes} edit{_plural(recon.n_changes)}"
+        if ex:
+            line += f" — e.g. {ex}"
+        if recon.latent_confounders:
+            line += f"; suspected latent confounding: {', '.join(recon.latent_confounders[:2])}"
+        return line[:200]
+    if recon.verdict == "consistent":
+        return "[graph-fix] data is consistent with the stated DAG (no edits)"
+    return f"[graph-fix] DAG could not be tested against data ({recon.note or 'too dense / too few rows'})"[:200]
 
 
 def summarize_counterfactual_line(cf: CounterfactualResult) -> str:

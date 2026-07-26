@@ -188,10 +188,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const graph = report.causal_graph;
         const hasGraph = !!(graph && graph.nodes && graph.nodes.length);
         const estimand = report.causal_estimand;
-        if (steps.length > 0 || hasGraph || estimand) {
+        const web = report.causal_web_retrieval;
+        if (steps.length > 0 || hasGraph || estimand || web) {
             bubble.appendChild(buildCausalPanel(
                 steps, graph, hasGraph, report.causal_status,
-                estimand, report.causal_effect, report.causal_counterfactual));
+                estimand, report.causal_effect, report.causal_counterfactual,
+                report.causal_graph_reconcile, web));
         }
 
         messagesInner.appendChild(msg);
@@ -199,17 +201,27 @@ document.addEventListener("DOMContentLoaded", () => {
         return msg;
     }
 
-    function buildCausalPanel(steps, graph, hasGraph, status, estimand, effect, counterfactual) {
+    function buildCausalPanel(steps, graph, hasGraph, status, estimand, effect, counterfactual, reconcile, web) {
         const panel = el("div", "causal-panel");
         const head = el("div", "causal-head", "⚯ Causal reasoning");
         const phase = status && status.phase;
         if (phase) {
             head.appendChild(el("span", "phase-badge", String(phase).replace(/_/g, " ")));
         }
+        if (web && web.mode) {
+            const label = web.mode === "dataset"
+                ? `web: ${web.row_count} rows`
+                : web.mode === "evidence"
+                    ? `web: ${(web.evidence || []).length} facts`
+                    : "web: no data";
+            const wb = el("span", "web-badge " + web.mode, label);
+            if ((web.sources || []).length) wb.title = web.sources.join("\n");
+            head.appendChild(wb);
+        }
         panel.appendChild(head);
 
         if (estimand) {
-            panel.appendChild(buildEstimandCard(estimand, effect, counterfactual));
+            panel.appendChild(buildEstimandCard(estimand, effect, counterfactual, reconcile));
         }
 
         if (steps.length > 0) {
@@ -267,13 +279,27 @@ document.addEventListener("DOMContentLoaded", () => {
         return n.toPrecision(digits || 3).replace(/\.?0+$/, "");
     }
 
-    function buildEstimandCard(estimand, effect, counterfactual) {
+    function buildEstimandCard(estimand, effect, counterfactual, reconcile) {
         const card = el("div", "estimand-card");
         const head = el("div", "estimand-head", "Formal identification");
         const type = estimand.estimand_type || "none";
         head.appendChild(el("span",
             "estimand-chip" + (estimand.identifiable ? "" : " warn"),
             estimand.identifiable ? type : "not identifiable"));
+        if (reconcile && reconcile.verdict) {
+            const v = reconcile.verdict;
+            const label = v === "corrected"
+                ? `graph corrected (${reconcile.n_changes})`
+                : v === "consistent" ? "data-consistent" : "untestable";
+            const badge = el("span", "graphfix-badge " + v, label);
+            const tips = [];
+            (reconcile.changes || []).forEach((c) =>
+                tips.push(`${c.kind} ${c.source}→${c.target}`));
+            if ((reconcile.latent_confounders || []).length)
+                tips.push("latent: " + reconcile.latent_confounders.join(", "));
+            if (tips.length) badge.title = tips.join("; ");
+            head.appendChild(badge);
+        }
         card.appendChild(head);
 
         const pair = el("div", "estimand-row",
