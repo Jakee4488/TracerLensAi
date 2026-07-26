@@ -132,6 +132,19 @@ def skip_unless_effect_query(callback_context) -> Optional[types.Content]:
     return _SKIP
 
 
+def skip_unless_web_requested(callback_context) -> Optional[types.Content]:
+    """CausalWebSearch before-callback: the web-retrieval LLM call is spent only
+    when the user turned the 'Add observation data from the web' toggle on
+    (router set KEY_WEB_REQUESTED). Otherwise 0 LLM calls."""
+    state = callback_context.state
+    status = parse_model(CausalStatus, state.get(sk.KEY_STATUS))
+    if status is not None and status.phase == "failed":
+        return _SKIP
+    if state.get(sk.KEY_WEB_REQUESTED):
+        return None
+    return _SKIP
+
+
 def skip_unless_replan_requested(callback_context) -> Optional[types.Content]:
     """Replanner before-callback: replanning costs 0 LLM calls on the happy path."""
     state = callback_context.state

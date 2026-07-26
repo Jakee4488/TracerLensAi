@@ -289,6 +289,7 @@ def _attachment_context(files: list) -> str:
 
 # Must match src/causal/state_keys.py (the proxy image does not ship src/).
 CAUSAL_MODE_MARKER = "[[causal:on]]"
+WEB_MODE_MARKER = "[[web:on]]"
 CAUSAL_STATE_PREFIX = "causal_"
 _CAUSAL_FENCED_RE = re.compile(r"```causal-json\s*(\{.*?\})\s*```", re.DOTALL)
 
@@ -346,6 +347,8 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         mock_steps = []
         mock_estimand = None
         mock_effect = None
+        mock_reconcile = None
+        mock_web = None
         if req.causal_reasoning:
             # Canned graph so the UI panel/diagram is developable offline.
             mock_steps = [
@@ -353,6 +356,21 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
                 "[plan] Global pathway s1 -> s2 along critical path inputs -> analysis -> outcome",
                 "[ok] s1 (analysis): Advance 'Analysis' | observed: mocked in proxy",
             ]
+            if req.web_search:
+                mock_steps.insert(0, "[web] fetched 120-row observational dataset (2 sources)")
+                mock_web = {
+                    "mode": "dataset", "row_count": 120, "n_sources": 2,
+                    "evidence": [], "sources": ["https://example.org/a", "https://example.org/b"],
+                    "note": "",
+                }
+            mock_steps.append(
+                "[graph-fix] data corrected the DAG: 1 edit — e.g. add season->price")
+            mock_reconcile = {
+                "verdict": "corrected", "n_changes": 1,
+                "changes": [{"kind": "add", "source": "season", "target": "price",
+                             "reason": "data supports this edge (missed by the stated graph)"}],
+                "corrected_edges": [], "latent_confounders": [], "note": "",
+            }
             mock_graph = {
                 "nodes": [
                     {"id": "inputs", "label": "Inputs", "kind": "input", "status": "done"},
@@ -396,6 +414,8 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
             "causal_estimand": mock_estimand,
             "causal_effect": mock_effect,
             "causal_counterfactual": None,
+            "causal_graph_reconcile": mock_reconcile,
+            "causal_web_retrieval": mock_web,
         }
 
     # Derive the streaming endpoint from the base query URL
@@ -422,7 +442,12 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
     # gets persisted.
     outbound_message = f"{_attachment_context(attachment_files)}{req.prompt}"
     if req.causal_reasoning:
-        outbound_message = f"{CAUSAL_MODE_MARKER} {outbound_message}"
+        markers = CAUSAL_MODE_MARKER
+        # Web retrieval is meaningful only inside the causal pipeline (the
+        # general path uses a code executor, which cannot mix with Search).
+        if req.web_search:
+            markers = f"{CAUSAL_MODE_MARKER} {WEB_MODE_MARKER}"
+        outbound_message = f"{markers} {outbound_message}"
 
     # ADK AdkApp only registers stream_query (no sync "query" method)
     payload = {
@@ -498,6 +523,8 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         causal_estimand = causal_state.get("causal_estimand")
         causal_effect = causal_state.get("causal_effect")
         causal_counterfactual = causal_state.get("causal_counterfactual")
+        causal_graph_reconcile = causal_state.get("causal_graph_reconcile")
+        causal_web_retrieval = causal_state.get("causal_web_retrieval")
         if req.causal_reasoning and not causal_state:
             # Fallback transport (agent ran with CAUSAL_TEXT_FALLBACK=1).
             payload_json, response_text = _extract_causal_fallback(response_text)
@@ -509,8 +536,11 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
                 causal_estimand = payload_json.get("estimand")
                 causal_effect = payload_json.get("effect")
                 causal_counterfactual = payload_json.get("counterfactual")
+                causal_graph_reconcile = payload_json.get("graph_reconcile")
+                causal_web_retrieval = payload_json.get("web_retrieval")
 
-        response_text = response_text.replace(CAUSAL_MODE_MARKER, "").strip() or "(no response)"
+        response_text = (response_text.replace(CAUSAL_MODE_MARKER, "")
+                         .replace(WEB_MODE_MARKER, "").strip() or "(no response)")
         _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names)
         return {
             "status": "success",
@@ -522,6 +552,8 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
             "causal_estimand": causal_estimand,
             "causal_effect": causal_effect,
             "causal_counterfactual": causal_counterfactual,
+            "causal_graph_reconcile": causal_graph_reconcile,
+            "causal_web_retrieval": causal_web_retrieval,
         }
     except httpx.HTTPStatusError as e:
         import traceback

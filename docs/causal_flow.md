@@ -8,17 +8,24 @@ flowchart TD
     RT -->|no| GA["general_assistant<br/>LLM + code executor"]
     GA --> OUT(["Response to user"])
 
-    RT -->|yes| RST["CausalRouterAgent · 0 LLM<br/>reset causal_* · complexity → budgets<br/>store causal_query"]
-    RST --> DEC["CausalDecomposer · LLM<br/>→ CausalDecomposition"]
+    RT -->|yes| RST["CausalRouterAgent · 0 LLM<br/>reset causal_* · complexity → budgets<br/>store causal_query · &#91;&#91;web:on&#93;&#93; flag"]
+    RST --> WQ{"web toggle on?<br/>(causal_web_requested)"}
+    WQ -->|yes| WS["CausalWebSearch · LLM · google_search<br/>fetch csv data / evidence"]
+    WS --> WIN["CausalWebIngestor · 0 LLM<br/>parse → causal_web_dataset / evidence"]
+    WQ -->|no| DEC
+    WIN --> DEC["CausalDecomposer · LLM<br/>→ CausalDecomposition"]
     DEC --> BGP["build_graph_and_plan · 0 LLM<br/>DAG build / repair · critical path · plan"]
     BGP --> DECOK{"decomposition<br/>parseable?"}
     DECOK -->|yes| EG{"is_effect_query?"}
     EG -->|yes| ESP["CausalEstimandSpec · LLM<br/>→ CausalEstimand · variable-level DAG"]
 
-    subgraph ESTG["CausalEstimator · 0 LLM · DoWhy"]
+    subgraph ESTG["CausalEstimator · 0 LLM · DoWhy + causal-learn"]
         direction TB
-        IDN["identify_effect · data-free<br/>back-door / IV adjustment set"]
-        IDN --> DATA{"dataset in<br/>message?"}
+        ACQ{"dataset available?<br/>(attached or web)"}
+        ACQ -->|no| IDN["identify_effect · data-free<br/>back-door / IV adjustment set"]
+        ACQ -->|yes| RCN["reconcile_graph · causal-learn<br/>PC + LiNGAM · correct the DAG<br/>write causal_graph_reconcile"]
+        RCN --> IDN
+        IDN --> DATA{"dataset<br/>present?"}
         DATA -->|no| WE1["write causal_estimand"]
         DATA -->|yes| EM["estimate_effect + refute<br/>(+ gcm counterfactual if asked)"]
         EM --> WE2["write causal_estimand + causal_effect<br/>(+ causal_counterfactual)"]
@@ -42,7 +49,7 @@ flowchart TD
         RPB -->|no| EXIT
     end
 
-    ESP --> IDN
+    ESP --> ACQ
     EG -->|no| RDY
     WE1 --> RDY
     WE2 --> RDY
@@ -56,6 +63,6 @@ flowchart TD
 
     classDef llm fill:#fde3c4,stroke:#e08a2e,color:#1a1a1a;
     classDef det fill:#d6ebd4,stroke:#4e9a4e,color:#1a1a1a;
-    class GA,DEC,ESP,EXE,RPL,SYN llm;
-    class RST,BGP,IDN,EM,WE1,WE2,CTL,PROP,SPL,FB det;
+    class GA,DEC,ESP,EXE,RPL,SYN,WS llm;
+    class RST,BGP,IDN,EM,WE1,WE2,CTL,PROP,SPL,FB,WIN,RCN det;
 ```

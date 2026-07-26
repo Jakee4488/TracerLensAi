@@ -313,6 +313,63 @@ class CausalEstimand(BaseModel):
         return slugify(v)
 
 
+class GraphChange(BaseModel):
+    """One edit causal discovery made to the LLM-asserted variable DAG."""
+    kind: Literal["reverse", "remove", "add"]
+    source: str
+    target: str
+    reason: str = ""
+
+    @field_validator("source", "target")
+    @classmethod
+    def _slug_ends(cls, v: str) -> str:
+        return slugify(v)
+
+    @field_validator("reason")
+    @classmethod
+    def _cap_reason(cls, v: str) -> str:
+        return (v or "").strip()[:160]
+
+
+class GraphReconciliation(BaseModel):
+    """Outcome of testing/correcting the LLM's variable DAG against data
+    (causal-learn, conservative auto-correct). ``corrected_edges`` is the edge
+    list DoWhy then identifies on — identical to the LLM edges when nothing was
+    changed. Produced only when a dataset is available; never blocks."""
+    verdict: Literal["corrected", "consistent", "untestable"] = "untestable"
+    n_changes: int = 0
+    changes: list[GraphChange] = Field(default_factory=list)
+    corrected_edges: list[VarEdge] = Field(default_factory=list)
+    latent_confounders: list[str] = Field(default_factory=list)
+    note: str = ""
+
+    @field_validator("note")
+    @classmethod
+    def _cap_note(cls, v: str) -> str:
+        return (v or "").strip()[:300]
+
+
+class WebRetrieval(BaseModel):
+    """What the web-search branch produced for the query: a small observational
+    dataset, textual evidence to ground the DAG, or nothing."""
+    mode: Literal["dataset", "evidence", "none"] = "none"
+    row_count: int = 0
+    n_sources: int = 0
+    evidence: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
+    note: str = ""
+
+    @field_validator("evidence", "sources")
+    @classmethod
+    def _cap_list(cls, v: list) -> list:
+        return [str(x).strip()[:200] for x in (v or [])][:5]
+
+    @field_validator("note")
+    @classmethod
+    def _cap_note(cls, v: str) -> str:
+        return (v or "").strip()[:300]
+
+
 def parse_model(model_cls: type[BaseModel], raw) -> Optional[BaseModel]:
     """Defensively parse an LLM/state payload that may be a dict, JSON string,
     or model instance (ADK's output_key value shape varies across versions)."""

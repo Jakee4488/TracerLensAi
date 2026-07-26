@@ -1,15 +1,46 @@
 """Unit tests for the pure runtime helpers (verdicts, scheduling, budgets)."""
 
-from src.causal.models import CausalStatus, ExecutionPlan, PlanStep, ReplanEvent
+from src.causal.models import (
+    CausalStatus,
+    ExecutionPlan,
+    GraphChange,
+    GraphReconciliation,
+    PlanStep,
+    ReplanEvent,
+    WebRetrieval,
+)
 from src.causal.runtime import (
     budgets_exhausted,
     next_ready_step,
     parse_step_verdict,
     plan_complete,
     replan_budget_left,
+    summarize_reconcile_line,
     summarize_replan_line,
     summarize_step_line,
+    summarize_web_line,
 )
+
+
+# ── Web + graph-fix trace lines ───────────────────────────────────────────────
+
+def test_summarize_web_line_variants():
+    assert "120-row" in summarize_web_line(WebRetrieval(mode="dataset", row_count=120, n_sources=2))
+    assert "no dataset" in summarize_web_line(
+        WebRetrieval(mode="evidence", evidence=["a", "b"], n_sources=1))
+    assert summarize_web_line(WebRetrieval(mode="none")).startswith("[web]")
+
+
+def test_summarize_reconcile_line_variants():
+    corrected = GraphReconciliation(
+        verdict="corrected", n_changes=1,
+        changes=[GraphChange(kind="reverse", source="y", target="x")],
+        latent_confounders=["u<->v"])
+    line = summarize_reconcile_line(corrected)
+    assert line.startswith("[graph-fix]") and "reverse y->x" in line and "latent" in line
+    assert "consistent" in summarize_reconcile_line(GraphReconciliation(verdict="consistent"))
+    assert "could not be tested" in summarize_reconcile_line(
+        GraphReconciliation(verdict="untestable"))
 
 
 def make_plan():

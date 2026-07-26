@@ -20,13 +20,30 @@ from google.adk.events import Event, EventActions
 
 from src.causal import state_keys as sk
 from src.causal.complexity import is_counterfactual_query
-from src.causal.estimation import parse_dataset, run_counterfactual, run_identification
-from src.causal.models import CausalEstimand, parse_model
+from src.causal.discovery import reconcile_graph
+from src.causal.estimation import acquire_dataframe, run_counterfactual, run_identification
+from src.causal.models import CausalEstimand, CausalVariable, VarEdge, parse_model
 from src.causal.runtime import (
     summarize_counterfactual_line,
     summarize_effect_line,
     summarize_estimand_line,
+    summarize_reconcile_line,
 )
+
+
+def _apply_corrected_edges(spec: CausalEstimand, edges: list[VarEdge]) -> CausalEstimand:
+    """Rebuild the estimand on the data-corrected edge set. Any edge endpoint the
+    LLM never listed (e.g. a discovered confounder present in the data) is added
+    as a variable so build_causal_graph keeps the edge and DoWhy can adjust for
+    it — identification derives roles from graph topology, not the role label."""
+    have = {v.id for v in spec.variables}
+    variables = list(spec.variables)
+    for e in edges:
+        for nid in (e.source, e.target):
+            if nid and nid not in have:
+                have.add(nid)
+                variables.append(CausalVariable(id=nid, label=nid, role="other"))
+    return spec.model_copy(update={"variables": variables, "edges": list(edges)})
 
 
 class CausalEstimator(BaseAgent):
@@ -45,10 +62,19 @@ class CausalEstimator(BaseAgent):
         if spec is None:
             return  # stage skipped (non-effect query) or spec unparseable
 
-        try:
-            df = parse_dataset(state.get(sk.KEY_QUERY) or "")
-        except Exception:
-            df = None
+        # Data comes from an attached/pasted CSV or, failing that, the CSV the
+        # web-search branch fetched.
+        df = acquire_dataframe(state.get(sk.KEY_QUERY) or "", state.get(sk.KEY_WEB_DATASET))
+
+        # Data-driven DAG correction (causal discovery): when data exists, let it
+        # conservatively correct the LLM's asserted graph before identification.
+        # Never raises -> None; a corrected graph re-points edges among observed
+        # variables so identification/estimation reflect the corrected structure.
+        recon = None
+        if df is not None:
+            recon = reconcile_graph(spec, df)
+            if recon is not None and recon.verdict == "corrected" and recon.corrected_edges:
+                spec = _apply_corrected_edges(spec, recon.corrected_edges)
 
         ident, effect = run_identification(spec, df)
 
@@ -59,6 +85,8 @@ class CausalEstimator(BaseAgent):
             counterfactual = run_counterfactual(spec, df)
 
         trace = list(state.get(sk.KEY_STEPS) or [])
+        if recon is not None:
+            trace.append(summarize_reconcile_line(recon))
         trace.append(summarize_estimand_line(ident))
         if effect is not None:
             trace.append(summarize_effect_line(effect))
@@ -70,6 +98,8 @@ class CausalEstimator(BaseAgent):
             sk.KEY_EFFECT: effect.model_dump(mode="json") if effect is not None else None,
             sk.KEY_COUNTERFACTUAL: (counterfactual.model_dump(mode="json")
                                     if counterfactual is not None else None),
+            sk.KEY_GRAPH_RECONCILE: (recon.model_dump(mode="json")
+                                     if recon is not None else None),
             sk.KEY_STEPS: trace,
         }
         yield Event(

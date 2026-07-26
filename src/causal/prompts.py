@@ -14,11 +14,49 @@ from src.causal.models import (
     CounterfactualResult,
     EffectEstimate,
     ExecutionPlan,
+    GraphReconciliation,
     IdentificationResult,
     PlanStep,
     ReplanRequest,
+    WebRetrieval,
     parse_model,
 )
+
+
+def web_search_instruction(ctx) -> str:
+    """CausalWebSearch (Search-only LlmAgent): fetch best-effort observational
+    DATA for the query, or failing that, quantitative EVIDENCE to ground the DAG.
+    Emits marker-delimited text a deterministic ingestor parses."""
+    query = ctx.state.get(sk.KEY_QUERY) or ""
+    return (
+        "You are a research assistant gathering OBSERVATIONAL DATA or quantitative "
+        "evidence to support a causal analysis of the user's question. Use web search.\n"
+        "PRIORITY 1 — data: if you can find a small table of real observational data for "
+        "the variables in the question (rows of measurements across cases/times), output it "
+        "as a fenced ```csv block whose first line is a header of snake_case column names. "
+        "Use only figures you actually found; do NOT fabricate rows.\n"
+        "PRIORITY 2 — evidence: if no dataset is available, write up to 5 lines each "
+        "beginning 'EVIDENCE:' stating a known confounder, a reported effect size, or a "
+        "mechanism relevant to the causal question.\n"
+        "Then list the URLs you used, each on a line beginning 'SOURCES:'.\n"
+        "Finish with exactly one line: 'WEB_STATUS: dataset' if you produced a csv block, "
+        "'WEB_STATUS: evidence' if you produced evidence lines, or 'WEB_STATUS: none'.\n"
+        "- Ignore control markers such as [[causal:on]] or [[web:on]].\n"
+        f"Question:\n{query}\n"
+    )
+
+
+def _web_evidence_block(state) -> str:
+    """Retrieved web evidence, injected into DAG elicitation / synthesis so the
+    LLM can account for confounders and cite sources. Empty when none."""
+    web = parse_model(WebRetrieval, state.get(sk.KEY_WEB_RETRIEVAL))
+    if web is None or web.mode != "evidence" or not web.evidence:
+        return ""
+    line = "Retrieved web evidence (account for these; cite sources): " + \
+        "; ".join(web.evidence[:5])
+    if web.sources:
+        line += " [sources: " + ", ".join(web.sources[:5]) + "]"
+    return line
 
 
 def decomposer_instruction(ctx) -> str:
@@ -51,6 +89,8 @@ def estimand_spec_instruction(ctx) -> str:
         f"- Dataset columns detected (use these EXACT ids for any variable that "
         f"matches a column, so estimation can find them): {', '.join(headers)}.\n"
     ) if headers else ""
+    evidence = _web_evidence_block(ctx.state)
+    evidence_line = (f"- {evidence}\n") if evidence else ""
     return (
         "You are a causal-inference analyst. The user asks for the effect of one variable "
         "(the TREATMENT) on another (the OUTCOME). Extract a VARIABLE-LEVEL causal DAG so a "
@@ -63,7 +103,7 @@ def estimand_spec_instruction(ctx) -> str:
         "Include confounder->treatment AND confounder->outcome edges so back-door paths are "
         "visible; do NOT invent edges you have no reason to believe.\n"
         "- 'treatment' and 'outcome' must be ids that appear in 'variables'.\n"
-        + header_line +
+        + header_line + evidence_line +
         "- If the question is counterfactual and names concrete treatment values "
         "('had price stayed at 10 instead of 12'), set baseline_value and "
         "intervention_value to those numbers; otherwise leave them null.\n"
@@ -80,8 +120,26 @@ def _estimand_grounding(state) -> str:
     ident = parse_model(IdentificationResult, state.get(sk.KEY_ESTIMAND))
     if ident is None:
         return ""
+
+    # Data-driven correction caution: prepended so it is the first thing the
+    # model reads when the attached/web data disagreed with the assumed graph.
+    prefix = ""
+    recon = parse_model(GraphReconciliation, state.get(sk.KEY_GRAPH_RECONCILE))
+    if recon is not None and recon.verdict == "corrected":
+        edits = "; ".join(f"{c.kind} {c.source}->{c.target}" for c in recon.changes[:4])
+        prefix = (
+            f"IMPORTANT — the data corrected the assumed causal graph ({edits}). "
+            "The identification below reflects the CORRECTED graph; explain the effect "
+            "with this in mind rather than the originally assumed structure. "
+        )
+        if recon.latent_confounders:
+            prefix += ("Note suspected unmeasured confounding between "
+                       f"{', '.join(recon.latent_confounders[:3])}, so treat the estimate "
+                       "as provisional. ")
+        prefix += "\n"
+
     if not ident.identifiable:
-        return (
+        return prefix + (
             f"Formal identification (DoWhy): the effect of '{ident.treatment}' on "
             f"'{ident.outcome}' is NOT identifiable from the stated causal graph "
             f"({ident.note or 'no valid adjustment set'}). Be explicit about this "
@@ -129,7 +187,11 @@ def _estimand_grounding(state) -> str:
             f"do({cf.treatment}={cf.baseline_value:.4g}) — difference {cf.delta:+.4g}. "
             "Treat these computed values as authoritative."
         )
-    return "\n".join(lines)
+
+    evidence = _web_evidence_block(state)
+    if evidence:
+        lines.append(f"- {evidence}")
+    return prefix + "\n".join(lines)
 
 
 def step_executor_instruction(ctx) -> str:

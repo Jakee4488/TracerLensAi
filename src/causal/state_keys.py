@@ -9,6 +9,7 @@ plain keys are session-scoped and persisted by VertexAiSessionService.
 """
 
 CAUSAL_MODE_MARKER = "[[causal:on]]"
+WEB_MODE_MARKER = "[[web:on]]"
 
 # Session-state keys. Everything stored under these keys must be plain JSON.
 KEY_GRAPH = "causal_graph"                       # to_ui_graph() shape for the UI
@@ -29,6 +30,14 @@ KEY_ESTIMAND_SPEC_RAW = "causal_estimand_spec_raw"  # CausalEstimand dump from t
 KEY_ESTIMAND = "causal_estimand"                 # IdentificationResult dump (UI-facing)
 KEY_EFFECT = "causal_effect"                     # EffectEstimate dump or None (data path only)
 KEY_COUNTERFACTUAL = "causal_counterfactual"     # CounterfactualResult dump or None (rung 3)
+KEY_GRAPH_RECONCILE = "causal_graph_reconcile"   # GraphReconciliation dump or None (data path)
+# Web-retrieval branch ([[web:on]]): best-effort observational data / evidence.
+KEY_WEB_REQUESTED = "causal_web_requested"       # bool: web toggle on this turn
+KEY_WEB_SEARCH_RAW = "causal_web_search_raw"     # raw CausalWebSearch LLM output text
+KEY_WEB_DATASET = "causal_web_dataset"           # fenced CSV text fetched from the web, or None
+KEY_WEB_EVIDENCE = "causal_web_evidence"         # list[str] evidence snippets
+KEY_WEB_SOURCES = "causal_web_sources"           # list[str] source URLs
+KEY_WEB_RETRIEVAL = "causal_web_retrieval"       # WebRetrieval dump (UI-facing)
 
 # All keys the router resets at the start of a causal turn.
 ALL_KEYS = (
@@ -36,6 +45,8 @@ ALL_KEYS = (
     KEY_CURRENT_STEP, KEY_STEP_OUTPUT, KEY_DECOMPOSITION_RAW,
     KEY_REPLAN_REQUEST, KEY_REPLAN_RAW, KEY_FINAL, KEY_BUDGETS, KEY_QUERY,
     KEY_ESTIMAND_SPEC_RAW, KEY_ESTIMAND, KEY_EFFECT, KEY_COUNTERFACTUAL,
+    KEY_GRAPH_RECONCILE, KEY_WEB_REQUESTED, KEY_WEB_SEARCH_RAW, KEY_WEB_DATASET,
+    KEY_WEB_EVIDENCE, KEY_WEB_SOURCES, KEY_WEB_RETRIEVAL,
 )
 
 # Budgets and caps (env-overridable where noted in agents.py/router.py).

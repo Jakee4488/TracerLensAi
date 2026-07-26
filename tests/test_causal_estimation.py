@@ -12,8 +12,10 @@ from src.causal.complexity import is_counterfactual_query, is_effect_query
 from src.causal.estimation import (
     _acyclic_edges,
     _method_for,
+    acquire_dataframe,
     build_causal_graph,
     dataset_headers,
+    parse_web_retrieval,
     run_counterfactual,
     run_identification,
 )
@@ -161,6 +163,47 @@ def test_parse_dataset_none_when_no_table():
     pytest.importorskip("pandas")
     from src.causal.estimation import parse_dataset
     assert parse_dataset("Just a plain question with no data.") is None
+
+
+# ── Pure: web-search output parsing + data acquisition ───────────────────────
+
+def test_parse_web_retrieval_dataset():
+    pytest.importorskip("pandas")
+    text = ("Here is what I found.\n```csv\nprice,demand\n1,10\n2,9\n3,7\n4,6\n```\n"
+            "SOURCES: https://example.org/data\nWEB_STATUS: dataset")
+    web, csv_text = parse_web_retrieval(text)
+    assert web.mode == "dataset" and web.row_count == 4
+    assert "https://example.org/data" in web.sources
+    assert csv_text is not None and "price,demand" in csv_text
+
+
+def test_parse_web_retrieval_evidence():
+    web, csv_text = parse_web_retrieval(
+        "EVIDENCE: income confounds price and demand\n"
+        "EVIDENCE: reported elasticity is about -1.2\n"
+        "SOURCES: https://example.org/a\nWEB_STATUS: evidence")
+    assert web.mode == "evidence" and csv_text is None
+    assert len(web.evidence) == 2
+    assert web.sources == ["https://example.org/a"]
+
+
+def test_parse_web_retrieval_none():
+    web, csv_text = parse_web_retrieval("I couldn't find anything useful.\nWEB_STATUS: none")
+    assert web.mode == "none" and csv_text is None
+
+
+def test_acquire_dataframe_prefers_attachment_then_web():
+    pytest.importorskip("pandas")
+    attached = ("--- Attached file: d.csv ---\na,b\n1,2\n3,4\n5,6\n--- End of file: d.csv ---")
+    web_csv = "```csv\na,b\n9,9\n8,8\n7,7\n```"
+    # Attachment wins when present.
+    df = acquire_dataframe(attached, web_csv)
+    assert df is not None and int(df["a"].iloc[0]) == 1
+    # Falls back to the web CSV when the message has no table.
+    df2 = acquire_dataframe("no data here", web_csv)
+    assert df2 is not None and int(df2["a"].iloc[0]) == 9
+    # None when neither yields a table.
+    assert acquire_dataframe("no data here", None) is None
 
 
 # ── DoWhy: identification correctness (data-free) ─────────────────────────────
