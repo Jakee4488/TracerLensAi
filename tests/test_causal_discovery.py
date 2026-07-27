@@ -117,6 +117,38 @@ def test_omitted_confounder_is_discovered():
     assert ident.identifiable and "z" in ident.adjustment_set
 
 
+def test_refuting_the_only_edge_is_applied_not_discarded():
+    """Regression: an empty corrected_edges means the data refuted *every*
+    asserted edge — the strongest signal discovery can give — not that nothing
+    was found. The estimator used to guard on `recon.corrected_edges`, so this
+    correction was silently dropped and identification then ran on the DAG the
+    data had just contradicted (while the UI still showed the 'remove')."""
+    pytest.importorskip("causallearn")
+    np = pytest.importorskip("numpy")
+    pd = pytest.importorskip("pandas")
+    from src.causal.estimator import _apply_corrected_edges, _should_apply_correction
+
+    # x and y independent by construction; non-Gaussian so DirectLiNGAM works.
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"x": rng.normal(size=300) ** 3, "y": rng.normal(size=300) ** 3})
+    spec = _spec("x", "y", (("x", "treatment"), ("y", "outcome")), (("x", "y"),))
+
+    recon = reconcile_graph(spec, df)
+    assert recon is not None and recon.verdict == "corrected"
+    assert [(c.kind, c.source, c.target) for c in recon.changes] == [("remove", "x", "y")]
+    assert recon.corrected_edges == []           # nothing survives — the bug's trigger
+
+    # The estimator's own decision function must admit this case. Asserting on
+    # _should_apply_correction (not a restated expression) is what makes this a
+    # regression test: reverting the guard to `recon.corrected_edges` fails here.
+    assert _should_apply_correction(recon) is True
+
+    # And applying an empty edge set is safe (no variables to materialize).
+    corrected_spec = _apply_corrected_edges(spec, recon.corrected_edges)
+    assert corrected_spec.edges == []
+    assert {v.id for v in corrected_spec.variables} == {"x", "y"}
+
+
 def test_reconcile_never_raises_on_degenerate_data():
     pytest.importorskip("causallearn")
     np = pytest.importorskip("numpy")

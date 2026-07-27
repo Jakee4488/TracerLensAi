@@ -127,6 +127,55 @@ def fake_store(monkeypatch):
 
 AUTH = {"Authorization": "Bearer fake-valid-token"}
 
+# ── Proxy dependency drift guard ─────────────────────────────────────────────
+
+def test_proxy_imports_are_covered_by_requirements():
+    """Every third-party module proxy/ imports must be in requirements-proxy.txt.
+
+    The Cloud Run image installs that slim file, not requirements.txt, so a new
+    proxy import missing from it fails at *container start* rather than in CI.
+    This catches the drift here instead.
+    """
+    import ast
+    import pathlib
+    import re
+    import sys
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+
+    # Distribution name -> the top-level module(s) it provides. Only entries
+    # whose import name differs from the requirement name need listing.
+    provides = {
+        "firebase-admin": {"firebase_admin", "google"},   # also pulls google-cloud-firestore
+        "google-auth": {"google"},
+        "python-multipart": {"multipart"},                # imported by fastapi, not by us
+    }
+    stdlib = set(sys.stdlib_module_names)
+
+    allowed = set()
+    for line in (root / "requirements-proxy.txt").read_text(encoding="utf-8").splitlines():
+        line = line.split("#")[0].strip()
+        if not line:
+            continue
+        name = re.split(r"[<>=!~\[]", line)[0].strip()
+        allowed |= provides.get(name, {name.replace("-", "_")})
+
+    imported = set()
+    for path in (root / "proxy").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported |= {a.name.split(".")[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported.add(node.module.split(".")[0])
+
+    missing = sorted(imported - stdlib - allowed - {"proxy"})
+    assert not missing, (
+        f"proxy/ imports {missing} which are absent from requirements-proxy.txt — "
+        "the Cloud Run container would fail at startup. Add them there."
+    )
+
+
 def test_health_check(client: TestClient):
     response = client.get("/health")
     assert response.status_code == 200

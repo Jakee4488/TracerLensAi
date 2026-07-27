@@ -31,6 +31,19 @@ from src.causal.runtime import (
 )
 
 
+def _should_apply_correction(recon) -> bool:
+    """Whether a reconciliation should re-point the estimand's edges.
+
+    Keyed on the *changes*, not on ``corrected_edges``: an empty corrected set
+    means the data refuted every asserted edge — the strongest signal discovery
+    can produce — not that discovery found nothing. (That case is verdict
+    "untestable", which this correctly rejects.) Guarding on ``corrected_edges``
+    silently dropped exactly the refute-everything case, so identification then
+    ran on the DAG the data had just contradicted.
+    """
+    return recon is not None and recon.verdict == "corrected" and bool(recon.changes)
+
+
 def _apply_corrected_edges(spec: CausalEstimand, edges: list[VarEdge]) -> CausalEstimand:
     """Rebuild the estimand on the data-corrected edge set. Any edge endpoint the
     LLM never listed (e.g. a discovered confounder present in the data) is added
@@ -73,7 +86,7 @@ class CausalEstimator(BaseAgent):
         recon = None
         if df is not None:
             recon = reconcile_graph(spec, df)
-            if recon is not None and recon.verdict == "corrected" and recon.corrected_edges:
+            if _should_apply_correction(recon):
                 spec = _apply_corrected_edges(spec, recon.corrected_edges)
 
         ident, effect = run_identification(spec, df)
