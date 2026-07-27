@@ -38,7 +38,9 @@ if CORS_ORIGINS:
         allow_origins=CORS_ORIGINS,
         allow_methods=["GET", "POST", "OPTIONS"],
         # Auth is a bearer header, not a cookie, so credentials stay off.
-        allow_headers=["Authorization", "Content-Type"],
+        # X-Anon-Id must be listed or the cross-origin path silently drops it
+        # and every signed-out caller falls back to the shared identity.
+        allow_headers=["Authorization", "Content-Type", "X-Anon-Id"],
         allow_credentials=False,
     )
 
@@ -81,8 +83,32 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> Optio
         "name": decoded.get("name"),
     }
 
+_ANON_ID_RE = re.compile(r"[0-9a-f-]{36}")
+
+
+def _agent_user_id(user: Optional[dict], anon_id: Optional[str]) -> str:
+    """Resolve the agent-side user_id for this caller.
+
+    Signed-in callers key on their verified Firebase uid. Signed-out callers
+    key on a browser-generated id so they get their own agent session instead
+    of sharing one: session state persists in VertexAiSessionService, so a
+    shared id leaks one visitor's conversation and causal_* state to the next.
+
+    The header is client-supplied and therefore spoofable, but it grants only a
+    guessed *agent session* — never history, which stays gated by
+    verify_id_token and the users/{uid} Firestore path. Unrecognized values
+    collapse to a single bucket rather than being trusted verbatim, so a
+    malformed or injected value can't become an arbitrary session key.
+    """
+    if user:
+        return user["uid"]
+    if anon_id and _ANON_ID_RE.fullmatch(anon_id):
+        return f"anon:{anon_id}"
+    return "anon:unknown"
+
+
 def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, token_count: int,
-                   attachments: Optional[list] = None):
+                   attachments: Optional[list] = None, causal: Optional[dict] = None):
     """Persist a user/AI message pair under users/{uid}/conversations/{chat_id}."""
     db = get_db()
     now = datetime.now(timezone.utc)
@@ -106,7 +132,13 @@ def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, to
     if attachments:
         user_msg["attachments"] = attachments
     messages.add(user_msg)
-    messages.add({"role": "ai", "content": response_text, "created_at": datetime.now(timezone.utc)})
+    ai_msg = {"role": "ai", "content": response_text, "created_at": datetime.now(timezone.utc)}
+    if causal:
+        # Stored under the same key names the UI renderer reads off the live
+        # response, so a reloaded turn replays identically (diagram, estimand
+        # card, steps) instead of degrading to plain Markdown.
+        ai_msg["causal"] = causal
+    messages.add(ai_msg)
 
 
 # ── Static Files ─────────────────────────────────────────────────────────────
@@ -126,16 +158,36 @@ def health_check():
 # ── History API ──────────────────────────────────────────────────────────────
 
 @app.get("/history")
-async def list_history(user: Optional[dict] = Depends(get_current_user)):
-    """List the signed-in user's conversations, most recent first."""
+async def list_history(
+    cursor: Optional[str] = None,
+    limit: int = 30,
+    user: Optional[dict] = Depends(get_current_user),
+):
+    """List the signed-in user's conversations, most recent first.
+
+    Pass the previous page's ``next_cursor`` (an ISO-8601 ``updated_at``) to
+    page backwards in time. ``next_cursor`` is null on the last page.
+    """
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    page_size = max(1, min(limit, 100))
     db = get_db()
     query = (
         db.collection("users").document(user["uid"]).collection("conversations")
         .order_by("updated_at", direction=gcf.Query.DESCENDING)
-        .limit(30)
     )
+    if cursor:
+        try:
+            # A '+' in the UTC offset decodes to a space in a query string, so
+            # accept the cursor whether or not the caller percent-encoded it.
+            after = datetime.fromisoformat(cursor.replace(" ", "+"))
+        except ValueError:
+            # 400 rather than silently restarting at page 1: a silent reset
+            # would make the sidebar's "load older" page forever.
+            raise HTTPException(status_code=400, detail="Malformed cursor")
+        query = query.start_after({"updated_at": after})
+    query = query.limit(page_size)
+
     conversations = []
     for doc in query.stream():
         data = doc.to_dict() or {}
@@ -146,7 +198,10 @@ async def list_history(user: Optional[dict] = Depends(get_current_user)):
             "total_tokens": data.get("total_tokens", 0),
             "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else updated_at,
         })
-    return {"conversations": conversations}
+    # A short page means we reached the end; a full one may or may not have
+    # more, so hand back a cursor and let the next call settle it.
+    next_cursor = conversations[-1]["updated_at"] if len(conversations) == page_size else None
+    return {"conversations": conversations, "next_cursor": next_cursor}
 
 @app.get("/history/{chat_id}")
 async def get_history(chat_id: str, user: Optional[dict] = Depends(get_current_user)):
@@ -162,10 +217,17 @@ async def get_history(chat_id: str, user: Optional[dict] = Depends(get_current_u
     if not snapshot.exists:
         raise HTTPException(status_code=404, detail="Conversation not found")
     conv = snapshot.to_dict() or {}
-    messages = [
-        {"role": (doc.to_dict() or {}).get("role"), "content": (doc.to_dict() or {}).get("content")}
-        for doc in conv_ref.collection("messages").order_by("created_at").stream()
-    ]
+    messages = []
+    for doc in conv_ref.collection("messages").order_by("created_at").stream():
+        data = doc.to_dict() or {}
+        message = {"role": data.get("role"), "content": data.get("content")}
+        # Both are absent on most docs: attachments only on user messages that
+        # had them, causal only on AI messages from a causal run.
+        if data.get("attachments"):
+            message["attachments"] = data["attachments"]
+        if data.get("causal"):
+            message["causal"] = data["causal"]
+        messages.append(message)
     return {
         "chat_id": chat_id,
         "title": conv.get("title"),
@@ -318,18 +380,34 @@ def _extract_causal_fallback(text: str):
         return None, cleaned
     return (payload if isinstance(payload, dict) else None), cleaned
 
+def _causal_payload(report: dict) -> Optional[dict]:
+    """Pull the causal_* fields out of a response body for persistence.
+
+    Returns None when the turn produced nothing causal, so non-causal messages
+    keep their original document shape.
+    """
+    payload = {key: value for key, value in report.items()
+               if key.startswith(CAUSAL_STATE_PREFIX) and value}
+    return payload or None
+
+
 def _persist_if_signed_in(user: Optional[dict], req: "PromptRequest", response_text: str, token_count: int,
-                          attachment_names: Optional[list] = None):
+                          attachment_names: Optional[list] = None, causal: Optional[dict] = None):
     """Best-effort history write; never fails the chat response."""
     if not user or not req.chat_id:
         return
     try:
-        _save_exchange(user, req.chat_id, req.prompt, response_text, token_count, attachment_names)
+        _save_exchange(user, req.chat_id, req.prompt, response_text, token_count,
+                       attachment_names, causal)
     except Exception as e:
         print(f"WARNING: failed to persist history for uid={user['uid']}: {e}")
 
 @app.post("/analyze-prompt")
-async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_current_user)):
+async def analyze_prompt(
+    req: PromptRequest,
+    user: Optional[dict] = Depends(get_current_user),
+    x_anon_id: Optional[str] = Header(None),
+):
     """Proxy the request to the Vertex AI Agent Engine (streaming)."""
 
     agent_engine_base = os.getenv("AGENT_ENGINE_ENDPOINT")
@@ -342,7 +420,6 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         if attachment_names:
             # Deterministic acknowledgment so UI/E2E tests can verify uploads.
             mock_text += f"\n\nAttached files ({len(attachment_names)}): {', '.join(attachment_names)}"
-        _persist_if_signed_in(user, req, mock_text, 10, attachment_names)
         mock_graph = None
         mock_steps = []
         mock_estimand = None
@@ -404,7 +481,7 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
                 ],
                 "note": "",
             }
-        return {
+        report = {
             "status": "success",
             "response": mock_text,
             "total_token_count": 10,
@@ -417,6 +494,11 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
             "causal_graph_reconcile": mock_reconcile,
             "causal_web_retrieval": mock_web,
         }
+        # Persist from the same dict that goes back to the UI so the offline
+        # dev path exercises causal history too.
+        _persist_if_signed_in(user, req, mock_text, 10, attachment_names,
+                              _causal_payload(report))
+        return report
 
     # Derive the streaming endpoint from the base query URL
     # e.g. .../reasoningEngines/ID:query  →  .../reasoningEngines/ID:streamQuery
@@ -454,8 +536,10 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
         "class_method": "stream_query",
         "input": {
             "message": outbound_message,
-            "user_id": user["uid"] if user else "default-user",
-            "session_id": req.chat_id or "default-session",
+            "user_id": _agent_user_id(user, x_anon_id),
+            # A client that omits chat_id gets a throwaway session rather than
+            # joining a shared one.
+            "session_id": req.chat_id or uuid.uuid4().hex,
         }
     }
 
@@ -541,8 +625,7 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
 
         response_text = (response_text.replace(CAUSAL_MODE_MARKER, "")
                          .replace(WEB_MODE_MARKER, "").strip() or "(no response)")
-        _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names)
-        return {
+        report = {
             "status": "success",
             "response": response_text,
             "total_token_count": total_token_count,
@@ -555,6 +638,9 @@ async def analyze_prompt(req: PromptRequest, user: Optional[dict] = Depends(get_
             "causal_graph_reconcile": causal_graph_reconcile,
             "causal_web_retrieval": causal_web_retrieval,
         }
+        _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names,
+                              _causal_payload(report))
+        return report
     except httpx.HTTPStatusError as e:
         import traceback
         traceback.print_exc()

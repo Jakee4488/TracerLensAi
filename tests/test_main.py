@@ -1,4 +1,5 @@
 import json
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -61,6 +62,8 @@ class FakeCollection:
         self.path = path
         self._order_field = None
         self._descending = False
+        self._limit = None
+        self._start_after = None
 
     def document(self, doc_id):
         return FakeDocRef(self.store, self.path + (doc_id,))
@@ -75,6 +78,13 @@ class FakeCollection:
         return self
 
     def limit(self, n):
+        self._limit = n
+        return self
+
+    def start_after(self, cursor):
+        # Real Firestore takes a snapshot or a field-value dict; the proxy uses
+        # the dict form keyed on the ordered field.
+        self._start_after = cursor
         return self
 
     def stream(self):
@@ -85,6 +95,15 @@ class FakeCollection:
         ]
         if self._order_field:
             items.sort(key=lambda kv: kv[1].get(self._order_field), reverse=self._descending)
+        if self._start_after is not None and self._order_field:
+            after = self._start_after[self._order_field]
+            items = [
+                (doc_id, data) for doc_id, data in items
+                if (data.get(self._order_field) < after if self._descending
+                    else data.get(self._order_field) > after)
+            ]
+        if self._limit is not None:
+            items = items[:self._limit]
         return [FakeSnapshot(doc_id, data) for doc_id, data in items]
 
 class FakeDb:
@@ -250,7 +269,9 @@ def test_get_history_messages_and_404(client: TestClient, fake_store):
 
     assert client.get("/history/nope", headers=AUTH).status_code == 404
 
-def test_analyze_prompt_authenticated_passes_uid_to_engine(client: TestClient, fake_store, monkeypatch):
+@pytest.fixture
+def fake_engine(monkeypatch):
+    """Stub the Agent Engine transport; returns the dict of captured payloads."""
     monkeypatch.setenv("AGENT_ENGINE_ENDPOINT", "https://example.com/v1/reasoningEngines/123:query")
     captured = {}
 
@@ -294,13 +315,144 @@ def test_analyze_prompt_authenticated_passes_uid_to_engine(client: TestClient, f
             return False
 
     monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
+    return captured
 
+def test_analyze_prompt_authenticated_passes_uid_to_engine(client: TestClient, fake_store, fake_engine):
     response = client.post("/analyze-prompt", json={"prompt": "Why rain?", "chat_id": "chat-9"}, headers=AUTH)
     assert response.status_code == 200
-    assert captured["payload"]["input"]["user_id"] == "user-123"
+    assert fake_engine["payload"]["input"]["user_id"] == "user-123"
     # Real engine path also persists with the real token count
     conv = fake_store.docs[("users", "user-123", "conversations", "chat-9")]
     assert conv["total_tokens"] == 7
+
+# ── Anonymous session isolation ──────────────────────────────────────────────
+
+ANON_A = "11111111-2222-4333-8444-555555555555"
+ANON_B = "99999999-8888-4777-8666-555555555555"
+
+def test_distinct_anon_ids_get_distinct_agent_sessions(client: TestClient, fake_engine):
+    client.post("/analyze-prompt", json={"prompt": "Hi", "chat_id": "c1"},
+                headers={"X-Anon-Id": ANON_A})
+    first = fake_engine["payload"]["input"]["user_id"]
+    client.post("/analyze-prompt", json={"prompt": "Hi", "chat_id": "c1"},
+                headers={"X-Anon-Id": ANON_B})
+    second = fake_engine["payload"]["input"]["user_id"]
+
+    assert first == f"anon:{ANON_A}"
+    assert first != second
+    # The shared bucket that leaked context between visitors is gone.
+    assert "default-user" not in (first, second)
+
+def test_same_anon_id_shares_one_agent_session(client: TestClient, fake_engine):
+    client.post("/analyze-prompt", json={"prompt": "One", "chat_id": "c1"},
+                headers={"X-Anon-Id": ANON_A})
+    first = fake_engine["payload"]["input"]["user_id"]
+    client.post("/analyze-prompt", json={"prompt": "Two", "chat_id": "c1"},
+                headers={"X-Anon-Id": ANON_A})
+    assert fake_engine["payload"]["input"]["user_id"] == first
+
+def test_signed_in_request_ignores_anon_id(client: TestClient, fake_store, fake_engine):
+    headers = dict(AUTH)
+    headers["X-Anon-Id"] = ANON_A
+    client.post("/analyze-prompt", json={"prompt": "Why rain?", "chat_id": "c1"}, headers=headers)
+    assert fake_engine["payload"]["input"]["user_id"] == "user-123"
+
+@pytest.mark.parametrize("bad", ["", "../../etc/passwd", "not-a-uuid", "x" * 500])
+def test_malformed_anon_id_falls_back_to_unknown(client: TestClient, fake_engine, bad):
+    client.post("/analyze-prompt", json={"prompt": "Hi", "chat_id": "c1"},
+                headers={"X-Anon-Id": bad})
+    assert fake_engine["payload"]["input"]["user_id"] == "anon:unknown"
+
+def test_missing_chat_id_gets_throwaway_session(client: TestClient, fake_engine):
+    client.post("/analyze-prompt", json={"prompt": "Hi"}, headers={"X-Anon-Id": ANON_A})
+    first = fake_engine["payload"]["input"]["session_id"]
+    client.post("/analyze-prompt", json={"prompt": "Hi"}, headers={"X-Anon-Id": ANON_A})
+    second = fake_engine["payload"]["input"]["session_id"]
+    assert first != second
+    assert "default-session" not in (first, second)
+
+# ── Causal payload persistence ───────────────────────────────────────────────
+
+def _ai_message(fake_store, chat_id):
+    prefix = ("users", "user-123", "conversations", chat_id, "messages")
+    docs = [d for p, d in fake_store.docs.items() if len(p) == 6 and p[:5] == prefix]
+    return next(d for d in docs if d["role"] == "ai")
+
+def test_causal_turn_persists_and_replays_payload(client: TestClient, fake_store):
+    client.post("/analyze-prompt", json={
+        "prompt": "Does price affect demand?",
+        "chat_id": "chat-c",
+        "causal_reasoning": True,
+    }, headers=AUTH)
+
+    stored = _ai_message(fake_store, "chat-c")["causal"]
+    assert stored["causal_graph"]["nodes"]
+    assert stored["causal_estimand"]["treatment"] == "price"
+
+    # Round-trips through the API using the key names addAiMessage() reads.
+    data = client.get("/history/chat-c", headers=AUTH).json()
+    causal = data["messages"][1]["causal"]
+    assert causal["causal_graph"] == stored["causal_graph"]
+    assert causal["causal_effect"]["point"] == -1.42
+    assert causal["causal_reasoning_steps"]
+
+def test_non_causal_turn_omits_causal_key(client: TestClient, fake_store):
+    client.post("/analyze-prompt", json={"prompt": "Hello", "chat_id": "chat-p"}, headers=AUTH)
+    assert "causal" not in _ai_message(fake_store, "chat-p")
+    data = client.get("/history/chat-p", headers=AUTH).json()
+    assert "causal" not in data["messages"][1]
+
+def test_history_write_failure_still_returns_200(client: TestClient, fake_store, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("firestore unavailable")
+
+    monkeypatch.setattr(proxy_main, "_save_exchange", boom)
+    response = client.post("/analyze-prompt", json={
+        "prompt": "Does price affect demand?",
+        "chat_id": "chat-x",
+        "causal_reasoning": True,
+    }, headers=AUTH)
+    # Persistence is best-effort: the turn still succeeds with its causal data.
+    assert response.status_code == 200
+    assert response.json()["causal_graph"]["nodes"]
+
+# ── History pagination ───────────────────────────────────────────────────────
+
+def test_history_paginates_with_cursor(client: TestClient, fake_store):
+    for i in range(5):
+        client.post("/analyze-prompt", json={"prompt": f"Chat {i}", "chat_id": f"c{i}"}, headers=AUTH)
+
+    first = client.get("/history?limit=2", headers=AUTH).json()
+    assert len(first["conversations"]) == 2
+    assert first["next_cursor"]
+
+    second = client.get(f"/history?limit=2&cursor={first['next_cursor']}", headers=AUTH).json()
+    assert len(second["conversations"]) == 2
+    # No overlap between pages.
+    ids = {c["chat_id"] for c in first["conversations"]}
+    assert ids.isdisjoint({c["chat_id"] for c in second["conversations"]})
+
+    last = client.get(f"/history?limit=2&cursor={second['next_cursor']}", headers=AUTH).json()
+    assert len(last["conversations"]) == 1
+    assert last["next_cursor"] is None
+
+    seen = ids | {c["chat_id"] for c in second["conversations"]} | {
+        c["chat_id"] for c in last["conversations"]}
+    assert seen == {f"c{i}" for i in range(5)}
+
+def test_history_cursor_accepts_percent_encoded_offset(client: TestClient, fake_store):
+    """The '+' in a UTC offset survives either encoding on the way back in."""
+    for i in range(3):
+        client.post("/analyze-prompt", json={"prompt": f"Chat {i}", "chat_id": f"c{i}"}, headers=AUTH)
+
+    cursor = client.get("/history?limit=2", headers=AUTH).json()["next_cursor"]
+    encoded = quote(cursor, safe="")
+    assert client.get(f"/history?limit=2&cursor={encoded}", headers=AUTH).status_code == 200
+    assert client.get(f"/history?limit=2&cursor={cursor}", headers=AUTH).status_code == 200
+
+def test_history_malformed_cursor_400s(client: TestClient, fake_store):
+    client.post("/analyze-prompt", json={"prompt": "Chat", "chat_id": "c0"}, headers=AUTH)
+    assert client.get("/history?cursor=not-a-date", headers=AUTH).status_code == 400
 
 # ── Upload & attachment tests ────────────────────────────────────────────────
 
