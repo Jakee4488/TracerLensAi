@@ -7,15 +7,19 @@ WORKDIR /build
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Proxy-only dependency set: this image ships proxy/ and never src/, so the
+# causal stack (dowhy / causal-learn + pandas / scipy / sklearn / statsmodels /
+# sympy, ~450 MB) would be dead weight on a latency-sensitive service. That code
+# runs in the Agent Engine, deployed separately from src/ via agents-cli.
+COPY requirements-proxy.txt .
+RUN pip install --no-cache-dir --user -r requirements-proxy.txt
 
 # Stage 2: Runtime
 FROM python:3.12-slim
 
-# Install system dependencies if required by causal-learn/dowhy (e.g., graphviz)
-# Need to run as root before switching user
-RUN apt-get update && apt-get install -y graphviz && rm -rf /var/lib/apt/lists/*
+# No apt packages needed: graphviz was only ever a maybe-dependency of
+# causal-learn/dowhy, which this image no longer installs. src/causal/
+# estimation.py emits GML via networkx precisely to avoid pydot/graphviz.
 
 # Create a non-root user
 RUN groupadd -r tracerlensaiuser && useradd -r -g tracerlensaiuser tracerlensaiuser

@@ -20,6 +20,24 @@ function generateSessionId() {
     });
 }
 
+// Stable per-browser id for signed-out visitors, sent as X-Anon-Id so the
+// backend gives each one its own agent session instead of a shared one.
+// Falls back to a per-tab id when storage is blocked (private mode).
+let memoryAnonId = null;
+function getAnonId() {
+    try {
+        let id = localStorage.getItem("tracerlens-anon-id");
+        if (!id) {
+            id = generateSessionId();
+            localStorage.setItem("tracerlens-anon-id", id);
+        }
+        return id;
+    } catch (e) {
+        if (!memoryAnonId) memoryAnonId = generateSessionId();
+        return memoryAnonId;
+    }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     const chatInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
@@ -663,28 +681,40 @@ document.addEventListener("DOMContentLoaded", () => {
     // ── Auth + History ──────────────────────────────────────────────────────
 
     async function authHeaders() {
-        if (!window.tracerAuth) return {};
-        const token = await window.tracerAuth.getIdToken();
-        return token ? { "Authorization": `Bearer ${token}` } : {};
+        const token = window.tracerAuth ? await window.tracerAuth.getIdToken() : null;
+        // Signed in: the verified uid wins and the anon id is irrelevant.
+        // Signed out: the anon id is what keeps agent sessions separate.
+        return token ? { "Authorization": `Bearer ${token}` } : { "X-Anon-Id": getAnonId() };
     }
 
-    async function loadHistoryList() {
+    let historyNextCursor = null;
+
+    async function loadHistoryList({ append = false } = {}) {
         const headers = await authHeaders();
         if (!headers.Authorization) return;
+        if (append && !historyNextCursor) return;
+        const url = append
+            ? `${API_BASE}/history?cursor=${encodeURIComponent(historyNextCursor)}`
+            : `${API_BASE}/history`;
         try {
-            const res = await fetch(`${API_BASE}/history`, { headers });
+            const res = await fetch(url, { headers });
             if (!res.ok) return;
             const data = await res.json();
-            renderHistoryList(data.conversations || []);
+            historyNextCursor = data.next_cursor || null;
+            renderHistoryList(data.conversations || [], append);
         } catch (e) {
             console.error("Failed to load history:", e);
         }
     }
 
-    function renderHistoryList(conversations) {
+    function renderHistoryList(conversations, append = false) {
         if (!historyItems) return;
-        historyItems.replaceChildren();
-        if (conversations.length === 0) {
+        if (!append) historyItems.replaceChildren();
+        // Drop the previous page's "Load older" before appending the new rows.
+        const oldLoadMore = historyItems.querySelector(".history-load-more");
+        if (oldLoadMore) oldLoadMore.remove();
+
+        if (!append && conversations.length === 0) {
             historyItems.appendChild(el("div", "history-item hint", "No saved workflows yet"));
             return;
         }
@@ -694,9 +724,15 @@ document.addEventListener("DOMContentLoaded", () => {
             item.addEventListener("click", () => loadConversation(conv.chat_id));
             historyItems.appendChild(item);
         });
+        if (historyNextCursor) {
+            const more = el("div", "history-item hint history-load-more", "Load older");
+            more.addEventListener("click", () => loadHistoryList({ append: true }));
+            historyItems.appendChild(more);
+        }
     }
 
     function resetHistorySidebar(message) {
+        historyNextCursor = null;
         if (!historyItems) return;
         historyItems.replaceChildren(el("div", "history-item hint", message));
     }
@@ -718,7 +754,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (msg.role === "user") {
                     addUserMessage(msg.content || "", msg.attachments || []);
                 } else {
-                    addAiMessage({ response: msg.content || "" });
+                    // Persisted causal_* fields use the same key names as a live
+                    // response, so spreading them replays the diagram and
+                    // estimand card without touching the render path.
+                    addAiMessage({ response: msg.content || "", ...(msg.causal || {}) });
                 }
             });
             scrollToBottom();

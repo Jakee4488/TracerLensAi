@@ -186,6 +186,37 @@ def test_splice_scopes_ids_and_versions():
     assert statuses["model"] == "replanned" and statuses["forecast"] == "replanned"
 
 
+def test_critical_path_is_stable_across_splice():
+    """critical_path is computed once in from_decomposition and never refreshed.
+
+    That is correct only while splice leaves the graph topology alone (it adds
+    plan steps and flips component status). This pins the invariant: if splice
+    ever starts touching model.edges / self._g, the stored critical_path goes
+    stale and this fails — see the comment at the end of splice()."""
+    graph = CausalTaskGraph.from_decomposition(make_decomposition())
+    plan = graph.derive_plan(max_steps=8)
+    features, model, forecast = plan.steps
+    model.status = "failed"
+
+    before = list(graph.model.critical_path)
+    edges_before = [(e.source, e.target) for e in graph.model.edges]
+
+    graph.splice(
+        plan,
+        ReplanResult(reason="retry", new_steps=[
+            NewStepDraft(component_id="model", objective="Refit with ridge"),
+        ]),
+        ReplanRequest(failed_step=model, observed="singular matrix",
+                      affected_component_ids=["forecast"],
+                      invalidated_step_ids=[forecast.id]),
+    )
+
+    assert graph.model.critical_path == before
+    assert [(e.source, e.target) for e in graph.model.edges] == edges_before
+    # Recomputing from the live graph agrees, i.e. the stored value is not stale.
+    assert graph.critical_path() == before
+
+
 def test_state_roundtrip_and_ui_graph():
     graph = CausalTaskGraph.from_decomposition(make_decomposition())
     restored = CausalTaskGraph.from_state(graph.to_state())

@@ -250,6 +250,13 @@ class CausalTaskGraph:
                 comp.status = "replanned"
         self.model.version += 1
 
+        # model.critical_path is deliberately NOT recomputed here: splicing adds
+        # plan steps and flips component *status*, never model.edges or self._g,
+        # and critical_path() depends only on topology plus kind == "outcome" —
+        # so a recompute would return the same list. A future change that does
+        # alter the graph must recompute it, as from_decomposition does.
+        # Pinned by test_critical_path_is_stable_across_splice.
+
         reason = replan.reason.strip()[:300]
         if rejected:
             reason += f" (rejected out-of-scope steps for: {', '.join(sorted(set(rejected)))})"
