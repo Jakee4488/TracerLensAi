@@ -1331,6 +1331,13 @@ html[data-theme="light"] .token-badge {
         box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
     }
 
+    /* Keep the header (and its sidebar-toggle button) above the sidebar
+       overlay so it stays reachable while the sidebar is open. */
+    .chat-header {
+        position: relative;
+        z-index: 9;
+    }
+
     .switch-group .sw-label {
         display: none;
     }
