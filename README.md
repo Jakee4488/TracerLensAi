@@ -34,10 +34,10 @@ The app is split into two backends: a **proxy gateway** (`proxy/`, on Cloud Run)
 ┌─────────────┐   POST /analyze-prompt   ┌──────────────────────┐
 │             │ ────────────────────────▶│ Firebase Hosting     │
 │ User        │                          │ (CDN, custom domain) │
-│ Browser     │ ◀──────────────────────── │ serves proxy/static  │
-│             │   Markdown + Mermaid      └──────────┬───────────┘
-└─────────────┘                                      │ rewrite / CORS direct
-      ▲  Firebase Auth (Google Sign-In)              ▼
+│ Browser     │ ◀────────────────────────│ serves proxy/static  │
+│             │   Markdown + Mermaid       └──────────┬───────────┘
+└─────────────┘                                       │ rewrite / CORS direct
+      ▲  Firebase Auth (Google Sign-In)               ▼
       │                                   ┌──────────────────────┐
       │                                   │ FastAPI Proxy        │
       │   Firestore ◀──── per-user ────── │ (Cloud Run)          │
