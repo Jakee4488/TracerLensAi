@@ -53,19 +53,22 @@ def test_causal_toggle_renders_graph_and_steps(page: Page, server):
     expect(page.locator(".causal-panel")).to_be_visible()
     steps = page.locator(".causal-steps li")
     expect(steps).to_have_count(4)  # 3 canned mock steps + the graph-fix line
-    expect(page.locator(".causal-graph-container svg")).to_have_count(1, timeout=15000)
+    expect(page.locator(".causal-graph-container")).to_have_count(1, timeout=15000)
+    # inputs -> analysis -> outcome
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3)
     expect(page.locator(".phase-badge")).to_contain_text("complete")
 
 
 def test_previous_graph_survives_new_message(page: Page, server):
     # Regression test for the old innerHTML+= re-parse bug that wiped
-    # previously rendered Mermaid SVGs on every append.
+    # previously rendered diagrams on every append.
     page.goto(server)
     page.check("#causal-toggle")
     send_prompt(page, "First causal question")
-    expect(page.locator(".causal-graph-container svg")).to_have_count(1, timeout=15000)
+    expect(page.locator(".causal-graph-container")).to_have_count(1, timeout=15000)
     send_prompt(page, "Second causal question")
-    expect(page.locator(".causal-graph-container svg")).to_have_count(2, timeout=15000)
+    expect(page.locator(".causal-graph-container")).to_have_count(2, timeout=15000)
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(6)
 
 
 def test_upload_flow(page: Page, server, sample_txt):
@@ -136,3 +139,120 @@ def test_markdown_is_sanitized(page: Page, server):
     expect(page.locator(".msg.ai .bubble").last).to_contain_text("Agent Proxy configured")
     page.wait_for_timeout(500)
     assert page.evaluate("window.__xss") is None
+
+
+# ── Live workflow timeline ────────────────────────────────────────────────────
+# The mock proxy emits a scripted SSE stream (progress + graph frames, ~150ms
+# apart), so these can observe the run mid-flight rather than only its result.
+
+
+def test_timeline_replaces_dots_in_causal_mode(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # The nine-stage pipeline is shown instead of the three-dot indicator.
+    expect(page.locator(".workflow-timeline")).to_be_visible()
+    expect(page.locator(".stage-row")).to_have_count(9)
+    expect(page.locator(".typing")).to_have_count(0)
+
+
+def test_timeline_stages_advance_during_run(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Stages resolve in order while the run is still in flight: exactly one is
+    # active, and earlier ones have already completed.
+    expect(page.locator(".stage-row.active")).to_have_count(1)
+    expect(page.locator(".stage-row.done").first).to_be_visible()
+
+
+def test_timeline_collapses_to_summary_when_done(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    summary = page.locator(".timeline-summary")
+    expect(summary).to_be_visible(timeout=20000)
+    expect(summary).to_contain_text("stages")
+    # Collapsed by default so replayed history isn't dominated by it...
+    expect(page.locator(".stage-row")).to_have_count(0)
+    summary.click()
+    # ...and expandable, showing only the stages that actually ran.
+    expect(page.locator(".stage-row")).not_to_have_count(0)
+    expect(page.locator(".stage-row.skipped")).to_have_count(0)
+
+
+def test_graph_renders_before_final_answer(page: Page, server):
+    """The DAG arrives mid-run on a `graph` frame, not with the report."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3, timeout=15000)
+    # Still streaming: the finished panel's summary strip has not appeared yet.
+    expect(page.locator(".timeline-summary")).to_have_count(0)
+
+
+def test_non_causal_mode_keeps_typing_dots(page: Page, server):
+    page.goto(server)
+    send_prompt(page, "Hello agent")
+    # No pipeline runs without the toggle, so there is nothing to time-line.
+    expect(page.locator(".workflow-timeline")).to_have_count(0)
+
+
+def test_timeline_readable_with_reduced_motion(page: Page, server):
+    """Several animations encode their end state in a transform; with motion
+    disabled they must not sit at their start value and vanish."""
+    page.emulate_media(reduced_motion="reduce")
+    try:
+        page.goto(server)
+        page.check("#causal-toggle")
+        send_prompt(page, "Why does it rain?")
+        expect(page.locator(".stage-row")).to_have_count(9)
+        step = page.locator(".stage-steps li").first
+        expect(step).to_be_visible(timeout=15000)
+        opacity = step.evaluate("el => getComputedStyle(el).opacity")
+        assert float(opacity) == 1.0, f"trace lines invisible with reduced motion ({opacity})"
+    finally:
+        page.emulate_media(reduced_motion="no-preference")
+
+
+# ── Live DAG animation ────────────────────────────────────────────────────────
+
+
+def test_dag_nodes_animate_through_statuses(page: Page, server):
+    """The mock walks each node pending -> active -> done on its own `graph`
+    frame, so the class must actually change while the run is in flight."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    expect(page.locator(".dag-node")).to_have_count(3, timeout=15000)
+    # Some node reaches `active` mid-run...
+    expect(page.locator(".dag-node.active")).not_to_have_count(0)
+    # ...and all of them are done once the run finishes.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=20000)
+    expect(page.locator(".dag-node.done")).to_have_count(3)
+
+
+def test_dag_does_not_relayout_on_status_change(page: Page, server):
+    """Positions are computed once, on the first graph frame. A status-only
+    frame must not move anything — otherwise the diagram jumps on every
+    executor iteration."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    node = page.locator(".react-flow__node").first
+    expect(node).to_be_visible(timeout=15000)
+
+    read = "el => el.style.transform"
+    before = node.evaluate(read)
+    # Wait for at least one more graph frame to land (statuses still changing).
+    expect(page.locator(".dag-node.done")).not_to_have_count(0, timeout=20000)
+    after = node.evaluate(read)
+    assert before == after, f"node re-laid-out mid-run: {before!r} -> {after!r}"
+
+
+def test_critical_path_is_marked(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # The canned critical path covers all three nodes.
+    expect(page.locator(".dag-node.critical")).to_have_count(3, timeout=15000)

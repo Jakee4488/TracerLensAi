@@ -92,3 +92,8 @@ test.ipynb
 tests/fixtures/*.csv
 !tests/fixtures/sales.csv
 regenerated.csv
+
+# React UI build artifacts (ui/dist is produced by `npm run build` and is what
+# both the proxy and Firebase Hosting serve).
+ui/node_modules/
+ui/dist/

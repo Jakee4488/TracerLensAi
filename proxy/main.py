@@ -146,11 +146,32 @@ def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, to
 
 # ── Static Files ─────────────────────────────────────────────────────────────
 
-app.mount("/static", StaticFiles(directory="proxy/static"), name="static")
+def _ui_directory() -> Optional[str]:
+    """Locate the built UI bundle.
+
+    The React app builds to ui/dist, which is where both local dev and the E2E
+    suite find it, and where Dockerfile.proxy copies its build stage's output.
+    Returns None on a fresh checkout that hasn't run `npm run build` yet — the
+    API still serves, so backend tests don't need Node.
+    """
+    for candidate in (os.getenv("UI_DIST"), "ui/dist"):
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+UI_DIR = _ui_directory()
+if UI_DIR:
+    app.mount("/static", StaticFiles(directory=UI_DIR), name="static")
+
 
 @app.get("/")
 def read_root():
     """Redirect root to the UI."""
+    if not UI_DIR:
+        raise HTTPException(
+            status_code=503,
+            detail="UI bundle not built. Run `npm ci && npm run build` in ui/.")
     return RedirectResponse(url="/static/index.html")
 
 @app.get("/health")
@@ -446,11 +467,19 @@ async def _mock_stream(report: dict, causal: bool):
     def _take_step():
         return [pending_steps.pop(0)] if pending_steps else []
 
-    for stage, phase in (("route", "decomposing"),
-                         ("decompose", "decomposing"),
-                         ("graph", "executing")):
+    # Which stages light up mirrors which ones a real run would: the web branch
+    # only when the toggle is on, estimand/estimate only when the report
+    # actually carries an identification.
+    script = [("route", "decomposing"), ("decompose", "decomposing"),
+              ("graph", "executing")]
+    if report.get("causal_web_retrieval"):
+        script.insert(1, ("web", "decomposing"))
+    if report.get("causal_estimand"):
+        script += [("estimand", "executing"), ("estimate", "executing")]
+
+    for stage, phase in script:
         await asyncio.sleep(delay)
-        elapsed += int(MOCK_FRAME_DELAY_S * 1000)
+        elapsed += int(delay * 1000)
         yield _sse("progress", {"stage": stage, "phase": phase,
                                 "steps": _take_step(), "current_step": None,
                                 "elapsed_ms": elapsed})
@@ -463,7 +492,7 @@ async def _mock_stream(report: dict, causal: bool):
     for index, node in enumerate(nodes, start=1):
         for status in ("active", node.get("status") or "done"):
             await asyncio.sleep(delay)
-            elapsed += int(MOCK_FRAME_DELAY_S * 1000)
+            elapsed += int(delay * 1000)
             statuses[node["id"]] = status
             yield _sse("progress", {
                 "stage": "execute", "phase": "executing",
@@ -474,7 +503,7 @@ async def _mock_stream(report: dict, causal: bool):
             yield _graph_frame()
 
     await asyncio.sleep(delay)
-    elapsed += int(MOCK_FRAME_DELAY_S * 1000)
+    elapsed += int(delay * 1000)
     # Anything left over (the mock has more trace lines than nodes) lands on
     # the final stage rather than being dropped.
     yield _sse("progress", {"stage": "synthesize", "phase": "synthesizing",
