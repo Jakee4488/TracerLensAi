@@ -135,11 +135,21 @@
         </main>
     </div>
 
-    <!-- API base for backend calls. Empty = same-origin (through Firebase
-         Hosting). Set to the Cloud Run direct URL to bypass Hosting's 60s
-         timeout on long causal runs. Must load before causal-agent.js. -->
-    <script>window.TRACERLENS_API_BASE = "https://tracerlensai-app-gi2oexvg3a-nw.a.run.app";</script>
-    <script src="causal-agent.js?v=4"></script>
+    <!-- API base for backend calls. Empty = same-origin. In production the UI
+         is served by Firebase Hosting, so it targets the Cloud Run URL directly
+         to bypass Hosting's 60s cap on long causal runs. Served from localhost
+         the proxy is the origin, so same-origin is both correct and what the
+         E2E suite exercises — pointing local runs at production would send dev
+         traffic to the live service. Must load before causal-agent.js. -->
+    <script>
+        (function () {
+            var isLocal = ["localhost", "127.0.0.1", "[::1]"].indexOf(location.hostname) !== -1;
+            window.TRACERLENS_API_BASE = isLocal
+                ? ""
+                : "https://tracerlensai-app-gi2oexvg3a-nw.a.run.app";
+        })();
+    </script>
+    <script src="causal-agent.js?v=5"></script>
 
     <!-- Firebase SDK Configuration -->
     <script type="module">

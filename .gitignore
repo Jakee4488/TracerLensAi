@@ -85,3 +85,10 @@ terraform/firebase-debug.log
 
 test.ipynb
 .claude
+
+# Ad-hoc CSVs generated while experimenting with the causal pipeline.
+# tests/fixtures/sales.csv is the committed demo dataset and is exempt below;
+# anything else dropped in that directory is scratch and stays untracked.
+tests/fixtures/*.csv
+!tests/fixtures/sales.csv
+regenerated.csv

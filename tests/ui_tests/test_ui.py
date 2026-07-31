@@ -52,7 +52,7 @@ def test_causal_toggle_renders_graph_and_steps(page: Page, server):
     send_prompt(page, "Why does it rain?")
     expect(page.locator(".causal-panel")).to_be_visible()
     steps = page.locator(".causal-steps li")
-    expect(steps).to_have_count(3)  # canned mock steps
+    expect(steps).to_have_count(4)  # 3 canned mock steps + the graph-fix line
     expect(page.locator(".causal-graph-container svg")).to_have_count(1, timeout=15000)
     expect(page.locator(".phase-badge")).to_contain_text("complete")
 

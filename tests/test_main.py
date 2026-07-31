@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy.main as proxy_main
+from tests.conftest import sse_report
 
 # ── Fake Firestore ───────────────────────────────────────────────────────────
 
@@ -191,7 +192,7 @@ def test_analyze_prompt_mock(client: TestClient):
         "chat_id": None
     })
     assert response.status_code == 200
-    data = response.json()
+    data = sse_report(response)
     assert data["status"] == "success"
     assert "Agent Proxy configured." in data["response"]
 
@@ -226,6 +227,10 @@ def test_analyze_prompt_reports_real_token_count(client: TestClient, monkeypatch
         async def aread(self):
             return response_body
 
+        async def aiter_lines(self):
+            for line in response_body.decode("utf-8").splitlines():
+                yield line
+
         async def __aenter__(self):
             return self
 
@@ -255,7 +260,7 @@ def test_analyze_prompt_reports_real_token_count(client: TestClient, monkeypatch
         "chat_id": None
     })
     assert response.status_code == 200
-    data = response.json()
+    data = sse_report(response)
     assert data["status"] == "success"
     assert data["response"] == "Hello! How can I help?"
     assert data["total_token_count"] == 42
@@ -342,6 +347,10 @@ def fake_engine(monkeypatch):
 
         async def aread(self):
             return stream_body
+
+        async def aiter_lines(self):
+            for line in stream_body.decode("utf-8").splitlines():
+                yield line
 
         async def __aenter__(self):
             return self
@@ -463,7 +472,7 @@ def test_history_write_failure_still_returns_200(client: TestClient, fake_store,
     }, headers=AUTH)
     # Persistence is best-effort: the turn still succeeds with its causal data.
     assert response.status_code == 200
-    assert response.json()["causal_graph"]["nodes"]
+    assert sse_report(response)["causal_graph"]["nodes"]
 
 # ── History pagination ───────────────────────────────────────────────────────
 
@@ -542,7 +551,7 @@ def test_analyze_prompt_with_attachment_mock_ack(client: TestClient):
 
     response = client.post("/analyze-prompt", json={"prompt": "Summarise", "attachments": [file_id]})
     assert response.status_code == 200
-    assert "Attached files (1): notes.txt" in response.json()["response"]
+    assert "Attached files (1): notes.txt" in sse_report(response)["response"]
 
 def test_analyze_prompt_unknown_attachment_404(client: TestClient):
     response = client.post("/analyze-prompt", json={"prompt": "Hi", "attachments": ["nope"]})
@@ -595,6 +604,10 @@ def test_analyze_prompt_real_engine_includes_file_context(client: TestClient, mo
 
         async def aread(self):
             return stream_body
+
+        async def aiter_lines(self):
+            for line in stream_body.decode("utf-8").splitlines():
+                yield line
 
         async def __aenter__(self):
             return self

@@ -3,10 +3,13 @@
 This backend serves the static UI and proxies requests to the
 Gemini Enterprise Agent Platform (Agent Runtime).
 """
+import asyncio
 import functools
 import json
 import os
 import re
+import time
+import traceback
 import uuid
 from datetime import datetime, timezone
 
@@ -20,7 +23,7 @@ from google.cloud import firestore as gcf
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -355,6 +358,130 @@ WEB_MODE_MARKER = "[[web:on]]"
 CAUSAL_STATE_PREFIX = "causal_"
 _CAUSAL_FENCED_RE = re.compile(r"```causal-json\s*(\{.*?\})\s*```", re.DOTALL)
 
+# ── SSE transport ───────────────────────────────────────────────────────────
+# /analyze-prompt streams the causal pipeline's progress instead of buffering
+# the whole run. Frames: `progress` (stage + newly appended trace lines),
+# `graph` (a to_ui_graph payload, one per graph mutation), `done` (the full
+# report), `error`. The `done` payload is a superset of the JSON body this
+# endpoint used to return, so history persistence and replay are unchanged.
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    # Without this, nginx-style intermediaries buffer the whole body and the
+    # client sees a single flush at the end — which defeats the point.
+    "X-Accel-Buffering": "no",
+}
+
+# Emitted when the upstream goes quiet, so an intermediary doesn't reap a
+# connection during a slow LLM stage (the decomposer alone can run ~30s).
+SSE_PING_INTERVAL_S = 15.0
+
+# Pipeline stages, keyed on the ADK event `author` (the agent's name). That
+# field survives Agent Engine serialization: AdkApp.stream_query dumps events
+# via model_dump_json(exclude_none=True) and `author` is a non-None str.
+STAGE_BY_AUTHOR = {
+    "CausalRouterAgent": "route",
+    "CausalWebSearch": "web",
+    "CausalWebIngestor": "web",
+    "CausalDecomposer": "decompose",
+    "CausalEstimandSpec": "estimand",
+    "CausalEstimator": "estimate",
+    "CausalStepExecutor": "execute",
+    "CausalStepController": "execute",
+    "CausalReplanner": "replan",
+    "CausalSynthesizer": "synthesize",
+}
+
+# build_graph_and_plan is an after_agent_callback on CausalDecomposer, so its
+# state write rides on an event authored "CausalDecomposer". Only the delta
+# keys distinguish the graph build from the decomposition that preceded it.
+_GRAPH_BUILD_KEYS = ("causal_graph_full", "causal_plan")
+
+
+def _sse(event: str, data) -> str:
+    """Format one Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+def _resolve_stage(author: Optional[str], delta: dict) -> Optional[str]:
+    """Map an ADK event to a pipeline stage id, or None if it isn't one."""
+    stage = STAGE_BY_AUTHOR.get(author or "")
+    if stage == "decompose" and any(k in delta for k in _GRAPH_BUILD_KEYS):
+        return "graph"
+    return stage
+
+
+# Pacing for the offline mock stream. Small enough that the E2E suite stays
+# fast, large enough that a human can watch the stages land. Read per-call so
+# unit tests can set MOCK_FRAME_DELAY_S=0 and skip the pacing entirely.
+MOCK_FRAME_DELAY_S = 0.15
+
+
+async def _mock_stream(report: dict, causal: bool):
+    """Scripted SSE stream for offline dev and the E2E suite.
+
+    Replays the *shape* of a real run — stages in order, the graph appearing
+    mid-run, then its nodes flipping pending -> active -> done — so the
+    timeline and the live DAG are exercisable without an Agent Engine. The
+    final `done` frame is the same report the endpoint used to return.
+    """
+    if not causal:
+        yield _sse("done", report)
+        return
+
+    delay = float(os.getenv("MOCK_FRAME_DELAY_S", MOCK_FRAME_DELAY_S))
+    graph = report.get("causal_graph") or {}
+    nodes = list(graph.get("nodes") or [])
+    # Consumed left-to-right so each trace line lands under the stage that
+    # would really have produced it.
+    pending_steps = list(report.get("causal_reasoning_steps") or [])
+    statuses = {n["id"]: "pending" for n in nodes}
+    elapsed = 0
+
+    def _graph_frame():
+        return _sse("graph", {**graph, "nodes": [
+            {**n, "status": statuses[n["id"]]} for n in nodes]})
+
+    def _take_step():
+        return [pending_steps.pop(0)] if pending_steps else []
+
+    for stage, phase in (("route", "decomposing"),
+                         ("decompose", "decomposing"),
+                         ("graph", "executing")):
+        await asyncio.sleep(delay)
+        elapsed += int(MOCK_FRAME_DELAY_S * 1000)
+        yield _sse("progress", {"stage": stage, "phase": phase,
+                                "steps": _take_step(), "current_step": None,
+                                "elapsed_ms": elapsed})
+        if stage == "graph":
+            yield _graph_frame()
+
+    # Walk the DAG so the live animation has real transitions to render. Each
+    # node ends at the status the report declares, so the last graph frame and
+    # the done frame agree.
+    for index, node in enumerate(nodes, start=1):
+        for status in ("active", node.get("status") or "done"):
+            await asyncio.sleep(delay)
+            elapsed += int(MOCK_FRAME_DELAY_S * 1000)
+            statuses[node["id"]] = status
+            yield _sse("progress", {
+                "stage": "execute", "phase": "executing",
+                "steps": _take_step() if status != "active" else [],
+                "current_step": {"id": node["id"], "index": index,
+                                 "total": len(nodes)},
+                "elapsed_ms": elapsed})
+            yield _graph_frame()
+
+    await asyncio.sleep(delay)
+    elapsed += int(MOCK_FRAME_DELAY_S * 1000)
+    # Anything left over (the mock has more trace lines than nodes) lands on
+    # the final stage rather than being dropped.
+    yield _sse("progress", {"stage": "synthesize", "phase": "synthesizing",
+                            "steps": pending_steps, "current_step": None,
+                            "elapsed_ms": elapsed})
+    yield _sse("done", report)
+
 
 class PromptRequest(BaseModel):
     """Request body from the UI."""
@@ -426,6 +553,8 @@ async def analyze_prompt(
         mock_effect = None
         mock_reconcile = None
         mock_web = None
+        mock_ledger = None
+        mock_plan = None
         if req.causal_reasoning:
             # Canned graph so the UI panel/diagram is developable offline.
             mock_steps = [
@@ -452,7 +581,7 @@ async def analyze_prompt(
                 "nodes": [
                     {"id": "inputs", "label": "Inputs", "kind": "input", "status": "done"},
                     {"id": "analysis", "label": "Analysis", "kind": "process", "status": "done"},
-                    {"id": "outcome", "label": "Outcome", "kind": "outcome", "status": "pending"},
+                    {"id": "outcome", "label": "Outcome", "kind": "outcome", "status": "done"},
                 ],
                 "edges": [
                     {"source": "inputs", "target": "analysis", "relation": "informs", "confidence": 0.9},
@@ -481,6 +610,20 @@ async def analyze_prompt(
                 ],
                 "note": "",
             }
+            # Ledger entries back the click-through drawer; `affected` is what
+            # makes an invalidation visible without re-running the pipeline.
+            mock_ledger = [
+                {"seq": 1, "step_id": "s1", "component_id": "analysis",
+                 "expected": "Advance 'Analysis'", "observed": "mocked in proxy",
+                 "verdict": "success", "affected": [], "plan_version": 1, "ts": ""},
+            ]
+            mock_plan = {
+                "version": 1,
+                "steps": [
+                    {"id": "s1", "component_id": "analysis", "title": "Advance 'Analysis'",
+                     "status": "done"},
+                ],
+            }
         report = {
             "status": "success",
             "response": mock_text,
@@ -493,12 +636,16 @@ async def analyze_prompt(
             "causal_counterfactual": None,
             "causal_graph_reconcile": mock_reconcile,
             "causal_web_retrieval": mock_web,
+            "causal_ledger": mock_ledger,
+            "causal_plan": mock_plan,
         }
         # Persist from the same dict that goes back to the UI so the offline
         # dev path exercises causal history too.
         _persist_if_signed_in(user, req, mock_text, 10, attachment_names,
                               _causal_payload(report))
-        return report
+        return StreamingResponse(
+            _mock_stream(report, req.causal_reasoning),
+            media_type="text/event-stream", headers=SSE_HEADERS)
 
     # Derive the streaming endpoint from the base query URL
     # e.g. .../reasoningEngines/ID:query  →  .../reasoningEngines/ID:streamQuery
@@ -543,31 +690,73 @@ async def analyze_prompt(
         }
     }
 
+    return StreamingResponse(
+        _agent_stream(req, user, attachment_names, stream_url, payload, headers),
+        media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+async def _pump_lines(resp, queue: asyncio.Queue):
+    """Feed upstream NDJSON lines into a queue.
+
+    The read runs in its own task so the emitting side can wait on the queue
+    with a timeout and send keepalives. Racing a timeout directly against
+    ``aiter_lines()`` would cancel a partially-consumed read and corrupt the
+    stream; cancelling ``queue.get()`` is safe.
+    """
+    try:
+        async for line in resp.aiter_lines():
+            await queue.put(("line", line))
+    except Exception as e:  # upstream died mid-stream
+        await queue.put(("error", str(e)))
+    finally:
+        await queue.put(("eof", None))
+
+
+async def _agent_stream(req: "PromptRequest", user: Optional[dict],
+                        attachment_names: list, stream_url: str,
+                        payload: dict, headers: dict):
+    """Forward the Agent Engine run as SSE, then emit the assembled report."""
     collected_text = []
     causal_state = {}
     total_token_count = 0
+    steps_sent = 0
+    last_stage = None
+    started = time.monotonic()
+
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream("POST", stream_url, json=payload, headers=headers) as resp:
-                print(f"DEBUG: status_code={resp.status_code}")
                 if resp.status_code >= 400:
                     body = await resp.aread()
-                    raise HTTPException(status_code=resp.status_code, detail=f"Agent Engine error: {body.decode()}")
+                    yield _sse("error", {
+                        "detail": f"Agent Engine error: {body.decode()}"})
+                    return
 
-                body_bytes = await resp.aread()
-                print(f"DEBUG: body_bytes={body_bytes}")
+                queue: asyncio.Queue = asyncio.Queue()
+                pump = asyncio.create_task(_pump_lines(resp, queue))
+                try:
+                    while True:
+                        try:
+                            kind, value = await asyncio.wait_for(
+                                queue.get(), timeout=SSE_PING_INTERVAL_S)
+                        except asyncio.TimeoutError:
+                            yield ": ping\n\n"
+                            continue
+                        if kind == "eof":
+                            break
+                        if kind == "error":
+                            yield _sse("error", {"detail": f"Agent Engine stream failed: {value}"})
+                            return
 
-                import io
-                lines = io.BytesIO(body_bytes).readlines()
-                for line_bytes in lines:
-                    line = line_bytes.decode('utf-8').strip()
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        import json as _json
-                        print(f"DEBUG LINE: {line}")
-                        event = _json.loads(line)
+                        line = (value or "").strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except ValueError:
+                            collected_text.append(line)  # plain text line
+                            continue
+
                         # ADK streams events; grab text from content parts
                         parts = (event.get("content") or {}).get("parts") or []
                         for part in parts:
@@ -581,10 +770,11 @@ async def analyze_prompt(
                         # whole by the agent, so last write wins).
                         actions = event.get("actions") or {}
                         delta = actions.get("state_delta") or actions.get("stateDelta") or {}
-                        if isinstance(delta, dict):
-                            for key, value in delta.items():
-                                if isinstance(key, str) and key.startswith(CAUSAL_STATE_PREFIX):
-                                    causal_state[key] = value
+                        if not isinstance(delta, dict):
+                            delta = {}
+                        for key, state_value in delta.items():
+                            if isinstance(key, str) and key.startswith(CAUSAL_STATE_PREFIX):
+                                causal_state[key] = state_value
                         # ADK emits usage metadata once per LLM call within the
                         # turn (snake_case or camelCase depending on
                         # serialization); sum them for the multi-agent total.
@@ -593,10 +783,39 @@ async def analyze_prompt(
                             count = usage.get("total_token_count", usage.get("totalTokenCount"))
                             if isinstance(count, int):
                                 total_token_count += count
-                    except Exception:
-                        # Plain text line
-                        collected_text.append(line)
 
+                        # ── Forward this event as progress ──────────────────
+                        stage = _resolve_stage(event.get("author"), delta)
+                        all_steps = causal_state.get("causal_steps") or []
+                        # causal_steps is rewritten wholesale each write, so the
+                        # newly appended lines are whatever is past the high
+                        # water mark (the router resets it to [] on turn start).
+                        new_steps = all_steps[steps_sent:]
+                        steps_sent = len(all_steps)
+                        status = causal_state.get("causal_status")
+                        phase = status.get("phase") if isinstance(status, dict) else None
+
+                        if stage or new_steps:
+                            if stage:
+                                last_stage = stage
+                            yield _sse("progress", {
+                                "stage": stage or last_stage,
+                                "phase": phase,
+                                "steps": new_steps,
+                                "current_step": causal_state.get("causal_current_step"),
+                                "elapsed_ms": int((time.monotonic() - started) * 1000),
+                            })
+
+                        if delta.get("causal_graph"):
+                            yield _sse("graph", delta["causal_graph"])
+                finally:
+                    pump.cancel()
+    except Exception as e:
+        traceback.print_exc()
+        yield _sse("error", {"detail": str(e)})
+        return
+
+    try:
         # Prefer the synthesizer's final answer over the raw concatenation —
         # in causal mode the text parts include intermediate pipeline output.
         response_text = causal_state.get("causal_final_answer") or "".join(collected_text)
@@ -609,6 +828,12 @@ async def analyze_prompt(
         causal_counterfactual = causal_state.get("causal_counterfactual")
         causal_graph_reconcile = causal_state.get("causal_graph_reconcile")
         causal_web_retrieval = causal_state.get("causal_web_retrieval")
+        # Harvested off the deltas all along but never forwarded until now.
+        # The ledger backs the click-through drawer (ChangeRecord already
+        # carries expected/observed/verdict/affected per step); the plan backs
+        # the executor step counter.
+        causal_ledger = causal_state.get("causal_ledger")
+        causal_plan = causal_state.get("causal_plan")
         if req.causal_reasoning and not causal_state:
             # Fallback transport (agent ran with CAUSAL_TEXT_FALLBACK=1).
             payload_json, response_text = _extract_causal_fallback(response_text)
@@ -637,15 +862,16 @@ async def analyze_prompt(
             "causal_counterfactual": causal_counterfactual,
             "causal_graph_reconcile": causal_graph_reconcile,
             "causal_web_retrieval": causal_web_retrieval,
+            "causal_ledger": causal_ledger,
+            "causal_plan": causal_plan,
         }
+        # _causal_payload filters on the causal_ prefix, so the two new keys
+        # persist to Firestore and replay through history without extra work.
         _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names,
                               _causal_payload(report))
-        return report
-    except httpx.HTTPStatusError as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=e.response.status_code, detail=f"Agent Engine error: {e.response.text}")
     except Exception as e:
-        import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        yield _sse("error", {"detail": str(e)})
+        return
+
+    yield _sse("done", report)

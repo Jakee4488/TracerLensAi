@@ -109,6 +109,55 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    // /analyze-prompt streams Server-Sent Events. This shell consumes only the
+    // terminal `done` frame (whose payload is the report body the endpoint used
+    // to return), ignoring `progress` and `graph`; the React UI renders those.
+    // EventSource is unusable here: the request is a POST and carries an auth
+    // header, neither of which it supports.
+    async function readReportFromStream(response) {
+        if (!response.body) throw new Error("Streaming is not supported by this browser.");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let report = null;
+        let failure = null;
+
+        const handleFrame = (block) => {
+            let name = "message";
+            const dataLines = [];
+            block.split("\n").forEach((line) => {
+                if (line.startsWith("event:")) name = line.slice(6).trim();
+                else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+            });
+            if (!dataLines.length) return; // keepalive comment frame
+            let payload;
+            try {
+                payload = JSON.parse(dataLines.join("\n"));
+            } catch (e) {
+                return;
+            }
+            if (name === "done") report = payload;
+            else if (name === "error") failure = payload.detail || "Unknown streaming error.";
+        };
+
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            // Frames are separated by a blank line; the tail may be partial.
+            let split;
+            while ((split = buffer.indexOf("\n\n")) !== -1) {
+                handleFrame(buffer.slice(0, split));
+                buffer = buffer.slice(split + 2);
+            }
+        }
+        if (buffer.trim()) handleFrame(buffer);
+
+        if (failure) throw new Error(failure);
+        if (!report) throw new Error("The server closed the stream without a result.");
+        return report;
+    }
+
     function escapeHtml(unsafe) {
         if (typeof unsafe !== 'string') return '';
         return unsafe
@@ -651,11 +700,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 })
             });
 
-            const report = await parseJsonResponse(analysisResponse);
-
+            // Failures raised before the stream opens (auth, bad request, ADC)
+            // still come back as real status codes with a JSON body. Anything
+            // after that arrives as an `error` frame inside the stream.
             if (!analysisResponse.ok) {
-                throw new Error(report.detail || "Unknown error occurred on the backend.");
+                const errorBody = await parseJsonResponse(analysisResponse);
+                throw new Error(errorBody.detail || "Unknown error occurred on the backend.");
             }
+
+            const report = await readReportFromStream(analysisResponse);
 
             if (report.total_token_count) {
                 sessionTotalTokens += report.total_token_count;
