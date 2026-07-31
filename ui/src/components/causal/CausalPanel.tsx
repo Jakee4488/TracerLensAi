@@ -1,8 +1,9 @@
 // Causal reasoning panel. Ported from causal-agent.js:271-337.
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { CausalGraph } from "./CausalGraph";
 import { EstimandCard } from "./EstimandCard";
+import { StepDrawer, type DrawerTarget } from "./StepDrawer";
 import { WorkflowTimeline } from "./WorkflowTimeline";
 import type { Stage } from "../../lib/stages";
 import type { Report } from "../../types";
@@ -75,6 +76,14 @@ export function CausalPanel({ report, stages }: { report: Report; stages?: Stage
   const web = report.causal_web_retrieval;
   const phase = report.causal_status?.phase;
 
+  const ledger = report.causal_ledger || [];
+  const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const openNode = useCallback(
+    (id: string, label: string) => setDrawer({ componentId: id, title: label }),
+    [],
+  );
+
   return (
     <div className="causal-panel">
       <div className="causal-head">
@@ -109,7 +118,22 @@ export function CausalPanel({ report, stages }: { report: Report; stages?: Stage
         </ul>
       )}
 
-      {hasGraph && <CausalGraph graph={graph} />}
+      {hasGraph && (
+        <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
+      )}
+
+      {drawer && (
+        <StepDrawer
+          target={drawer}
+          ledger={ledger}
+          nodes={graph?.nodes || []}
+          onClose={() => {
+            setDrawer(null);
+            setHighlighted(null);
+          }}
+          onHighlight={setHighlighted}
+        />
+      )}
     </div>
   );
 }

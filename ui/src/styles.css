@@ -63,6 +63,14 @@ html[data-theme="light"] {
     --code-bg: #10131c;
     --ambient-a: rgba(8, 148, 179, 0.05);
     --ambient-b: rgba(124, 58, 237, 0.05);
+    /* Status colours need their own light steps: the dark ones sit at 1.7–2.8:1
+       on white, under the 3:1 floor for a non-text mark. These were picked with
+       the palette validator — all checks pass on #ffffff, and the one residual
+       WARN (amber at 2.94:1) is covered by the visible value labels every mark
+       carries. */
+    --ok: #047857;
+    --warn: #ca8a04;
+    --err: #be123c;
     color-scheme: light;
 }
 
@@ -1705,4 +1713,435 @@ html[data-theme="light"] .token-badge {
 
 .causal-graph-container .react-flow__edge-textbg {
     fill: var(--surface-1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Effect estimate — interval plot + refutation strip.
+   Every plot shares ONE grid column, so "same scale" is literally the same
+   pixels rather than a claim. Marks carry status colour; text stays on text
+   tokens; every value is directly labelled, so nothing is gated behind hover.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.effect-chart {
+    display: grid;
+    grid-template-columns: minmax(56px, 22%) 1fr auto;
+    align-items: center;
+    column-gap: 8px;
+    margin: 10px 0 2px;
+}
+
+.effect-value-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 2px;
+}
+
+.effect-point-value {
+    /* Proportional figures: tabular-nums makes a standalone value look loose. */
+    font-size: 19px;
+    font-weight: 650;
+    color: var(--text-1);
+}
+
+.effect-ci-text {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-2);
+}
+
+.effect-verdict {
+    margin-left: auto;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    color: var(--text-2);
+    border: 1px solid var(--border);
+}
+
+.effect-verdict.ok {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.effect-verdict.warn {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+.plot-gutter {
+    font-size: 11px;
+    color: var(--text-3);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plot-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.plot-track {
+    position: relative;
+    height: 24px;
+}
+
+/* Hairline, solid, one step off the surface — a dashed rule would read as a
+   threshold rather than the origin. Repeated on every row so the reader can
+   see which side of zero each re-estimate landed. */
+.effect-zero {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    width: 1px;
+    background: var(--border);
+}
+
+.effect-whisker {
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 1px;
+    background: var(--text-3);
+    transform: scaleX(0);
+    transform-origin: center;
+    animation: whisker-grow var(--t-slow) var(--ease-out) 120ms forwards;
+}
+
+.effect-track.ok .effect-whisker { background: var(--ok); }
+.effect-track.warn .effect-whisker { background: var(--warn); }
+
+@keyframes whisker-grow {
+    to { transform: scaleX(1); }
+}
+
+/* Caps, so a short interval still reads as an interval. */
+.effect-whisker::before,
+.effect-whisker::after {
+    content: "";
+    position: absolute;
+    top: -4px;
+    width: 2px;
+    height: 10px;
+    border-radius: 1px;
+    background: inherit;
+}
+
+.effect-whisker::before { left: 0; }
+.effect-whisker::after  { right: 0; }
+
+.effect-point {
+    position: absolute;
+    top: 50%;
+    width: 11px;
+    height: 11px;
+    margin: -5.5px 0 0 -5.5px;
+    border-radius: 50%;
+    background: var(--text-1);
+    /* 2px surface ring keeps the marker legible on top of the whisker. */
+    box-shadow: 0 0 0 2px var(--surface-1);
+}
+
+.effect-track.ok .effect-point   { background: var(--ok); }
+.effect-track.warn .effect-point { background: var(--warn); }
+
+.effect-axis {
+    height: 15px;
+}
+
+.axis-tick {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.axis-tick.zero {
+    color: var(--text-2);
+}
+
+.effect-method {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    font-size: 10.5px;
+    color: var(--text-3);
+}
+
+/* ── Refutation strip ──────────────────────────────────────────────────── */
+
+.refute-caption {
+    grid-column: 1 / -1;
+    margin: 8px 0 2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 10.5px;
+    color: var(--text-3);
+}
+
+.refute-name {
+    font-size: 11px;
+    color: var(--text-2);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Comfortably past the 24px hit-target minimum. */
+.refute-track {
+    height: 26px;
+}
+
+.refute-shift {
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 1px;
+    background: var(--text-3);
+    opacity: 0.5;
+}
+
+.refute-dot {
+    position: absolute;
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--surface-1);
+    animation: dot-in var(--t-med) var(--ease-out) both;
+}
+
+/* Where the estimate started: hollow, so it reads as the reference point. */
+.refute-dot.original {
+    background: var(--surface-1);
+    border: 2px solid var(--text-3);
+}
+
+.refute-dot.moved.pass { background: var(--ok); }
+.refute-dot.moved.fail { background: var(--err); }
+
+@keyframes dot-in {
+    from { opacity: 0; transform: scale(0.6); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+.refute-verdict {
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.refute-verdict.pass { color: var(--ok); }
+.refute-verdict.fail { color: var(--err); }
+
+.refute-p {
+    font-family: var(--font-mono);
+    font-weight: 400;
+    color: var(--text-3);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Step drawer — drill-down over causal_ledger.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* React Flow owns the click (onNodeClick); the node only signals the
+   affordance where a handler is actually wired — see CausalGraph. */
+.causal-graph-container.interactive .dag-node {
+    cursor: pointer;
+}
+
+.dag-node.highlighted {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+    animation: node-ping var(--t-med) var(--ease-out);
+}
+
+@keyframes node-ping {
+    0%   { transform: scale(1); }
+    50%  { transform: scale(1.09); }
+    100% { transform: scale(1); }
+}
+
+.drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    /* Light dim only: this is a side panel, not a true modal, and the DAG
+       behind it must stay legible — hovering an `affected` chip highlights a
+       node out there. */
+    background: rgba(0, 0, 0, 0.22);
+    animation: fade-in var(--t-med) var(--ease-out);
+}
+
+@keyframes fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.step-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 41;
+    width: min(420px, 92vw);
+    padding: 18px 20px;
+    overflow-y: auto;
+    background: var(--surface-1);
+    border-left: 1px solid var(--border);
+    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35);
+    animation: drawer-in var(--t-med) var(--ease-out);
+}
+
+@keyframes drawer-in {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
+}
+
+.drawer-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.drawer-title {
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--text-1);
+}
+
+.drawer-close {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    color: var(--text-2);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.drawer-close:hover {
+    color: var(--text-1);
+    background: var(--surface-2);
+}
+
+.drawer-meta {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.drawer-status,
+.drawer-kind,
+.drawer-verdict {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    color: var(--text-2);
+}
+
+.drawer-status.done    { color: var(--ok); }
+.drawer-status.failed  { color: var(--err); }
+.drawer-status.active  { color: var(--cyan); }
+.drawer-status.invalidated,
+.drawer-status.replanned { color: var(--warn); }
+
+.drawer-verdict.success { color: var(--ok); }
+.drawer-verdict.failure { color: var(--err); }
+
+.drawer-empty {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-3);
+}
+
+.drawer-record {
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+}
+
+.drawer-record-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.drawer-step-id {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-2);
+}
+
+.drawer-field {
+    margin-bottom: 10px;
+}
+
+.drawer-field p {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-1);
+    overflow-wrap: anywhere;
+}
+
+.drawer-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.drawer-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 5px;
+}
+
+.affected-chip {
+    font-family: inherit;
+    font-size: 11.5px;
+    padding: 3px 9px;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.affected-chip:hover,
+.affected-chip:focus-visible {
+    color: var(--cyan);
+    border-color: var(--cyan);
+}
+
+@media (max-width: 640px) {
+    .step-drawer {
+        width: 100vw;
+    }
 }

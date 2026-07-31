@@ -5,6 +5,7 @@
 // default, so — as in the vanilla version — these render as inert text.
 
 import { fmtNum } from "../../lib/markdown";
+import { EffectChart } from "./EffectChart";
 import type {
   CounterfactualResult,
   EffectEstimate,
@@ -87,36 +88,9 @@ export function EstimandCard({ estimand, effect, counterfactual, reconcile }: Pr
             </div>
           )}
 
-          {effect?.method && (
-            <>
-              <div className="estimand-row effect">
-                <span className="effect-value">
-                  {`effect ${fmtNum(effect.point)}` +
-                    (effect.ci_low != null && effect.ci_high != null
-                      ? ` (95% CI ${fmtNum(effect.ci_low)} to ${fmtNum(effect.ci_high)})`
-                      : "")}
-                </span>
-                <span className="estimand-note">
-                  {effect.method + (effect.n_obs ? ` · n=${effect.n_obs}` : "")}
-                </span>
-              </div>
-
-              {(effect.refutations || []).length > 0 && (
-                <div className="estimand-row">
-                  <span className="estimand-label">robustness</span>
-                  {effect.refutations.map((r, i) => (
-                    <span
-                      key={`${r.method}-${i}`}
-                      className={"refute-badge " + (r.passed ? "pass" : "fail")}
-                      title={r.p_value != null ? `p = ${fmtNum(r.p_value, 2)}` : undefined}
-                    >
-                      {`${String(r.method || "").split("_")[0]} ${r.passed ? "✓" : "✗"}`}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+          {/* The interval and the refutations were text-only, which hid the one
+              thing that matters most: whether the CI clears zero. */}
+          {effect?.method && <EffectChart effect={effect} />}
 
           {counterfactual && counterfactual.delta != null && (
             <div className="estimand-row">

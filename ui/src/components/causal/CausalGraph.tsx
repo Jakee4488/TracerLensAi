@@ -32,13 +32,17 @@ const LEGEND: [string, string][] = [
  * `--hop` drives the ripple's transition-delay purely in CSS — no JS timers.
  */
 const CausalNodeView = memo(function CausalNodeView({ data }: NodeProps<CausalNode>) {
-  const { label, kind, status, hop, onCritical } = data as CausalNodeData;
+  const { label, kind, status, hop, onCritical, highlighted } = data as CausalNodeData;
   return (
     <div
-      className={`dag-node ${status}${onCritical ? " critical" : ""}`}
+      className={
+        `dag-node ${status}` +
+        (onCritical ? " critical" : "") +
+        (highlighted ? " highlighted" : "")
+      }
       style={{ ["--hop" as string]: hop }}
       data-status={status}
-      title={`${label} · ${kind} · ${status}`}
+      title={`${label} · ${kind} · ${status} — click for details`}
     >
       <Handle type="target" position={Position.Top} isConnectable={false} />
       <span className="dag-node-label">{label}</span>
@@ -49,7 +53,14 @@ const CausalNodeView = memo(function CausalNodeView({ data }: NodeProps<CausalNo
 
 const NODE_TYPES: NodeTypes = { causal: CausalNodeView };
 
-export function CausalGraph({ graph }: { graph: CausalGraphType }) {
+interface Props {
+  graph: CausalGraphType;
+  /** Opens the drill-down drawer for a component. */
+  onOpenNode?: (id: string, label: string) => void;
+  highlightedId?: string | null;
+}
+
+export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
   const key = topologyKey(graph);
 
   // Read through a ref so the memo below can depend on the topology key alone.
@@ -90,18 +101,43 @@ export function CausalGraph({ graph }: { graph: CausalGraphType }) {
   const edges = useMemo(() => buildEdges(graph), [graph]);
   const height = useMemo(() => graphHeight(base), [base]);
 
+  const rendered = useMemo(
+    () =>
+      nodes.map((node) => ({
+        ...node,
+        // Selectable so React Flow gives the node pointer events at all: it
+        // sets pointer-events:none inline unless something needs them, and an
+        // onClick inside the custom node is invisible to that decision.
+        selectable: true,
+        focusable: true,
+        data: { ...node.data, highlighted: highlightedId === node.id },
+      })),
+    [nodes, highlightedId],
+  );
+
+  // Mid-run the ledger is still partial, so the streaming graph is rendered
+  // without a click handler. Don't advertise an affordance that isn't there.
+  const interactive = !!onOpenNode;
+
   return (
     <div className="graph-card">
-      <div className="causal-graph-container" style={{ height }}>
+      <div
+        className={"causal-graph-container" + (interactive ? " interactive" : "")}
+        style={{ height }}
+      >
         <ReactFlow
-          nodes={nodes}
+          nodes={rendered}
           edges={edges}
           nodeTypes={NODE_TYPES}
           fitView
           fitViewOptions={{ padding: 0.12 }}
+          onNodeClick={(_, node) =>
+            onOpenNode?.(node.id, (node.data as CausalNodeData).label)
+          }
           nodesDraggable={false}
           nodesConnectable={false}
-          elementsSelectable={false}
+          elementsSelectable
+          nodesFocusable
           panOnScroll={false}
           zoomOnScroll={false}
           preventScrolling={false}

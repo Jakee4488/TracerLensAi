@@ -256,3 +256,76 @@ def test_critical_path_is_marked(page: Page, server):
     send_prompt(page, "Why does it rain?")
     # The canned critical path covers all three nodes.
     expect(page.locator(".dag-node.critical")).to_have_count(3, timeout=15000)
+
+
+# ── Effect chart & drill-down drawer ──────────────────────────────────────────
+
+
+def test_effect_chart_replaces_text_estimate(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Does price affect demand?")
+    expect(page.locator(".effect-chart")).to_be_visible(timeout=20000)
+    # The canned CI (-1.61, -1.23) sits entirely below zero.
+    expect(page.locator(".effect-verdict")).to_have_text("excludes zero")
+    expect(page.locator(".effect-whisker")).to_have_count(1)
+    expect(page.locator(".effect-point")).to_have_count(1)
+    # Values stay readable without hovering anything.
+    expect(page.locator(".effect-point-value")).to_have_text("-1.42")
+    expect(page.locator(".axis-tick.zero")).to_have_text("0")
+
+
+def test_refutations_share_the_effect_scale(page: Page, server):
+    """The caption claims one scale; the plot column must literally be the same
+    pixels, or the dots are not comparable to the interval above them."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Does price affect demand?")
+    expect(page.locator(".refute-track")).to_have_count(2, timeout=20000)
+    box = "el => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.width)]; }"
+    effect_track = page.locator(".effect-track").evaluate(box)
+    for i in range(2):
+        assert page.locator(".refute-track").nth(i).evaluate(box) == effect_track, \
+            "refutation track is not aligned with the effect track"
+    # Pass/fail never rides on colour alone.
+    expect(page.locator(".refute-verdict").first).to_contain_text("pass")
+
+
+def test_node_click_opens_drawer(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Drill-down lives on the finished panel — mid-run the ledger is partial.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    page.locator(".dag-node", has_text="Analysis").click()
+    drawer = page.locator(".step-drawer")
+    expect(drawer).to_be_visible()
+    expect(page.locator(".drawer-title")).to_have_text("Analysis")
+    # expected/observed come straight off ChangeRecord.
+    expect(drawer).to_contain_text("estimator returned no rows")
+    page.keyboard.press("Escape")
+    expect(drawer).to_have_count(0)
+
+
+def test_drawer_affected_chips_highlight_the_dag(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Drill-down lives on the finished panel — mid-run the ledger is partial.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    page.locator(".dag-node", has_text="Analysis").click()
+    chip = page.locator(".affected-chip")
+    expect(chip).to_have_count(1)          # the failed step invalidated `outcome`
+    expect(page.locator(".dag-node.highlighted")).to_have_count(0)
+    chip.hover()
+    expect(page.locator(".dag-node.highlighted")).to_have_count(1)
+
+
+def test_drawer_empty_state_for_unexecuted_component(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Drill-down lives on the finished panel — mid-run the ledger is partial.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    page.locator(".dag-node", has_text="Outcome").click()
+    expect(page.locator(".drawer-empty")).to_contain_text("never executed")

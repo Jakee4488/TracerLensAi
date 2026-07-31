@@ -639,18 +639,32 @@ async def analyze_prompt(
                 ],
                 "note": "",
             }
-            # Ledger entries back the click-through drawer; `affected` is what
-            # makes an invalidation visible without re-running the pipeline.
+            # Ledger entries back the click-through drawer. The middle entry is
+            # a failure that invalidated a downstream component, so the offline
+            # path exercises `affected` (the chip list + DAG cross-highlight)
+            # and the fail styling, not just the happy case.
             mock_ledger = [
-                {"seq": 1, "step_id": "s1", "component_id": "analysis",
-                 "expected": "Advance 'Analysis'", "observed": "mocked in proxy",
+                {"seq": 1, "step_id": "s1", "component_id": "inputs",
+                 "expected": "Collect inputs", "observed": "mocked in proxy",
                  "verdict": "success", "affected": [], "plan_version": 1, "ts": ""},
+                {"seq": 2, "step_id": "s2", "component_id": "analysis",
+                 "expected": "Advance 'Analysis'",
+                 "observed": "estimator returned no rows; replanned",
+                 "verdict": "failure", "affected": ["outcome"], "plan_version": 1, "ts": ""},
+                {"seq": 3, "step_id": "s3", "component_id": "analysis",
+                 "expected": "Advance 'Analysis' (replanned)",
+                 "observed": "mocked in proxy", "verdict": "success",
+                 "affected": [], "plan_version": 2, "ts": ""},
             ]
             mock_plan = {
-                "version": 1,
+                "version": 2,
                 "steps": [
-                    {"id": "s1", "component_id": "analysis", "title": "Advance 'Analysis'",
+                    {"id": "s1", "component_id": "inputs", "title": "Collect inputs",
                      "status": "done"},
+                    {"id": "s2", "component_id": "analysis", "title": "Advance 'Analysis'",
+                     "status": "failed"},
+                    {"id": "s3", "component_id": "analysis",
+                     "title": "Advance 'Analysis' (replanned)", "status": "done"},
                 ],
             }
         report = {
