@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -85,3 +85,15 @@ terraform/firebase-debug.log
 
 test.ipynb
 .claude
+
+# Ad-hoc CSVs generated while experimenting with the causal pipeline.
+# tests/fixtures/sales.csv is the committed demo dataset and is exempt below;
+# anything else dropped in that directory is scratch and stays untracked.
+tests/fixtures/*.csv
+!tests/fixtures/sales.csv
+regenerated.csv
+
+# React UI build artifacts (ui/dist is produced by `npm run build` and is what
+# both the proxy and Firebase Hosting serve).
+ui/node_modules/
+ui/dist/

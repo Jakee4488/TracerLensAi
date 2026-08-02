@@ -1,4 +1,10 @@
-"""Proxy tests for the causal reasoning transport (marker + state_delta)."""
+"""Proxy tests for the causal reasoning transport (marker + state_delta).
+
+/analyze-prompt streams SSE, so these assert on the terminal `done` frame via
+the `sse_report` helper in conftest. `done` is a superset of the JSON body the
+endpoint used to return, which is what keeps history persistence and replay
+unchanged across the transport swap.
+"""
 
 import json
 
@@ -7,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy.main as proxy_main
+from tests.conftest import sse_frames, sse_report
 
 
 class DummyCredentials:
@@ -24,6 +31,10 @@ class DummyStreamResponse:
 
     async def aread(self):
         return self._body
+
+    async def aiter_lines(self):
+        for line in self._body.decode("utf-8").splitlines():
+            yield line
 
     async def __aenter__(self):
         return self
@@ -114,7 +125,7 @@ def test_state_delta_populates_causal_fields(client: TestClient, monkeypatch):
          "usage_metadata": {"total_token_count": 25}},
     ]
     install_dummy_engine(monkeypatch, events)
-    data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
 
     # Final answer preferred over concatenated intermediate text.
     assert data["response"] == "The clean answer."
@@ -141,8 +152,8 @@ def test_state_delta_carries_reconcile_and_web(client: TestClient, monkeypatch):
             "causal_final_answer": "done"}}},
     ]
     install_dummy_engine(monkeypatch, events)
-    data = client.post("/analyze-prompt",
-                       json={"prompt": "Q", "causal_reasoning": True, "web_search": True}).json()
+    data = sse_report(client.post("/analyze-prompt",
+                       json={"prompt": "Q", "causal_reasoning": True, "web_search": True}))
     assert data["causal_graph_reconcile"] == reconcile
     assert data["causal_web_retrieval"] == web
 
@@ -150,7 +161,7 @@ def test_state_delta_carries_reconcile_and_web(client: TestClient, monkeypatch):
 def test_state_delta_camel_case_accepted(client: TestClient, monkeypatch):
     events = [{"actions": {"stateDelta": {"causal_final_answer": "camel"}}}]
     install_dummy_engine(monkeypatch, events)
-    data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
     assert data["response"] == "camel"
 
 
@@ -161,7 +172,7 @@ def test_non_causal_response_unchanged(client: TestClient, monkeypatch):
          "usage_metadata": {"total_token_count": 42}},
     ]
     install_dummy_engine(monkeypatch, events)
-    data = client.post("/analyze-prompt", json={"prompt": "Q"}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q"}))
     assert data["response"] == "Hello! How can I help?"
     assert data["total_token_count"] == 42
     assert data["causal_reasoning_steps"] == []
@@ -179,7 +190,7 @@ def test_fenced_block_fallback(client: TestClient, monkeypatch):
     text = f"intermediate noise\n```causal-json\n{json.dumps(payload)}\n```"
     events = [{"content": {"parts": [{"text": text}]}}]
     install_dummy_engine(monkeypatch, events)
-    data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
     assert data["response"] == "Fallback answer."
     assert data["causal_reasoning_steps"] == ["s1 ok"]
     assert data["causal_graph"]["nodes"] == [{"id": "a"}]
@@ -190,14 +201,14 @@ def test_fenced_block_fallback(client: TestClient, monkeypatch):
 def test_fallback_not_parsed_when_causal_disabled(client: TestClient, monkeypatch):
     text = '```causal-json\n{"steps": ["x"], "final_answer": "y"}\n```'
     install_dummy_engine(monkeypatch, [{"content": {"parts": [{"text": text}]}}])
-    data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": False}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": False}))
     assert data["causal_reasoning_steps"] == []
 
 
 def test_marker_stripped_from_response_text(client: TestClient, monkeypatch):
     text = f"echoing {proxy_main.CAUSAL_MODE_MARKER} back"
     install_dummy_engine(monkeypatch, [{"content": {"parts": [{"text": text}]}}])
-    data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
     assert proxy_main.CAUSAL_MODE_MARKER not in data["response"]
 
 
@@ -205,7 +216,7 @@ def test_marker_stripped_from_response_text(client: TestClient, monkeypatch):
 
 def test_mock_path_returns_canned_graph(client: TestClient, monkeypatch):
     monkeypatch.delenv("AGENT_ENGINE_ENDPOINT", raising=False)
-    data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
     # 3 base steps + the canned graph-fix line.
     assert len(data["causal_reasoning_steps"]) == 4
     assert {n["id"] for n in data["causal_graph"]["nodes"]} == {"inputs", "analysis", "outcome"}
@@ -222,21 +233,184 @@ def test_mock_path_returns_canned_graph(client: TestClient, monkeypatch):
 
 def test_mock_path_web_on_returns_dataset(client: TestClient, monkeypatch):
     monkeypatch.delenv("AGENT_ENGINE_ENDPOINT", raising=False)
-    data = client.post("/analyze-prompt",
-                       json={"prompt": "Q", "causal_reasoning": True, "web_search": True}).json()
+    data = sse_report(client.post("/analyze-prompt",
+                       json={"prompt": "Q", "causal_reasoning": True, "web_search": True}))
     assert data["causal_web_retrieval"]["mode"] == "dataset"
     assert any(s.startswith("[web]") for s in data["causal_reasoning_steps"])
 
 
 def test_mock_path_no_graph_when_disabled(client: TestClient, monkeypatch):
     monkeypatch.delenv("AGENT_ENGINE_ENDPOINT", raising=False)
-    data = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": False}).json()
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": False}))
     assert data["causal_reasoning_steps"] == []
     assert data["causal_graph"] is None
     assert data["causal_estimand"] is None
     assert data["causal_effect"] is None
     assert data["causal_graph_reconcile"] is None
     assert data["causal_web_retrieval"] is None
+
+
+# ── SSE transport contract ────────────────────────────────────────────────────
+
+# The exact key set /analyze-prompt returned before it became a stream. The
+# `done` frame must remain a superset: history persistence (_causal_payload)
+# and replay read these names.
+LEGACY_REPORT_KEYS = {
+    "status", "response", "total_token_count", "causal_reasoning_steps",
+    "causal_graph", "causal_status", "causal_estimand", "causal_effect",
+    "causal_counterfactual", "causal_graph_reconcile", "causal_web_retrieval",
+}
+
+
+def test_analyze_prompt_is_event_stream(client: TestClient, monkeypatch):
+    install_dummy_engine(monkeypatch, [{"actions": {"state_delta": {"causal_final_answer": "x"}}}])
+    response = client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    # Buffering by an intermediary would defeat the whole point.
+    assert response.headers["x-accel-buffering"] == "no"
+
+
+def test_done_frame_is_superset_of_legacy_report(client: TestClient, monkeypatch):
+    install_dummy_engine(monkeypatch, [{"actions": {"state_delta": {"causal_final_answer": "x"}}}])
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
+    assert LEGACY_REPORT_KEYS <= set(data)
+    # ...plus the two keys the report used to collect and then drop.
+    assert "causal_ledger" in data and "causal_plan" in data
+
+
+def test_ledger_and_plan_are_forwarded(client: TestClient, monkeypatch):
+    ledger = [{"seq": 1, "step_id": "s1", "component_id": "analysis",
+               "expected": "do the thing", "observed": "did the thing",
+               "verdict": "success", "affected": ["outcome"], "plan_version": 1, "ts": ""}]
+    plan = {"version": 1, "steps": [{"id": "s1", "component_id": "analysis"}]}
+    install_dummy_engine(monkeypatch, [
+        {"actions": {"state_delta": {"causal_ledger": ledger, "causal_plan": plan,
+                                     "causal_final_answer": "done"}}},
+    ])
+    data = sse_report(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
+    assert data["causal_ledger"] == ledger
+    assert data["causal_plan"] == plan
+
+
+def test_graph_frame_per_mutation(client: TestClient, monkeypatch):
+    """The executor loop re-serializes the graph every iteration; each one must
+    reach the client, or the DAG cannot animate."""
+    def graph(status):
+        return {"nodes": [{"id": "a", "label": "A", "kind": "process", "status": status}],
+                "edges": [], "critical_path": ["a"], "version": 1}
+
+    install_dummy_engine(monkeypatch, [
+        {"author": "CausalDecomposer",
+         "actions": {"state_delta": {"causal_graph": graph("pending"),
+                                     "causal_graph_full": {}, "causal_plan": {}}}},
+        {"author": "CausalStepController",
+         "actions": {"state_delta": {"causal_graph": graph("active")}}},
+        {"author": "CausalStepController",
+         "actions": {"state_delta": {"causal_graph": graph("done"),
+                                     "causal_final_answer": "ok"}}},
+    ])
+    frames = sse_frames(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
+    graphs = [payload for name, payload in frames if name == "graph"]
+    assert len(graphs) == 3
+    assert [g["nodes"][0]["status"] for g in graphs] == ["pending", "active", "done"]
+
+
+def test_progress_frames_carry_stage_and_only_new_steps(client: TestClient, monkeypatch):
+    # causal_steps is rewritten wholesale, so each frame must carry only the
+    # lines appended since the last one.
+    install_dummy_engine(monkeypatch, [
+        {"author": "CausalRouterAgent",
+         "actions": {"state_delta": {"causal_steps": ["[route] start"],
+                                     "causal_status": {"phase": "decomposing"}}}},
+        {"author": "CausalStepController",
+         "actions": {"state_delta": {"causal_steps": ["[route] start", "[ok] s1"],
+                                     "causal_status": {"phase": "executing"}}}},
+        {"author": "CausalSynthesizer",
+         "actions": {"state_delta": {"causal_final_answer": "done"}}},
+    ])
+    frames = sse_frames(client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True}))
+    progress = [payload for name, payload in frames if name == "progress"]
+    assert [p["stage"] for p in progress] == ["route", "execute", "synthesize"]
+    assert [p["steps"] for p in progress] == [["[route] start"], ["[ok] s1"], []]
+    assert progress[1]["phase"] == "executing"
+
+
+def test_upstream_error_becomes_error_frame(client: TestClient, monkeypatch):
+    """Once headers are flushed an HTTPException can't reach the client, so a
+    mid-stream failure has to arrive as a frame."""
+    monkeypatch.setenv("AGENT_ENGINE_ENDPOINT", "https://example.com/v1/reasoningEngines/123:query")
+    monkeypatch.setattr("google.auth.default", lambda scopes: (DummyCredentials(), "fake-project"))
+
+    class FailingResponse(DummyStreamResponse):
+        status_code = 500
+
+        async def aread(self):
+            return b"engine exploded"
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def stream(self, method, url, json=None, headers=None):
+            return FailingResponse(b"")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
+    response = client.post("/analyze-prompt", json={"prompt": "Q"})
+    assert response.status_code == 200  # headers were already committed
+    errors = [p for name, p in sse_frames(response) if name == "error"]
+    assert len(errors) == 1 and "engine exploded" in errors[0]["detail"]
+
+
+def test_mock_stream_animates_the_graph(client: TestClient, monkeypatch):
+    monkeypatch.delenv("AGENT_ENGINE_ENDPOINT", raising=False)
+    frames = sse_frames(client.post("/analyze-prompt",
+                                    json={"prompt": "Q", "causal_reasoning": True}))
+    names = [n for n, _ in frames]
+    assert names[-1] == "done"
+    graphs = [p for n, p in frames if n == "graph"]
+    # One on build + two per node (active, then its final status).
+    assert len(graphs) == 1 + 2 * 3
+    # First frame is all-pending; last agrees with the done frame.
+    assert {n["status"] for n in graphs[0]["nodes"]} == {"pending"}
+    assert graphs[-1]["nodes"] == sse_report(
+        client.post("/analyze-prompt", json={"prompt": "Q", "causal_reasoning": True})
+    )["causal_graph"]["nodes"]
+    assert [p["stage"] for n, p in frames if n == "progress"][:3] == \
+        ["route", "decompose", "graph"]
+
+
+def test_mock_stream_non_causal_is_single_done_frame(client: TestClient, monkeypatch):
+    monkeypatch.delenv("AGENT_ENGINE_ENDPOINT", raising=False)
+    frames = sse_frames(client.post("/analyze-prompt", json={"prompt": "Q"}))
+    assert [n for n, _ in frames] == ["done"]
+
+
+# ── Stage resolution ──────────────────────────────────────────────────────────
+
+def test_resolve_stage_maps_agent_names():
+    assert proxy_main._resolve_stage("CausalRouterAgent", {}) == "route"
+    assert proxy_main._resolve_stage("CausalWebIngestor", {}) == "web"
+    assert proxy_main._resolve_stage("CausalStepExecutor", {}) == "execute"
+    assert proxy_main._resolve_stage("CausalSynthesizer", {}) == "synthesize"
+    assert proxy_main._resolve_stage("SomeOtherAgent", {}) is None
+    assert proxy_main._resolve_stage(None, {}) is None
+
+
+def test_resolve_stage_separates_graph_build_from_decompose():
+    # build_graph_and_plan is an after-callback on CausalDecomposer, so only the
+    # delta keys distinguish the two.
+    assert proxy_main._resolve_stage("CausalDecomposer", {}) == "decompose"
+    assert proxy_main._resolve_stage(
+        "CausalDecomposer", {"causal_graph_full": {}}) == "graph"
+    assert proxy_main._resolve_stage(
+        "CausalDecomposer", {"causal_plan": {}}) == "graph"
 
 
 # ── Fallback extractor unit tests ─────────────────────────────────────────────

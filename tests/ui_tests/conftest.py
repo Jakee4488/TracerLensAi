@@ -31,7 +31,22 @@ CONSOLE_NOISE = (
 
 
 @pytest.fixture(scope="session")
-def server():
+def ui_bundle():
+    """Ensure the React bundle exists — the proxy serves ui/dist, not source.
+
+    Fails loudly rather than letting the suite run against a stale or missing
+    bundle, which would surface as a wall of confusing selector timeouts.
+    """
+    dist = REPO_ROOT / "ui" / "dist"
+    if not (dist / "index.html").exists():
+        raise RuntimeError(
+            f"UI bundle missing at {dist}. Run: cd ui && npm ci && npm run build"
+        )
+    return dist
+
+
+@pytest.fixture(scope="session")
+def server(ui_bundle):  # noqa: ARG001 — ordering dependency, not a value
     """Boot the proxy in mock mode and wait for /health."""
     env = {k: v for k, v in os.environ.items() if k != "AGENT_ENGINE_ENDPOINT"}
     proc = subprocess.Popen(

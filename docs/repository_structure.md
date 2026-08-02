@@ -12,7 +12,8 @@ For a high-level overview of the project, see the [README](../README.md). For th
 TracerLensAi/
 ├── .github/                         # CI/CD pipelines & badges
 ├── docs/                            # Documentation (this folder)
-├── proxy/                           # Cloud Run gateway: FastAPI proxy & static frontend
+├── proxy/                           # Cloud Run gateway: FastAPI proxy & compiled frontend
+├── ui/                              # React + Vite + TypeScript frontend (source)
 ├── src/                             # ADK agent: agent logic, causal engine, agent server
 ├── terraform/                       # GCP Infrastructure as Code
 ├── tests/                           # Test suite (pytest, Playwright, eval harness)
@@ -20,9 +21,10 @@ TracerLensAi/
 ├── agents-cli-manifest.yaml         # Config for the Gemini Enterprise Agent Platform (agents-cli)
 ├── deployment_metadata.json         # Recorded Agent Engine id (kept current by agents-cli)
 ├── deploy_to_gcp.sh                 # One-step deployment: Agent Engine → Cloud Run → Firebase Hosting
+├── docker-compose.yml               # Production-style compose: builds and runs proxy + React UI
 ├── docker-compose.dev.yml           # Local development environment
 ├── Dockerfile                       # Container build for the ADK agent server (src/)
-├── Dockerfile.proxy                 # Container build for the Cloud Run proxy (proxy/)
+├── Dockerfile.proxy                 # Multi-stage: Node 20 builds ui/, Python packages proxy/
 ├── firebase.json                    # Firebase Hosting configuration + Cloud Run rewrite
 ├── .firebaserc                      # Firebase CLI project binding (icarus-agent-26)
 ├── requirements.txt                 # Python dependencies (agent + proxy)
@@ -47,18 +49,66 @@ Agent Engine. It never holds API keys — it uses Application Default Credential
 ```text
 proxy/
 ├── main.py                          # FastAPI proxy: auth, history, uploads, agent proxy
-└── static/                          # Frontend assets (served by Hosting & the proxy)
-    ├── index.html                   # UI shell + Firebase Auth bridge + CDN libs
-    ├── causal-agent.js              # Client logic: chat, uploads, history, Mermaid graph
-    └── styles.css                   # Design system (dark/light), animations, components
+└── static/                          # Compiled React bundle (output of ui/ Docker build stage)
+    └── index.html                   # Entry point served by the proxy
 ```
 
 | File | Role |
 |---|---|
 | `proxy/main.py` | Endpoints: `GET /` (redirect to UI), `GET /health`, `GET /history` & `GET /history/{chat_id}` (Firestore-backed, auth required), `POST /upload` (text file attachments), `POST /analyze-prompt` (prepends the `[[causal:on]]`/`[[web:on]]` markers, streams to the Agent Engine, collects every causal `state_delta` incl. `causal_estimand`/`causal_effect`/`causal_counterfactual`/`causal_graph_reconcile`/`causal_web_retrieval`, sums token usage, persists to Firestore). Optional Firebase auth and CORS allow-list. |
-| `proxy/static/index.html` | Two-panel layout (collapsible sidebar + chat area); loads `marked`, `DOMPurify`, `highlight.js`, `mermaid` from CDNs; wires the Firebase Google Sign-In bridge (`window.tracerAuth`) and the API base URL. |
-| `proxy/static/causal-agent.js` | Sends prompts, renders sanitized Markdown, draws the causal graph as a Mermaid flowchart, manages uploads (drag-drop + chips), and loads conversation history. |
-| `proxy/static/styles.css` | CSS design system: theme variables, causal panel, graph legend, composer, and responsive layout. |
+| `proxy/static/` | **Compiled output** of the React + Vite build. Do not edit directly; regenerate with `docker compose up --build` or `cd ui && npm run build`. |
+
+---
+
+## `ui/` — React + Vite Frontend (Source)
+
+The browser UI is a **React 18 + TypeScript + Vite** application. The `Dockerfile.proxy` Node stage runs `npm ci && npm run build` and copies `ui/dist/` to `proxy/static/` inside the container. In production the FastAPI proxy serves these files statically — there is no Node process at runtime.
+
+```text
+ui/
+├── src/
+│   ├── App.tsx                      # Root component: layout, state, send / stop logic
+│   ├── main.tsx                     # React entry point (mounts <App />, StrictMode)
+│   ├── types.ts                     # Shared TypeScript interfaces (ChatMessage, Report, …)
+│   ├── styles.css                   # Design system: tokens, layout, components, animations
+│   ├── components/
+│   │   ├── ChatHeader.tsx           # Header: token badge, model selector, toggles, auth chip
+│   │   ├── Composer.tsx             # Input pill: textarea, attach btn, send/stop button swap
+│   │   ├── DropOverlay.tsx          # Full-page drag-and-drop file overlay
+│   │   ├── MessageList.tsx          # Message stream, starter cards, pending/live bubble
+│   │   ├── Sidebar.tsx              # Brand, conversation history, settings (model/causal/web/theme)
+│   │   └── causal/
+│   │       ├── CausalPanel.tsx      # Right-pane container (head, estimand, timeline, graph, drawer)
+│   │       ├── CausalGraph.tsx      # ReactFlow DAG: nodes by status/kind, click-through to drawer
+│   │       ├── EstimandCard.tsx     # DoWhy identification card + EffectChart
+│   │       ├── EffectChart.tsx      # Effect estimate bar + CI + refutation rows
+│   │       ├── StepDrawer.tsx       # Slide-in overlay: ledger for a specific node
+│   │       └── WorkflowTimeline.tsx # Live pipeline stages with elapsed-time counters (rAF)
+│   ├── hooks/
+│   │   ├── useAttachments.ts        # Attachment upload state machine (chips, upload, remove)
+│   │   ├── useHistory.ts            # Firestore conversation history pagination
+│   │   └── useRunProgress.ts        # SSE → Stage[] + live CausalGraph state
+│   └── lib/
+│       ├── api.ts                   # analyzePrompt (SSE + AbortSignal), uploadFile, fetchHistory
+│       ├── firebase.ts              # Firebase Auth (watchAuth, getIdToken, sign-in/out)
+│       ├── graph.ts                 # buildReactFlowGraph: CausalGraph → ReactFlow + Dagre layout
+│       ├── ids.ts                   # generateSessionId, nextMessageKey, getAnonId
+│       ├── markdown.ts              # renderMarkdown: marked + DOMPurify + highlight.js
+│       ├── sse.ts                   # readSse: async SSE frame generator from a fetch Response
+│       ├── stages.ts                # updateStages: ADK progress frames → typed Stage state machine
+│       └── theme.ts                 # getTheme / setTheme: localStorage + <html data-theme>
+├── package.json                     # React, ReactFlow, Vite, TypeScript deps
+└── vite.config.ts                   # Build config: proxy /api → localhost:8080 in dev mode
+```
+
+| File | Role |
+|---|---|
+| `App.tsx` | All top-level React state: messages, input, causal/web/model toggles, `selectedMessageId` for the right pane, `abortControllerRef` for stream cancellation, `isSendingRef` sync lock. Calls `send(overrideText?)` (assembles + streams the request, catches `AbortError` silently) and `stop()` (fires the abort). |
+| `Composer.tsx` | Renders the input pill. While `isSending` is true, the `➤` send button is replaced by a red `■` stop button that calls `onStop`. |
+| `MessageList.tsx` | User messages, AI markdown bubbles, error rows. When messages are empty: starter prompt cards (call `onPromptClick` which directly invokes `send()`). Pending AI bubble: animated `⚯ Causal reasoning: <active stage>` label while the agent runs; `⚯ View Causal Details →` button on completed causal messages. |
+| `WorkflowTimeline.tsx` | Ordered pipeline stage rows; each row's elapsed timer runs its own `requestAnimationFrame` loop (throttled to ~10fps) so ticking never re-renders the parent. |
+| `useRunProgress.ts` | Receives `onProgress(frame)` callbacks from `analyzePrompt`; maps `frame.stage` strings to a typed `Stage[]` via `stages.ts`; provides `run.stages` and `run.graph` to `App.tsx`. |
+| `api.ts` | `analyzePrompt(body, handlers)` — `POST /analyze-prompt`, reads SSE frames via `readSse`, calls `handlers.onProgress` / `handlers.onGraph`, resolves with the terminal `Report`. Accepts an `AbortSignal` so the fetch can be cancelled mid-stream. |
 
 ---
 

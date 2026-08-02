@@ -32,6 +32,12 @@
     --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
     --t-fast: 150ms;
     --t-med: 300ms;
+    --t-slow: 600ms;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    /* overshoot on arrival */
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    /* list entry + ripple hop */
+    --stagger: 80ms;
     --ambient-a: rgba(34, 211, 238, 0.05);
     --ambient-b: rgba(139, 92, 246, 0.07);
     color-scheme: dark;
@@ -57,6 +63,14 @@ html[data-theme="light"] {
     --code-bg: #10131c;
     --ambient-a: rgba(8, 148, 179, 0.05);
     --ambient-b: rgba(124, 58, 237, 0.05);
+    /* Status colours need their own light steps: the dark ones sit at 1.7–2.8:1
+       on white, under the 3:1 floor for a non-text mark. These were picked with
+       the palette validator — all checks pass on #ffffff, and the one residual
+       WARN (amber at 2.94:1) is covered by the visible value labels every mark
+       carries. */
+    --ok: #047857;
+    --warn: #ca8a04;
+    --err: #be123c;
     color-scheme: light;
 }
 
@@ -67,7 +81,8 @@ html[data-theme="light"] {
 }
 
 html,
-body {
+body,
+#root {
     height: 100%;
     margin: 0;
 }
@@ -148,6 +163,8 @@ a:focus-visible {
     font-weight: 650;
     letter-spacing: 0.01em;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
 }
 
 .brand-ai {
@@ -494,7 +511,10 @@ html[data-theme="light"] .token-badge {
 
 .signin-btn:hover {
     box-shadow: var(--glow-md);
-    transform: translateY(-1px);
+}
+
+.signin-btn:active {
+    transform: translateY(1px);
 }
 
 .user-chip {
@@ -1010,27 +1030,10 @@ html[data-theme="light"] .token-badge {
     }
 }
 
-.causal-graph-container svg {
-    display: block;
-    margin: 0 auto;
-    max-width: 100%;
-}
-
-/* Blend mermaid's edge-label boxes into the graph card */
-.causal-graph-container .edgeLabel,
-.causal-graph-container .edgeLabel p,
-.causal-graph-container .labelBkg {
-    background: var(--surface-1) !important;
-    color: var(--text-2) !important;
-}
-
-.causal-graph-container pre {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    overflow-x: auto;
-    margin: 0;
-    color: var(--text-2);
-}
+/* NB: no bare `.causal-graph-container svg` rule here. React Flow renders its
+   edges into an absolutely-positioned <svg>, and the Mermaid-era rule that
+   used to live here (display:block; margin:0 auto; max-width:100%) collapsed
+   it to 0x0 — edges were in the DOM with correct geometry but clipped away. */
 
 .graph-legend {
     display: flex;
@@ -1332,10 +1335,13 @@ html[data-theme="light"] .token-badge {
     }
 
     /* Keep the header (and its sidebar-toggle button) above the sidebar
-       overlay so it stays reachable while the sidebar is open. */
+       overlay, and allow wrapping to prevent narrow-screen overflow. */
     .chat-header {
         position: relative;
         z-index: 9;
+        flex-wrap: wrap;
+        row-gap: 8px;
+        padding: 10px 12px;
     }
 
     .switch-group .sw-label {
@@ -1343,11 +1349,28 @@ html[data-theme="light"] .token-badge {
     }
 
     .header-controls {
-        gap: 9px;
+        gap: 8px;
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-start;
     }
 
     .bubble {
         max-width: 92%;
+    }
+
+    .composer {
+        padding: 8px 12px 14px;
+    }
+
+    .input-pill {
+        flex-wrap: wrap;
+        border-radius: 16px;
+    }
+
+    .input-pill textarea {
+        min-width: 100%;
+        order: -1;
     }
 }
 
@@ -1360,4 +1383,1044 @@ html[data-theme="light"] .token-badge {
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
     }
+
+    /* The rule above only stops motion — it does not move anything to its end
+       state. Any animation that encodes its result in a transform would sit at
+       its *start* value and render invisible, so assert the end states here.
+       Status colours are untouched: the timeline stays fully readable. */
+    .stage-row.done .stage-rail::after,
+    .stage-row.failed .stage-rail::after {
+        transform: scaleY(1) !important;
+    }
+
+    .stage-steps li {
+        opacity: 1 !important;
+        transform: none !important;
+    }
+
+    .stage-row.active .stage-dot {
+        animation: none !important;
+    }
+
+    /* Status colours still apply; only the motion goes. Zeroing the ripple
+       delay matters because it is a calc() on --hop, which the blanket
+       transition-duration override above does not touch. */
+    .dag-node {
+        transition-delay: 0ms !important;
+    }
+
+    .dag-node.active {
+        animation: none !important;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Workflow timeline — the live loading state for a causal turn.
+   Motion spec: transform/opacity/box-shadow only, so nothing here triggers
+   layout. See the reduced-motion block above for the end-state assertions.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.workflow-timeline {
+    margin-top: 4px;
+}
+
+.stage-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.stage-row {
+    position: relative;
+    display: flex;
+    gap: 12px;
+    padding: 0 0 14px 0;
+}
+
+.stage-row:last-child {
+    padding-bottom: 0;
+}
+
+/* Connector rail between dots. Drawn on the row (not a separate element) so
+   there is nothing to keep in sync with the list. */
+.stage-row:not(:last-child)::before {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 16px;
+    bottom: 2px;
+    width: 2px;
+    background: var(--surface-3);
+    border-radius: 1px;
+}
+
+/* ...and the gradient fill that grows down it as the stage completes. */
+.stage-row:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 16px;
+    bottom: 2px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--grad);
+    transform: scaleY(0);
+    transform-origin: top;
+    transition: transform var(--t-med) var(--ease-out);
+}
+
+.stage-row.done::after,
+.stage-row.failed::after {
+    transform: scaleY(1);
+}
+
+.stage-dot {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    margin-top: 4px;
+    border-radius: 50%;
+    border: 2px solid var(--text-3);
+    background: var(--surface-1);
+    transition: transform var(--t-med) var(--ease-spring),
+        background var(--t-med) ease,
+        border-color var(--t-med) ease,
+        box-shadow var(--t-med) ease;
+}
+
+.stage-row.active .stage-dot {
+    border-color: transparent;
+    background: var(--grad);
+    transform: scale(1.15);
+    /* Deliberately echoes .typing's pulse so it reads as the same family. */
+    animation: stage-glow 1.6s ease-in-out infinite;
+}
+
+.stage-row.done .stage-dot {
+    border-color: var(--ok);
+    background: var(--ok);
+    transform: scale(1);
+}
+
+.stage-row.failed .stage-dot {
+    border-color: var(--err);
+    background: var(--err);
+    animation: stage-shake 300ms ease;
+}
+
+.stage-row.skipped .stage-dot {
+    border-style: dashed;
+    border-color: var(--text-3);
+    background: transparent;
+}
+
+@keyframes stage-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.45); }
+    50%      { box-shadow: 0 0 0 6px rgba(34, 211, 238, 0); }
+}
+
+@keyframes stage-shake {
+    0%, 100% { transform: translateX(0); }
+    25%      { transform: translateX(-3px); }
+    75%      { transform: translateX(3px); }
+}
+
+.stage-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.stage-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.stage-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-2);
+    transition: color var(--t-med) ease;
+}
+
+.stage-row.active .stage-label {
+    color: var(--text-1);
+    font-weight: 600;
+}
+
+.stage-row.done .stage-label {
+    color: var(--text-2);
+}
+
+.stage-row.skipped .stage-label {
+    color: var(--text-3);
+    opacity: 0.55;
+}
+
+.stage-counter,
+.stage-time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-3);
+}
+
+.stage-counter {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--surface-3);
+}
+
+.stage-time {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+}
+
+.stage-steps {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+}
+
+.stage-steps li {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-2);
+    padding: 1px 0;
+    animation: step-in var(--t-fast) var(--ease-out) both;
+}
+
+@keyframes step-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Collapsed summary strip shown on a finished turn, so replayed history is not
+   dominated by a nine-row timeline. */
+.timeline-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    margin-top: 4px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--t-fast) ease;
+}
+
+.timeline-summary:hover {
+    background: var(--surface-3);
+}
+
+.timeline-summary .chev {
+    margin-left: auto;
+    color: var(--text-3);
+    transition: transform var(--t-fast) var(--ease-out);
+}
+
+.timeline-summary[aria-expanded="true"] .chev {
+    transform: rotate(90deg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Causal DAG (React Flow) — nodes animate in place as the executor advances.
+   Positions never change after layout, so everything here is transform /
+   colour only. See lib/graph.ts for the rule that keeps it that way.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.causal-graph-container .react-flow {
+    background: transparent;
+}
+
+.causal-graph-container .react-flow__attribution {
+    background: transparent;
+    font-size: 9px;
+}
+
+.causal-graph-container .react-flow__attribution a {
+    color: var(--text-3);
+}
+
+.causal-graph-container .react-flow__handle {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.dag-node {
+    display: grid;
+    place-items: center;
+    width: 168px;
+    height: 44px;
+    padding: 0 10px;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--text-3);
+    background: var(--surface-3);
+    color: var(--text-1);
+    font-size: 12.5px;
+    font-weight: 500;
+    text-align: center;
+    /* Ripple: a node invalidated N hops downstream of the failure changes
+       that many stagger-steps later, so the failure visibly propagates. */
+    transition:
+        transform var(--t-med) var(--ease-spring),
+        background var(--t-med) ease,
+        border-color var(--t-med) ease,
+        box-shadow var(--t-med) ease;
+    transition-delay: calc(var(--hop, 0) * var(--stagger));
+}
+
+.dag-node-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.dag-node.pending {
+    opacity: 0.72;
+}
+
+.dag-node.active {
+    transform: scale(1.06);
+    border-color: var(--cyan);
+    background: color-mix(in srgb, var(--cyan) 18%, var(--surface-3));
+    box-shadow: var(--glow-sm);
+    animation: dag-pulse 1.6s ease-in-out infinite;
+}
+
+.dag-node.done {
+    border-color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 16%, var(--surface-3));
+}
+
+.dag-node.failed {
+    border-color: var(--err);
+    background: color-mix(in srgb, var(--err) 20%, var(--surface-3));
+    animation: stage-shake 300ms ease;
+}
+
+.dag-node.invalidated,
+.dag-node.replanned {
+    border-color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 18%, var(--surface-3));
+}
+
+/* Critical path: a persistent ring, deliberately static so it doesn't compete
+   with the marching edges. */
+.dag-node.critical {
+    box-shadow: 0 0 0 1.5px var(--violet);
+}
+
+.dag-node.active.critical {
+    box-shadow: 0 0 0 1.5px var(--violet), var(--glow-sm);
+}
+
+@keyframes dag-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.40); }
+    50%      { box-shadow: 0 0 0 8px rgba(34, 211, 238, 0); }
+}
+
+.causal-graph-container .react-flow__edge-path {
+    stroke: var(--text-3);
+    stroke-width: 1.5;
+}
+
+.causal-graph-container .causal-edge.soft .react-flow__edge-path {
+    stroke-dasharray: 4 3;
+}
+
+.causal-graph-container .causal-edge.critical .react-flow__edge-path {
+    stroke: var(--violet);
+    stroke-width: 3;
+}
+
+.causal-graph-container .react-flow__edge-text {
+    fill: var(--text-3);
+    font-size: 9.5px;
+}
+
+.causal-graph-container .react-flow__edge-textbg {
+    fill: var(--surface-1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Effect estimate — interval plot + refutation strip.
+   Every plot shares ONE grid column, so "same scale" is literally the same
+   pixels rather than a claim. Marks carry status colour; text stays on text
+   tokens; every value is directly labelled, so nothing is gated behind hover.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.effect-chart {
+    display: grid;
+    grid-template-columns: minmax(56px, 22%) 1fr auto;
+    align-items: center;
+    column-gap: 8px;
+    margin: 10px 0 2px;
+}
+
+.effect-value-row {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 2px;
+}
+
+.effect-point-value {
+    /* Proportional figures: tabular-nums makes a standalone value look loose. */
+    font-size: 19px;
+    font-weight: 650;
+    color: var(--text-1);
+}
+
+.effect-ci-text {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-2);
+}
+
+.effect-verdict {
+    margin-left: auto;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    color: var(--text-2);
+    border: 1px solid var(--border);
+}
+
+.effect-verdict.ok {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.effect-verdict.warn {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+.plot-gutter {
+    font-size: 11px;
+    color: var(--text-3);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plot-meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.plot-track {
+    position: relative;
+    height: 24px;
+}
+
+/* Hairline, solid, one step off the surface — a dashed rule would read as a
+   threshold rather than the origin. Repeated on every row so the reader can
+   see which side of zero each re-estimate landed. */
+.effect-zero {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    width: 1px;
+    background: var(--border);
+}
+
+.effect-whisker {
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 1px;
+    background: var(--text-3);
+    transform: scaleX(0);
+    transform-origin: center;
+    animation: whisker-grow var(--t-slow) var(--ease-out) 120ms forwards;
+}
+
+.effect-track.ok .effect-whisker { background: var(--ok); }
+.effect-track.warn .effect-whisker { background: var(--warn); }
+
+@keyframes whisker-grow {
+    to { transform: scaleX(1); }
+}
+
+/* Caps, so a short interval still reads as an interval. */
+.effect-whisker::before,
+.effect-whisker::after {
+    content: "";
+    position: absolute;
+    top: -4px;
+    width: 2px;
+    height: 10px;
+    border-radius: 1px;
+    background: inherit;
+}
+
+.effect-whisker::before { left: 0; }
+.effect-whisker::after  { right: 0; }
+
+.effect-point {
+    position: absolute;
+    top: 50%;
+    width: 11px;
+    height: 11px;
+    margin: -5.5px 0 0 -5.5px;
+    border-radius: 50%;
+    background: var(--text-1);
+    /* 2px surface ring keeps the marker legible on top of the whisker. */
+    box-shadow: 0 0 0 2px var(--surface-1);
+}
+
+.effect-track.ok .effect-point   { background: var(--ok); }
+.effect-track.warn .effect-point { background: var(--warn); }
+
+.effect-axis {
+    height: 15px;
+}
+
+.axis-tick {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.axis-tick.zero {
+    color: var(--text-2);
+}
+
+.effect-method {
+    grid-column: 1 / -1;
+    margin-top: 4px;
+    font-size: 10.5px;
+    color: var(--text-3);
+}
+
+/* ── Refutation strip ──────────────────────────────────────────────────── */
+
+.refute-caption {
+    grid-column: 1 / -1;
+    margin: 8px 0 2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 10.5px;
+    color: var(--text-3);
+}
+
+.refute-name {
+    font-size: 11px;
+    color: var(--text-2);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Comfortably past the 24px hit-target minimum. */
+.refute-track {
+    height: 26px;
+}
+
+.refute-shift {
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 1px;
+    background: var(--text-3);
+    opacity: 0.5;
+}
+
+.refute-dot {
+    position: absolute;
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--surface-1);
+    animation: dot-in var(--t-med) var(--ease-out) both;
+}
+
+/* Where the estimate started: hollow, so it reads as the reference point. */
+.refute-dot.original {
+    background: var(--surface-1);
+    border: 2px solid var(--text-3);
+}
+
+.refute-dot.moved.pass { background: var(--ok); }
+.refute-dot.moved.fail { background: var(--err); }
+
+@keyframes dot-in {
+    from { opacity: 0; transform: scale(0.6); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+.refute-verdict {
+    font-size: 10.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.refute-verdict.pass { color: var(--ok); }
+.refute-verdict.fail { color: var(--err); }
+
+.refute-p {
+    font-family: var(--font-mono);
+    font-weight: 400;
+    color: var(--text-3);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Step drawer — drill-down over causal_ledger.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* React Flow owns the click (onNodeClick); the node only signals the
+   affordance where a handler is actually wired — see CausalGraph. */
+.causal-graph-container.interactive .dag-node {
+    cursor: pointer;
+}
+
+.dag-node.highlighted {
+    outline: 2px solid var(--cyan);
+    outline-offset: 2px;
+    animation: node-ping var(--t-med) var(--ease-out);
+}
+
+@keyframes node-ping {
+    0%   { transform: scale(1); }
+    50%  { transform: scale(1.09); }
+    100% { transform: scale(1); }
+}
+
+.drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    /* Light dim only: this is a side panel, not a true modal, and the DAG
+       behind it must stay legible — hovering an `affected` chip highlights a
+       node out there. */
+    background: rgba(0, 0, 0, 0.22);
+    animation: fade-in var(--t-med) var(--ease-out);
+}
+
+@keyframes fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.step-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 41;
+    width: min(420px, 92vw);
+    padding: 18px 20px;
+    overflow-y: auto;
+    background: var(--surface-1);
+    border-left: 1px solid var(--border);
+    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35);
+    animation: drawer-in var(--t-med) var(--ease-out);
+}
+
+@keyframes drawer-in {
+    from { transform: translateX(100%); }
+    to   { transform: translateX(0); }
+}
+
+.drawer-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.drawer-title {
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--text-1);
+}
+
+.drawer-close {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    color: var(--text-2);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.drawer-close:hover {
+    color: var(--text-1);
+    background: var(--surface-2);
+}
+
+.drawer-meta {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.drawer-status,
+.drawer-kind,
+.drawer-verdict {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    color: var(--text-2);
+}
+
+.drawer-status.done    { color: var(--ok); }
+.drawer-status.failed  { color: var(--err); }
+.drawer-status.active  { color: var(--cyan); }
+.drawer-status.invalidated,
+.drawer-status.replanned { color: var(--warn); }
+
+.drawer-verdict.success { color: var(--ok); }
+.drawer-verdict.failure { color: var(--err); }
+
+.drawer-empty {
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-3);
+}
+
+.drawer-record {
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+}
+
+.drawer-record-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.drawer-step-id {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-2);
+}
+
+.drawer-field {
+    margin-bottom: 10px;
+}
+
+.drawer-field p {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-1);
+    overflow-wrap: anywhere;
+}
+
+.drawer-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.drawer-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 5px;
+}
+
+.affected-chip {
+    font-family: inherit;
+    font-size: 11.5px;
+    padding: 3px 9px;
+    color: var(--text-2);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.affected-chip:hover,
+.affected-chip:focus-visible {
+    color: var(--cyan);
+    border-color: var(--cyan);
+}
+
+@media (max-width: 640px) {
+    .step-drawer {
+        width: 100vw;
+    }
+}
+
+
+/* ── UI Redesign & Modernization ────────────────────────────────────────── */
+
+/* App Container Layout */
+.app-container {
+    display: grid !important;
+    grid-template-columns: auto 1fr;
+    transition: grid-template-columns var(--t-med) ease;
+}
+
+.app-container.has-right-pane {
+    grid-template-columns: auto 1fr 450px;
+}
+
+@media (max-width: 1200px) {
+    .app-container.has-right-pane {
+        grid-template-columns: auto 1fr 350px;
+    }
+}
+
+/* Sidebar Settings */
+.sidebar-settings {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding: 10px 10px;
+}
+.settings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.sidebar-setting, .sidebar-switch {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: var(--text-2);
+}
+.sidebar-select {
+    width: 120px;
+    padding: 4px;
+}
+.theme-btn {
+    font-size: 12px;
+    padding: 4px 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    cursor: pointer;
+}
+
+/* Causal Right Pane */
+.causal-pane {
+    border-left: 1px solid var(--border);
+    background: var(--surface-0);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow-y: auto;
+}
+.close-pane-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    z-index: 10;
+    display: grid;
+    place-items: center;
+}
+.causal-pane .causal-panel {
+    border: none;
+    background: transparent;
+    border-radius: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding-top: 12px;
+}
+.causal-pane .graph-container {
+    flex: 1;
+    min-height: 400px;
+}
+.pane-timeline {
+    padding: 10px 20px;
+}
+
+/* Causal Summary Box */
+.causal-summary-box {
+    margin-bottom: 12px;
+    padding: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.causal-summary-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cyan);
+}
+.view-details-btn {
+    align-self: flex-start;
+    background: var(--surface-3);
+    border: 1px solid var(--glass-border);
+    color: var(--text-1);
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background var(--t-fast);
+}
+.view-details-btn:hover {
+    background: var(--cyan);
+    color: #fff;
+}
+
+/* Empty State Cards */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 30px;
+    color: var(--text-2);
+}
+.empty-state-greeting {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 16px;
+}
+.prompt-cards {
+    display: flex;
+    gap: 16px;
+}
+.prompt-cards button {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    padding: 16px 20px;
+    border-radius: var(--radius-lg);
+    color: var(--text-1);
+    font-size: 14px;
+    cursor: pointer;
+    box-shadow: var(--glow-sm);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.prompt-cards button:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--glow-md);
+    border-color: var(--cyan);
+}
+
+/* Fix CSS Grid stretch bug */
+.app-container {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+}
+
+.chat-container, .causal-pane, .sidebar {
+    min-height: 0;
+    max-height: 100%;
+}
+
+.causal-pane {
+    height: 100%;
+}
+
+.causal-pane .causal-panel {
+    min-height: min-content;
+}
+
+
+
+/* Animated Live Pending Bubble styles */
+.causal-summary-box.live-pulse {
+    border-color: rgba(34, 211, 238, 0.4);
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.15);
+    animation: border-pulse 2s infinite ease-in-out;
+}
+
+@keyframes border-pulse {
+    0%, 100% { border-color: rgba(34, 211, 238, 0.2); }
+    50% { border-color: rgba(34, 211, 238, 0.7); box-shadow: 0 0 16px rgba(34, 211, 238, 0.25); }
+}
+
+.causal-spinner {
+    display: inline-block;
+    animation: spin-slow 3s linear infinite;
+    color: var(--cyan);
+    margin-right: 4px;
+}
+
+@keyframes spin-slow {
+    100% { transform: rotate(360deg); }
+}
+
+.active-step-label {
+    display: inline-block;
+    color: var(--cyan);
+    font-weight: 500;
+    animation: fade-in-slide 0.3s ease-out forwards;
+}
+
+@keyframes fade-in-slide {
+    from { opacity: 0; transform: translateX(-5px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+
+/* Stop button */
+.stop-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: #ef4444; /* red-500 */
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background var(--t-fast), transform var(--t-fast);
+}
+
+.stop-btn:hover {
+    background: #dc2626; /* red-600 */
+    transform: scale(1.05);
+}
+
+.stop-btn:active {
+    transform: scale(0.95);
 }

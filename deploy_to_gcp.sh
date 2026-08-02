@@ -101,10 +101,12 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
 fi
 
 # ── Stage 3: Firebase Hosting ────────────────────────────────────────────────
-# Publishes proxy/static and the rewrite rule (firebase.json) that routes
-# /analyze-prompt and every other non-static path to the Cloud Run proxy.
+# Builds the React UI, then publishes ui/dist and the rewrite rule
+# (firebase.json) that routes /analyze-prompt and every other non-static path
+# to the Cloud Run proxy.
 if [ "$ONLY" = "all" ] || [ "$ONLY" = "hosting" ]; then
-    echo "▶ [3/3] Deploying Firebase Hosting (proxy/static + rewrites)..."
+    echo "▶ [3/3] Building UI and deploying Firebase Hosting (ui/dist + rewrites)..."
+    (cd ui && npm ci && npm run build)
     if command -v firebase >/dev/null; then
         firebase deploy --only hosting --project "${PROJECT_ID}" --non-interactive
     else

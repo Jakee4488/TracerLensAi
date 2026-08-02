@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TracerLensAi: AI Agentic Workflow Evaluator</title>
+    <script>
+        // Apply the saved theme before first paint to avoid a flash.
+        (function () {
+            var theme = null;
+            try { theme = localStorage.getItem("tracerlens-theme"); } catch (e) { /* storage blocked */ }
+            document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark");
+        })();
+    </script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
+        rel="stylesheet">
+
+    <!-- API base for backend calls. Empty = same-origin. In production the UI
+         is served by Firebase Hosting, so it targets the Cloud Run URL directly
+         to bypass Hosting's 60s cap on long causal runs. Served from localhost
+         the proxy is the origin, so same-origin is both correct and what the
+         E2E suite exercises — pointing local runs at production would send dev
+         traffic to the live service. -->
+    <script>
+        (function () {
+            var isLocal = ["localhost", "127.0.0.1", "[::1]"].indexOf(location.hostname) !== -1;
+            window.TRACERLENS_API_BASE = isLocal
+                ? ""
+                : "https://tracerlensai-app-gi2oexvg3a-nw.a.run.app";
+        })();
+    </script>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

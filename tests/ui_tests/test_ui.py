@@ -52,20 +52,23 @@ def test_causal_toggle_renders_graph_and_steps(page: Page, server):
     send_prompt(page, "Why does it rain?")
     expect(page.locator(".causal-panel")).to_be_visible()
     steps = page.locator(".causal-steps li")
-    expect(steps).to_have_count(3)  # canned mock steps
-    expect(page.locator(".causal-graph-container svg")).to_have_count(1, timeout=15000)
+    expect(steps).to_have_count(4)  # 3 canned mock steps + the graph-fix line
+    expect(page.locator(".causal-graph-container")).to_have_count(1, timeout=15000)
+    # inputs -> analysis -> outcome
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3)
     expect(page.locator(".phase-badge")).to_contain_text("complete")
 
 
 def test_previous_graph_survives_new_message(page: Page, server):
     # Regression test for the old innerHTML+= re-parse bug that wiped
-    # previously rendered Mermaid SVGs on every append.
+    # previously rendered diagrams on every append.
     page.goto(server)
     page.check("#causal-toggle")
     send_prompt(page, "First causal question")
-    expect(page.locator(".causal-graph-container svg")).to_have_count(1, timeout=15000)
+    expect(page.locator(".causal-graph-container")).to_have_count(1, timeout=15000)
     send_prompt(page, "Second causal question")
-    expect(page.locator(".causal-graph-container svg")).to_have_count(2, timeout=15000)
+    expect(page.locator(".causal-graph-container")).to_have_count(2, timeout=15000)
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(6)
 
 
 def test_upload_flow(page: Page, server, sample_txt):
@@ -136,3 +139,228 @@ def test_markdown_is_sanitized(page: Page, server):
     expect(page.locator(".msg.ai .bubble").last).to_contain_text("Agent Proxy configured")
     page.wait_for_timeout(500)
     assert page.evaluate("window.__xss") is None
+
+
+# ── Live workflow timeline ────────────────────────────────────────────────────
+# The mock proxy emits a scripted SSE stream (progress + graph frames, ~150ms
+# apart), so these can observe the run mid-flight rather than only its result.
+
+
+def test_timeline_replaces_dots_in_causal_mode(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # The nine-stage pipeline is shown instead of the three-dot indicator.
+    expect(page.locator(".workflow-timeline")).to_be_visible()
+    expect(page.locator(".stage-row")).to_have_count(9)
+    expect(page.locator(".typing")).to_have_count(0)
+
+
+def test_timeline_stages_advance_during_run(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Stages resolve in order while the run is still in flight: exactly one is
+    # active, and earlier ones have already completed.
+    expect(page.locator(".stage-row.active")).to_have_count(1)
+    expect(page.locator(".stage-row.done").first).to_be_visible()
+
+
+def test_timeline_collapses_to_summary_when_done(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    summary = page.locator(".timeline-summary")
+    expect(summary).to_be_visible(timeout=20000)
+    expect(summary).to_contain_text("stages")
+    # Collapsed by default so replayed history isn't dominated by it...
+    expect(page.locator(".stage-row")).to_have_count(0)
+    summary.click()
+    # ...and expandable, showing only the stages that actually ran.
+    expect(page.locator(".stage-row")).not_to_have_count(0)
+    expect(page.locator(".stage-row.skipped")).to_have_count(0)
+
+
+def test_graph_renders_before_final_answer(page: Page, server):
+    """The DAG arrives mid-run on a `graph` frame, not with the report."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3, timeout=15000)
+    # Still streaming: the finished panel's summary strip has not appeared yet.
+    expect(page.locator(".timeline-summary")).to_have_count(0)
+
+
+def test_non_causal_mode_keeps_typing_dots(page: Page, server):
+    page.goto(server)
+    send_prompt(page, "Hello agent")
+    # No pipeline runs without the toggle, so there is nothing to time-line.
+    expect(page.locator(".workflow-timeline")).to_have_count(0)
+
+
+def test_timeline_readable_with_reduced_motion(page: Page, server):
+    """Several animations encode their end state in a transform; with motion
+    disabled they must not sit at their start value and vanish."""
+    page.emulate_media(reduced_motion="reduce")
+    try:
+        page.goto(server)
+        page.check("#causal-toggle")
+        send_prompt(page, "Why does it rain?")
+        expect(page.locator(".stage-row")).to_have_count(9)
+        step = page.locator(".stage-steps li").first
+        expect(step).to_be_visible(timeout=15000)
+        opacity = step.evaluate("el => getComputedStyle(el).opacity")
+        assert float(opacity) == 1.0, f"trace lines invisible with reduced motion ({opacity})"
+    finally:
+        page.emulate_media(reduced_motion="no-preference")
+
+
+# ── Live DAG animation ────────────────────────────────────────────────────────
+
+
+def test_dag_nodes_animate_through_statuses(page: Page, server):
+    """The mock walks each node pending -> active -> done on its own `graph`
+    frame, so the class must actually change while the run is in flight."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    expect(page.locator(".dag-node")).to_have_count(3, timeout=15000)
+    # Some node reaches `active` mid-run...
+    expect(page.locator(".dag-node.active")).not_to_have_count(0)
+    # ...and all of them are done once the run finishes.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=20000)
+    expect(page.locator(".dag-node.done")).to_have_count(3)
+
+
+def test_dag_does_not_relayout_on_status_change(page: Page, server):
+    """Positions are computed once, on the first graph frame. A status-only
+    frame must not move anything — otherwise the diagram jumps on every
+    executor iteration."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    node = page.locator(".react-flow__node").first
+    expect(node).to_be_visible(timeout=15000)
+
+    read = "el => el.style.transform"
+    before = node.evaluate(read)
+    # Wait for at least one more graph frame to land (statuses still changing).
+    expect(page.locator(".dag-node.done")).not_to_have_count(0, timeout=20000)
+    after = node.evaluate(read)
+    assert before == after, f"node re-laid-out mid-run: {before!r} -> {after!r}"
+
+
+def test_critical_path_is_marked(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # The canned critical path covers all three nodes.
+    expect(page.locator(".dag-node.critical")).to_have_count(3, timeout=15000)
+
+
+# ── Effect chart & drill-down drawer ──────────────────────────────────────────
+
+
+def test_effect_chart_replaces_text_estimate(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Does price affect demand?")
+    expect(page.locator(".effect-chart")).to_be_visible(timeout=20000)
+    # The canned CI (-1.61, -1.23) sits entirely below zero.
+    expect(page.locator(".effect-verdict")).to_have_text("excludes zero")
+    expect(page.locator(".effect-whisker")).to_have_count(1)
+    expect(page.locator(".effect-point")).to_have_count(1)
+    # Values stay readable without hovering anything.
+    expect(page.locator(".effect-point-value")).to_have_text("-1.42")
+    expect(page.locator(".axis-tick.zero")).to_have_text("0")
+
+
+def test_refutations_share_the_effect_scale(page: Page, server):
+    """The caption claims one scale; the plot column must literally be the same
+    pixels, or the dots are not comparable to the interval above them."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Does price affect demand?")
+    expect(page.locator(".refute-track")).to_have_count(2, timeout=20000)
+    box = "el => { const r = el.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.width)]; }"
+    effect_track = page.locator(".effect-track").evaluate(box)
+    for i in range(2):
+        assert page.locator(".refute-track").nth(i).evaluate(box) == effect_track, \
+            "refutation track is not aligned with the effect track"
+    # Pass/fail never rides on colour alone.
+    expect(page.locator(".refute-verdict").first).to_contain_text("pass")
+
+
+def test_node_click_opens_drawer(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Drill-down lives on the finished panel — mid-run the ledger is partial.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    page.locator(".dag-node", has_text="Analysis").click()
+    drawer = page.locator(".step-drawer")
+    expect(drawer).to_be_visible()
+    expect(page.locator(".drawer-title")).to_have_text("Analysis")
+    # expected/observed come straight off ChangeRecord.
+    expect(drawer).to_contain_text("estimator returned no rows")
+    page.keyboard.press("Escape")
+    expect(drawer).to_have_count(0)
+
+
+def test_drawer_affected_chips_highlight_the_dag(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Drill-down lives on the finished panel — mid-run the ledger is partial.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    page.locator(".dag-node", has_text="Analysis").click()
+    chip = page.locator(".affected-chip")
+    expect(chip).to_have_count(1)          # the failed step invalidated `outcome`
+    expect(page.locator(".dag-node.highlighted")).to_have_count(0)
+    chip.hover()
+    expect(page.locator(".dag-node.highlighted")).to_have_count(1)
+
+
+def test_drawer_empty_state_for_unexecuted_component(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Drill-down lives on the finished panel — mid-run the ledger is partial.
+    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    page.locator(".dag-node", has_text="Outcome").click()
+    expect(page.locator(".drawer-empty")).to_contain_text("never executed")
+
+
+# ── Responsive sidebar (narrow viewports) ─────────────────────────────────────
+# Regression coverage for a bug found via manual testing: below the 900px
+# breakpoint the sidebar overlays the page (styles.css .sidebar position:
+# absolute), and if it's shown by default there is no way to reach the
+# hamburger button underneath it to dismiss it — the app becomes unusable.
+
+
+def test_sidebar_starts_open_on_desktop_width(page: Page, server):
+    page.set_viewport_size({"width": 1300, "height": 900})
+    page.goto(server)
+    expect(page.locator("#sidebar")).not_to_have_class("sidebar collapsed")
+
+
+def test_sidebar_starts_collapsed_below_breakpoint(page: Page, server):
+    page.set_viewport_size({"width": 420, "height": 800})
+    page.goto(server)
+    expect(page.locator("#sidebar")).to_have_class("sidebar collapsed")
+    # ...and nothing spills outside the viewport at this width.
+    overflow = page.evaluate("() => document.body.scrollWidth > document.body.clientWidth")
+    assert not overflow, "horizontal overflow at 420px viewport width"
+
+
+def test_sidebar_toggle_survives_repeated_open_close_at_narrow_width(page: Page, server):
+    """The hamburger sits underneath the sidebar's overlay; it must stay
+    clickable through repeated open/close, not just the first tap."""
+    page.set_viewport_size({"width": 420, "height": 800})
+    page.goto(server)
+    sidebar = page.locator("#sidebar")
+    for _ in range(3):
+        page.click("#toggle-sidebar", timeout=3000)
+        expect(sidebar).not_to_have_class("sidebar collapsed")
+        page.click("#toggle-sidebar", timeout=3000)
+        expect(sidebar).to_have_class("sidebar collapsed")

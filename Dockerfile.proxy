@@ -14,7 +14,18 @@ ENV PYTHONUNBUFFERED=1
 COPY requirements-proxy.txt .
 RUN pip install --no-cache-dir --user -r requirements-proxy.txt
 
-# Stage 2: Runtime
+# Stage 2: Build the React UI
+# npm ci needs only the lockfile, so this layer caches until deps actually
+# change — editing a component doesn't reinstall node_modules.
+FROM node:20-slim AS ui-builder
+
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+# Stage 3: Runtime
 FROM python:3.12-slim
 
 # No apt packages needed: graphviz was only ever a maybe-dependency of
@@ -31,8 +42,11 @@ COPY --chown=tracerlensaiuser:tracerlensaiuser --from=builder /root/.local /home
 ENV PATH=/home/tracerlensaiuser/.local/bin:$PATH
 ENV PYTHONPATH="/app:${PYTHONPATH:-}"
 
-# Copy the proxy backend and static UI it serves
+# Copy the proxy backend, then the built UI it serves. proxy/main.py resolves
+# the bundle at ui/dist (see _ui_directory), which is the same path local dev
+# and the E2E suite use — one code path, no per-environment special case.
 COPY proxy/ /app/proxy/
+COPY --from=ui-builder /ui/dist /app/ui/dist
 
 # Set ownership to non-root user
 RUN chown -R tracerlensaiuser:tracerlensaiuser /app

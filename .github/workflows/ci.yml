@@ -34,3 +34,22 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ --ignore=tests/ui_tests -v --tb=short
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Lint and typecheck UI
+        run: npm run lint && npm run typecheck
+        working-directory: ui
+
+      - name: Build UI
+        run: npm run build
+        working-directory: ui
