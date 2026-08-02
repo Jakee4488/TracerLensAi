@@ -1334,22 +1334,8 @@ html[data-theme="light"] .token-badge {
         box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
     }
 
-    /* Two independent reasons .chat-header needs rules here:
-       1. position+z-index above .sidebar's 8: the sidebar overlays from x:0,
-          and .menu-btn (the only way to open OR close it) lives inside
-          .chat-header, underneath it. z-index on .menu-btn alone can't fix
-          this — .chat-header/.chat-container are unpositioned (static), so a
-          static ancestor forms no stacking context, and a positioned
-          descendant's z-index bubbles up to compete at the nearest ancestor
-          that IS one: .app-container, the same level .sidebar's z-index:8
-          stacks at. .chat-header itself has to be the positioned element, or
-          there's nothing here for a z-index to out-rank .sidebar within.
-       2. flex-wrap: .header-controls already wraps its own children, but
-          that only helps once the whole header-controls block has somewhere
-          to wrap TO. Without this, .chat-header stays a single nowrap row,
-          so a narrow viewport forces the whole row (title + token badge +
-          controls) wider than the viewport instead of letting anything drop
-          to a second line — the actual cause of the horizontal overflow. */
+    /* Keep the header (and its sidebar-toggle button) above the sidebar
+       overlay, and allow wrapping to prevent narrow-screen overflow. */
     .chat-header {
         position: relative;
         z-index: 9;
