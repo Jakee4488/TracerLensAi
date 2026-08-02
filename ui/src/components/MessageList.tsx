@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { highlightCode, renderMarkdown } from "../lib/markdown";
 import { hasCausalContent } from "./causal/CausalPanel";
-import { WorkflowTimeline } from "./causal/WorkflowTimeline";
 import type { Stage } from "../lib/stages";
 import type { CausalGraph as CausalGraphType, ChatMessage } from "../types";
 
@@ -92,7 +91,7 @@ interface Props {
   onPromptClick?: (text: string) => void;
 }
 
-export function MessageList({ messages, isSending, causal, stages, liveGraph, onSelectMessage, onPromptClick }: Props) {
+export function MessageList({ messages, isSending, causal, stages, liveGraph: _liveGraph, onSelectMessage, onPromptClick }: Props) {
   const areaRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
