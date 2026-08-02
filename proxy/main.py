@@ -414,6 +414,16 @@ STAGE_BY_AUTHOR = {
     "CausalSynthesizer": "synthesize",
 }
 
+# Authors that are causal-pipeline-internal: their text parts are structured
+# JSON / trace output, NOT the final user-facing answer. We suppress these from
+# collected_text so they don't leak when causal_final_answer is empty.
+# CausalSynthesizer is excluded from this set — its output IS the answer.
+_CAUSAL_SUPPRESS_TEXT_AUTHORS: set[str] = {
+    "CausalRouterAgent", "CausalWebSearch", "CausalWebIngestor",
+    "CausalDecomposer", "CausalEstimandSpec", "CausalEstimator",
+    "CausalStepExecutor", "CausalStepController", "CausalReplanner",
+}
+
 # build_graph_and_plan is an after_agent_callback on CausalDecomposer, so its
 # state write rides on an event authored "CausalDecomposer". Only the delta
 # keys distinguish the graph build from the decomposition that preceded it.
@@ -800,13 +810,25 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                             collected_text.append(line)  # plain text line
                             continue
 
-                        # ADK streams events; grab text from content parts
+                        # ADK streams events; grab text from content parts.
+                        # Suppress text from internal causal pipeline agents
+                        # (their outputs are structured JSON / trace lines that
+                        # are captured via state_delta; letting them accumulate
+                        # in collected_text causes raw JSON to appear in the UI
+                        # when causal_final_answer is absent — especially on
+                        # gemini-2.5-pro which leaks output_schema responses as
+                        # text parts).
+                        author = event.get("author") or ""
+                        suppress_text = (
+                            req.causal_reasoning
+                            and author in _CAUSAL_SUPPRESS_TEXT_AUTHORS
+                        )
                         parts = (event.get("content") or {}).get("parts") or []
                         for part in parts:
-                            if isinstance(part, dict) and part.get("text"):
+                            if isinstance(part, dict) and part.get("text") and not suppress_text:
                                 collected_text.append(part["text"])
                         # Also handle top-level "output" key
-                        if event.get("output"):
+                        if event.get("output") and not suppress_text:
                             collected_text.append(str(event["output"]))
                         # Causal pipeline results ride on event state deltas:
                         # collect every causal_* key (lists are rewritten
@@ -859,9 +881,17 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
         return
 
     try:
-        # Prefer the synthesizer's final answer over the raw concatenation —
-        # in causal mode the text parts include intermediate pipeline output.
-        response_text = causal_state.get("causal_final_answer") or "".join(collected_text)
+        # Prefer the synthesizer's final answer over the raw concatenation.
+        # In causal mode the pipeline writes causal_final_answer from the
+        # CausalSynthesizer; only fall through to collected_text if causal mode
+        # was off (general assistant) or if the run used CAUSAL_TEXT_FALLBACK.
+        if req.causal_reasoning:
+            response_text = (
+                causal_state.get("causal_final_answer")
+                or "".join(collected_text)  # synthesizer text parts (not suppressed)
+            )
+        else:
+            response_text = "".join(collected_text)
 
         causal_steps = causal_state.get("causal_steps") or []
         causal_graph = causal_state.get("causal_graph")
