@@ -97,6 +97,26 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
         # not parsed by gcloud as separate env-var assignments.
         DEPLOY_ARGS+=(--update-env-vars "^##^CORS_ORIGINS=${CORS_ORIGINS}")
     fi
+
+    # ── Access gate (docs/access_control.md) ─────────────────────────────────
+    # Only forwarded when present in the environment, so a partial deploy never
+    # blanks a value already set on the service. The two secrets are the ones
+    # that matter: without ACCESS_SIGNING_SECRET every cold start signs all
+    # users out, and without ADMIN_TOKEN the dashboard answers 503.
+    for VAR in ACCESS_SIGNING_SECRET ADMIN_TOKEN RESEND_API_KEY \
+               ACCESS_NOTIFY_EMAIL ACCESS_FROM_EMAIL APP_URL \
+               ACCESS_TOKEN_LIMIT ACCESS_TOKEN_GRANT \
+               CHAT_RETENTION_HOURS RUN_METRICS_RETENTION_DAYS; do
+        if [ -n "${!VAR:-}" ]; then
+            DEPLOY_ARGS+=(--update-env-vars "${VAR}=${!VAR}")
+        fi
+    done
+    if [ -z "${ACCESS_SIGNING_SECRET:-}" ]; then
+        echo "WARNING: ACCESS_SIGNING_SECRET is not set in this environment." >&2
+        echo "         Leaving whatever the service already has. If it has none," >&2
+        echo "         every cold start invalidates all sessions." >&2
+    fi
+
     gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_ARGS[@]}"
 fi
 

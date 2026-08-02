@@ -95,6 +95,19 @@ jobs:
       - name: Deploy
         id: deploy
         continue-on-error: true
+        # Access-gate configuration (docs/access_control.md). deploy_to_gcp.sh
+        # forwards each of these to Cloud Run only when non-empty, so an
+        # unconfigured secret leaves the service's current value alone rather
+        # than blanking it. Set the secrets in the repo before the first
+        # deploy: without ACCESS_SIGNING_SECRET every cold start signs all
+        # visitors out, and without ADMIN_TOKEN /admin answers 503.
+        env:
+          ACCESS_SIGNING_SECRET: ${{ secrets.ACCESS_SIGNING_SECRET }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ACCESS_NOTIFY_EMAIL: ${{ vars.ACCESS_NOTIFY_EMAIL }}
+          ACCESS_FROM_EMAIL: ${{ vars.ACCESS_FROM_EMAIL }}
+          APP_URL: ${{ env.APP_URL }}
         run: |
           chmod +x deploy_to_gcp.sh
           set +e

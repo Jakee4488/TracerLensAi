@@ -36,7 +36,7 @@ TracerLensAi/
 ├── proxy/
 │   ├── main.py                 # Gateway: auth, history, uploads, agent proxy
 │   └── static/                 # Compiled React bundle (output of ui/ build)
-│       └── index.html          # Entry point + Firebase Auth bridge
+│       └── index.html          # Entry point + API base bootstrap
 │
 ├── ui/                         # React + Vite + TypeScript frontend source
 │   ├── src/
@@ -63,7 +63,7 @@ TracerLensAi/
 │   │   │   └── useRunProgress.ts  # Live pipeline stage/graph state
 │   │   └── lib/
 │   │       ├── api.ts         #  analyzePrompt (SSE), uploadFile, fetchHistory
-│   │       ├── firebase.ts    #  Firebase Auth + token accessor
+│   │       ├── access.ts      #  Access session storage + sign-in link handling
 │   │       ├── graph.ts       #  ReactFlow node/edge layout helpers
 │   │       ├── ids.ts         #  Session/message ID generation
 │   │       ├── markdown.ts    #  marked + DOMPurify renderer

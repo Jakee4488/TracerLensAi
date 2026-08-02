@@ -4,30 +4,30 @@ This backend serves the static UI and proxies requests to the
 Gemini Enterprise Agent Platform (Agent Runtime).
 """
 import asyncio
-import functools
 import json
 import os
 import re
 import time
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import google.auth
 import google.auth.transport.requests
-import firebase_admin
-from firebase_admin import auth as firebase_auth
-from firebase_admin import firestore as firebase_firestore
 from google.cloud import firestore as gcf
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from proxy import access, admin
+from proxy.access import get_caller, get_db
+
 app = FastAPI(title="TracerLensAi Proxy")
+app.include_router(admin.router)
 
 # Allow the frontend to call this API cross-origin when it is served from a
 # different host than the Cloud Run service — e.g. the app is on
@@ -39,7 +39,10 @@ if CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=CORS_ORIGINS,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        # DELETE is here for /account — the visitor's own "Delete my data"
+        # button. Omitting it would make the GDPR erasure path fail in
+        # production only, where the app and the API are on different origins.
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         # Auth is a bearer header, not a cookie, so credentials stay off.
         # X-Anon-Id must be listed or the cross-origin path silently drops it
         # and every signed-out caller falls back to the shared identity.
@@ -47,44 +50,14 @@ if CORS_ORIGINS:
         allow_credentials=False,
     )
 
-# ── Auth & Firestore ─────────────────────────────────────────────────────────
-
-def _get_firebase_app():
-    """Initialize the Firebase Admin app lazily (uses ADC on Cloud Run)."""
-    try:
-        return firebase_admin.get_app()
-    except ValueError:
-        return firebase_admin.initialize_app()
-
-@functools.cache
-def get_db():
-    """Firestore client for per-user conversation history.
-
-    The project's Firestore database is named ``tracerlensai`` (not the
-    default ``(default)``), so pass it explicitly. Overridable via
-    FIRESTORE_DATABASE_ID for other environments.
-    """
-    _get_firebase_app()
-    database_id = os.getenv("FIRESTORE_DATABASE_ID", "tracerlensai")
-    return firebase_firestore.client(database_id=database_id)
-
-async def get_current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
-    """Optional Firebase auth: no header → anonymous (None); bad token → 401."""
-    if not authorization:
-        return None
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="Malformed Authorization header")
-    try:
-        _get_firebase_app()
-        decoded = firebase_auth.verify_id_token(token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired ID token")
-    return {
-        "uid": decoded["uid"],
-        "email": decoded.get("email"),
-        "name": decoded.get("name"),
-    }
+# ── Identity ─────────────────────────────────────────────────────────────────
+#
+# Callers are identified by the email-session token minted in proxy/access.py
+# and verified by get_caller (imported above), which keeps the same optional
+# contract the Firebase dependency it replaced had: absent → None, invalid →
+# 401. Everything user-scoped keys on ``email_key`` — a hash of the address —
+# so the access record and the conversation history describe the same person no
+# matter how many times they sign in.
 
 _ANON_ID_RE = re.compile(r"[0-9a-f-]{36}")
 
@@ -92,50 +65,62 @@ _ANON_ID_RE = re.compile(r"[0-9a-f-]{36}")
 def _agent_user_id(user: Optional[dict], anon_id: Optional[str]) -> str:
     """Resolve the agent-side user_id for this caller.
 
-    Signed-in callers key on their verified Firebase uid. Signed-out callers
-    key on a browser-generated id so they get their own agent session instead
-    of sharing one: session state persists in VertexAiSessionService, so a
-    shared id leaks one visitor's conversation and causal_* state to the next.
-
-    The header is client-supplied and therefore spoofable, but it grants only a
-    guessed *agent session* — never history, which stays gated by
-    verify_id_token and the users/{uid} Firestore path. Unrecognized values
-    collapse to a single bucket rather than being trusted verbatim, so a
-    malformed or injected value can't become an arbitrary session key.
+    Signed-in callers key on their email hash. The anonymous fallback is
+    unreachable through /analyze-prompt now that the gate rejects sessionless
+    callers, but it stays as a defence in depth: agent session state persists
+    in VertexAiSessionService, so a shared id would leak one visitor's
+    conversation and causal_* state to the next.
     """
     if user:
-        return user["uid"]
+        return user["email_key"]
     if anon_id and _ANON_ID_RE.fullmatch(anon_id):
         return f"anon:{anon_id}"
     return "anon:unknown"
 
 
+def _chat_expiry(now: datetime) -> datetime:
+    """When a conversation written at ``now`` must be gone.
+
+    Backs the "deleted within 24 hours" promise in the access modal. Firestore
+    TTL policies on this field do the routine work; POST /admin/sweep is the
+    backstop, because TTL deletion is only guaranteed to happen *within 24
+    hours of expiry* and the promise is a flat 24 hours from writing.
+    """
+    return now + timedelta(hours=access.chat_retention_hours())
+
+
 def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, token_count: int,
                    attachments: Optional[list] = None, causal: Optional[dict] = None):
-    """Persist a user/AI message pair under users/{uid}/conversations/{chat_id}."""
+    """Persist a user/AI message pair under users/{email_key}/conversations/{chat_id}."""
     db = get_db()
     now = datetime.now(timezone.utc)
+    expires_at = _chat_expiry(now)
 
-    user_ref = db.collection("users").document(user["uid"])
-    user_ref.set({"email": user.get("email"), "name": user.get("name"), "last_seen": now}, merge=True)
+    user_ref = db.collection("users").document(user["email_key"])
+    user_ref.set({"email": user.get("email"), "last_seen": now}, merge=True)
 
     conv_ref = user_ref.collection("conversations").document(chat_id)
     if conv_ref.get().exists:
-        conv_ref.update({"updated_at": now, "total_tokens": gcf.Increment(token_count)})
+        # The window slides with activity: an active conversation stays alive,
+        # and 24 hours after the last message the whole thing goes.
+        conv_ref.update({"updated_at": now, "expires_at": expires_at,
+                         "total_tokens": gcf.Increment(token_count)})
     else:
         conv_ref.set({
             "title": prompt[:50],
             "created_at": now,
             "updated_at": now,
+            "expires_at": expires_at,
             "total_tokens": token_count,
         })
 
     messages = conv_ref.collection("messages")
-    user_msg = {"role": "user", "content": prompt, "created_at": now}
+    user_msg = {"role": "user", "content": prompt, "created_at": now, "expires_at": expires_at}
     if attachments:
         user_msg["attachments"] = attachments
     messages.add(user_msg)
-    ai_msg = {"role": "ai", "content": response_text, "created_at": datetime.now(timezone.utc)}
+    ai_msg = {"role": "ai", "content": response_text,
+              "created_at": datetime.now(timezone.utc), "expires_at": expires_at}
     if causal:
         # Stored under the same key names the UI renderer reads off the live
         # response, so a reloaded turn replays identically (diagram, estimand
@@ -166,18 +151,142 @@ if UI_DIR:
 
 
 @app.get("/")
-def read_root():
-    """Redirect root to the UI."""
+def read_root(request: Request):
+    """Redirect root to the UI, query string intact.
+
+    Sign-in links point at the site root (``/?auth=…``). Dropping the query
+    here would strip the token and land every emailed link back on the login
+    modal — invisible in production, where Firebase Hosting serves the SPA at
+    the root, but broken everywhere the proxy is the origin.
+    """
     if not UI_DIR:
         raise HTTPException(
             status_code=503,
             detail="UI bundle not built. Run `npm ci && npm run build` in ui/.")
-    return RedirectResponse(url="/static/index.html")
+    query = request.url.query
+    return RedirectResponse(url="/static/index.html" + (f"?{query}" if query else ""))
 
 @app.get("/health")
 def health_check():
     """Health probe."""
     return {"status": "ok"}
+
+# ── Access API ───────────────────────────────────────────────────────────────
+#
+# One email field on the client drives all of this: the visitor types an
+# address and the server decides whether that is a sign-in or an access
+# request. See proxy/access.py for the trust model.
+
+
+class LoginRequest(BaseModel):
+    email: str
+
+
+class ExchangeRequest(BaseModel):
+    auth: str
+
+
+class ExtensionRequest(BaseModel):
+    message: Optional[str] = None
+
+
+def _access_payload(email: str, state: access.AccessState) -> dict:
+    return {
+        "status": state.code,
+        "email": email,
+        "tokens_used": state.usage,
+        "token_limit": state.limit,
+        "extension_status": state.extension_status,
+    }
+
+
+@app.post("/auth/login")
+async def auth_login(body: LoginRequest):
+    """Sign in, or request access — the record decides which.
+
+    Deliberately returns the same shape whichever branch runs, and never
+    reveals whether an address was already known: the response for an unknown
+    address and a freshly created one are identical.
+    """
+    email = access.normalize_email(body.email)
+    if not email:
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+
+    record, should_notify = access.create_or_touch_request(email)
+
+    if record.get("status") == "approved":
+        nonce = access.issue_login_nonce(email)
+        await access.send_login_link(email, access.login_link(email, nonce))
+        return {"status": "link_sent", "email": email}
+
+    if should_notify:
+        await access.notify_access_request(email)
+
+    if record.get("status") == "denied":
+        return {"status": "denied", "email": email}
+    return {"status": "pending", "email": email}
+
+
+@app.post("/auth/exchange")
+async def auth_exchange(body: ExchangeRequest):
+    """Trade a single-use login link for a 30-day session."""
+    payload = access.unsign(body.auth, access.PURPOSE_LOGIN)
+    if not payload:
+        raise HTTPException(status_code=401, detail="This sign-in link has expired")
+    email = access.normalize_email(payload.get("email"))
+    record = access.get_record(email, cached=False) if email else None
+    if not record:
+        raise HTTPException(status_code=401, detail="This sign-in link is no longer valid")
+    if record.get("status") != "approved":
+        raise HTTPException(status_code=403, detail=access.check_access(
+            {"email": email}).as_detail())
+    if not access.consume_login_nonce(email, payload.get("n", "")):
+        raise HTTPException(
+            status_code=401,
+            detail="This sign-in link has already been used — request a new one")
+
+    state = access.check_access({"email": email})
+    return {"token": access.mint_session(email, record), **_access_payload(email, state)}
+
+
+@app.get("/access/status")
+async def access_status(user: Optional[dict] = Depends(get_caller)):
+    """Current gate state — polled by the UI while a request is pending."""
+    if not user:
+        return {"status": "logged_out"}
+    email = user["email"]
+    record = access.get_record(email, cached=False)
+    # Heal a notification that failed earlier, so a Resend blip doesn't leave
+    # someone waiting on an email that will never arrive.
+    if record and record.get("notify_state") == "failed" and record.get("status") == "pending":
+        if int(record.get("notify_attempts", 0)) < access.NOTIFY_MAX_ATTEMPTS:
+            await access.notify_access_request(email)
+    return _access_payload(email, access.check_access(user))
+
+
+@app.post("/access/extension")
+async def access_extension(body: ExtensionRequest, user: Optional[dict] = Depends(get_caller)):
+    """Ask for more tokens. The caller stays blocked until it's granted."""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    email = user["email"]
+    record = access.request_extension(email, body.message)
+    if record is None:
+        raise HTTPException(status_code=404, detail="No access record for this address")
+    await access.notify_extension_request(
+        email, body.message,
+        int(record.get("tokens_used", 0)), int(record.get("token_limit", 0)))
+    return _access_payload(email, access.check_access(user))
+
+
+@app.delete("/account")
+async def delete_account(user: Optional[dict] = Depends(get_caller)):
+    """Self-serve erasure: the access record and every conversation, gone."""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    access.delete_user(user["email"])
+    return {"status": "deleted"}
+
 
 # ── History API ──────────────────────────────────────────────────────────────
 
@@ -185,19 +294,22 @@ def health_check():
 async def list_history(
     cursor: Optional[str] = None,
     limit: int = 30,
-    user: Optional[dict] = Depends(get_current_user),
+    user: Optional[dict] = Depends(get_caller),
 ):
     """List the signed-in user's conversations, most recent first.
 
     Pass the previous page's ``next_cursor`` (an ISO-8601 ``updated_at``) to
     page backwards in time. ``next_cursor`` is null on the last page.
+
+    Only the last 24 hours are ever here — conversations expire (see
+    ``_chat_expiry``), so this is a rolling window rather than an archive.
     """
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
     page_size = max(1, min(limit, 100))
     db = get_db()
     query = (
-        db.collection("users").document(user["uid"]).collection("conversations")
+        db.collection("users").document(user["email_key"]).collection("conversations")
         .order_by("updated_at", direction=gcf.Query.DESCENDING)
     )
     if cursor:
@@ -228,13 +340,13 @@ async def list_history(
     return {"conversations": conversations, "next_cursor": next_cursor}
 
 @app.get("/history/{chat_id}")
-async def get_history(chat_id: str, user: Optional[dict] = Depends(get_current_user)):
+async def get_history(chat_id: str, user: Optional[dict] = Depends(get_caller)):
     """Return the messages of one of the signed-in user's conversations."""
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
     db = get_db()
     conv_ref = (
-        db.collection("users").document(user["uid"])
+        db.collection("users").document(user["email_key"])
         .collection("conversations").document(chat_id)
     )
     snapshot = conv_ref.get()
@@ -295,24 +407,35 @@ def _put_upload(record: dict) -> str:
     return file_id
 
 
+def _expired_upload(record: dict) -> bool:
+    """Uploads ride the same 24-hour clock as the chats they belong to."""
+    return access.seconds_since(record.get("expires_at")) > 0
+
+
 def _get_upload(file_id: str) -> Optional[dict]:
     record = _uploads.get(file_id)
-    if record is not None:
-        return record
-    directory = _upload_dir()
-    if directory and re.fullmatch(r"[0-9a-f]{32}", file_id or ""):
-        sidecar = os.path.join(directory, f"{file_id}.json")
-        if os.path.exists(sidecar):
-            with open(sidecar, encoding="utf-8") as fh:
-                record = json.load(fh)
-            _uploads[file_id] = record
-            return record
-    return None
+    if record is None:
+        directory = _upload_dir()
+        if directory and re.fullmatch(r"[0-9a-f]{32}", file_id or ""):
+            sidecar = os.path.join(directory, f"{file_id}.json")
+            if os.path.exists(sidecar):
+                with open(sidecar, encoding="utf-8") as fh:
+                    record = json.load(fh)
+                _uploads[file_id] = record
+    if record is None:
+        return None
+    if _expired_upload(record):
+        _uploads.pop(file_id, None)
+        return None
+    return record
 
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), user: Optional[dict] = Depends(get_current_user)):
+async def upload_file(file: UploadFile = File(...), user: Optional[dict] = Depends(get_caller)):
     """Accept a text-extractable file and return an id to reference in chat."""
+    # Gated like the agent itself: without this the upload endpoint is an open
+    # file sink for anyone who finds the URL.
+    access.require_access(user)
     filename = os.path.basename(file.filename or "").strip() or "upload"
     extension = os.path.splitext(filename)[1].lower()
     if extension not in ALLOWED_UPLOAD_EXTENSIONS:
@@ -328,13 +451,15 @@ async def upload_file(file: UploadFile = File(...), user: Optional[dict] = Depen
             detail=f"File exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
         )
     text = data.decode("utf-8", errors="replace")[:MAX_ATTACHMENT_TEXT_CHARS]
+    now = datetime.now(timezone.utc)
     file_id = _put_upload({
         "filename": filename,
         "size": len(data),
         "content_type": file.content_type or "text/plain",
         "text": text,
-        "owner_uid": user["uid"] if user else None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "owner_uid": user["email_key"] if user else None,
+        "created_at": now.isoformat(),
+        "expires_at": _chat_expiry(now).isoformat(),
     })
     return {
         "file_id": file_id,
@@ -350,7 +475,7 @@ def _resolve_attachments(ids: list, user: Optional[dict]) -> list:
 
     Unknown ids and other users' uploads both 404 so ids aren't probeable.
     """
-    owner = user["uid"] if user else None
+    owner = user["email_key"] if user else None
     files = []
     for file_id in ids or []:
         record = _get_upload(file_id)
@@ -556,17 +681,42 @@ def _persist_if_signed_in(user: Optional[dict], req: "PromptRequest", response_t
         _save_exchange(user, req.chat_id, req.prompt, response_text, token_count,
                        attachment_names, causal)
     except Exception as e:
-        print(f"WARNING: failed to persist history for uid={user['uid']}: {e}")
+        access.log(f"WARNING: failed to persist history for {user['email_key']}: {e}")
+
+
+def _record_turn(user: Optional[dict], req: "PromptRequest", *, ok: bool, started: float,
+                 tokens_in: int = 0, tokens_out: int = 0, tokens_total: int = 0,
+                 error_kind: Optional[str] = None):
+    """Charge a turn's tokens to the caller and log it for the dashboard.
+
+    The single place usage is incremented, so the quota can't drift from what
+    actually ran. Both calls are best-effort inside proxy/access.py: a metrics
+    write must never be the reason a paid-for answer fails to arrive.
+    """
+    if not user:
+        return
+    access.record_usage(user["email"], tokens_total)
+    access.record_run(
+        user["email"], ok=ok, latency_ms=int((time.monotonic() - started) * 1000),
+        tokens_in=tokens_in, tokens_out=tokens_out, tokens_total=tokens_total,
+        model=req.model_name, causal=req.causal_reasoning, web=req.web_search,
+        error_kind=error_kind)
+
 
 @app.post("/analyze-prompt")
 async def analyze_prompt(
     req: PromptRequest,
-    user: Optional[dict] = Depends(get_current_user),
+    user: Optional[dict] = Depends(get_caller),
     x_anon_id: Optional[str] = Header(None),
 ):
     """Proxy the request to the Vertex AI Agent Engine (streaming)."""
 
+    # Before anything costs money: 403 with a machine-readable code the UI
+    # turns into the right modal (waiting for approval, or quota reached).
+    access.require_access(user)
+
     agent_engine_base = os.getenv("AGENT_ENGINE_ENDPOINT")
+    started = time.monotonic()
     attachment_files = _resolve_attachments(req.attachments, user)
     attachment_names = [f["filename"] for f in attachment_files]
 
@@ -683,9 +833,11 @@ async def analyze_prompt(
             "causal_plan": mock_plan,
         }
         # Persist from the same dict that goes back to the UI so the offline
-        # dev path exercises causal history too.
+        # dev path exercises causal history, quota accounting and metrics too.
         _persist_if_signed_in(user, req, mock_text, 10, attachment_names,
                               _causal_payload(report))
+        _record_turn(user, req, ok=True, started=started,
+                     tokens_in=6, tokens_out=4, tokens_total=10)
         return StreamingResponse(
             _mock_stream(report, req.causal_reasoning),
             media_type="text/event-stream", headers=SSE_HEADERS)
@@ -734,7 +886,7 @@ async def analyze_prompt(
     }
 
     return StreamingResponse(
-        _agent_stream(req, user, attachment_names, stream_url, payload, headers),
+        _agent_stream(req, user, attachment_names, stream_url, payload, headers, started),
         media_type="text/event-stream", headers=SSE_HEADERS)
 
 
@@ -757,20 +909,28 @@ async def _pump_lines(resp, queue: asyncio.Queue):
 
 async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                         attachment_names: list, stream_url: str,
-                        payload: dict, headers: dict):
+                        payload: dict, headers: dict, started: float):
     """Forward the Agent Engine run as SSE, then emit the assembled report."""
     collected_text = []
     causal_state = {}
     total_token_count = 0
+    prompt_token_count = 0
+    candidates_token_count = 0
     steps_sent = 0
     last_stage = None
-    started = time.monotonic()
+
+    def _fail(kind: str):
+        """Record a failed turn. Tokens already burned still count."""
+        _record_turn(user, req, ok=False, started=started, error_kind=kind,
+                     tokens_in=prompt_token_count, tokens_out=candidates_token_count,
+                     tokens_total=total_token_count)
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream("POST", stream_url, json=payload, headers=headers) as resp:
                 if resp.status_code >= 400:
                     body = await resp.aread()
+                    _fail("upstream_http")
                     yield _sse("error", {
                         "detail": f"Agent Engine error: {body.decode()}"})
                     return
@@ -788,6 +948,7 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                         if kind == "eof":
                             break
                         if kind == "error":
+                            _fail("stream_failed")
                             yield _sse("error", {"detail": f"Agent Engine stream failed: {value}"})
                             return
 
@@ -821,11 +982,22 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                         # ADK emits usage metadata once per LLM call within the
                         # turn (snake_case or camelCase depending on
                         # serialization); sum them for the multi-agent total.
+                        # The input/output split rides alongside for the
+                        # dashboard; the quota still counts the total, which
+                        # also includes reasoning ("thoughts") tokens.
                         usage = event.get("usage_metadata") or event.get("usageMetadata")
                         if isinstance(usage, dict):
                             count = usage.get("total_token_count", usage.get("totalTokenCount"))
                             if isinstance(count, int):
                                 total_token_count += count
+                            prompt_tokens = usage.get("prompt_token_count",
+                                                      usage.get("promptTokenCount"))
+                            if isinstance(prompt_tokens, int):
+                                prompt_token_count += prompt_tokens
+                            output_tokens = usage.get("candidates_token_count",
+                                                      usage.get("candidatesTokenCount"))
+                            if isinstance(output_tokens, int):
+                                candidates_token_count += output_tokens
 
                         # ── Forward this event as progress ──────────────────
                         stage = _resolve_stage(event.get("author"), delta)
@@ -855,6 +1027,7 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                     pump.cancel()
     except Exception as e:
         traceback.print_exc()
+        _fail("proxy_exception")
         yield _sse("error", {"detail": str(e)})
         return
 
@@ -897,6 +1070,8 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
             "status": "success",
             "response": response_text,
             "total_token_count": total_token_count,
+            "input_token_count": prompt_token_count,
+            "output_token_count": candidates_token_count,
             "causal_reasoning_steps": causal_steps,
             "causal_graph": causal_graph,
             "causal_status": causal_status,
@@ -912,8 +1087,12 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
         # persist to Firestore and replay through history without extra work.
         _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names,
                               _causal_payload(report))
+        _record_turn(user, req, ok=True, started=started,
+                     tokens_in=prompt_token_count, tokens_out=candidates_token_count,
+                     tokens_total=total_token_count)
     except Exception as e:
         traceback.print_exc()
+        _fail("assembly_failed")
         yield _sse("error", {"detail": str(e)})
         return
 

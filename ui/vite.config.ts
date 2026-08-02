@@ -10,14 +10,5 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
-    rollupOptions: {
-      output: {
-        // Firebase changes far less often than app code; splitting it keeps
-        // app-only deploys cheap to cache.
-        manualChunks: {
-          firebase: ["firebase/app", "firebase/auth", "firebase/analytics"],
-        },
-      },
-    },
   },
 });

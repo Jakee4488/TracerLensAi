@@ -69,14 +69,14 @@ export function Sidebar({
       </button>
 
       <nav className="history" aria-label="Recent workflows">
-        <div className="history-title">Recent workflows</div>
+        <div className="history-title">Last 24 hours</div>
         <div id="history-items">
           {!signedIn ? (
             <div className="history-item hint" id="history-empty-hint">
-              Sign in to see your saved workflows
+              Log in to see your recent workflows
             </div>
           ) : conversations.length === 0 ? (
-            <div className="history-item hint">No saved workflows yet</div>
+            <div className="history-item hint">No workflows in the last 24 hours</div>
           ) : (
             <>
               {conversations.map((conv) => (
@@ -97,6 +97,9 @@ export function Sidebar({
             </>
           )}
         </div>
+        {/* Stated where it's felt: conversations are swept after 24 hours, so
+            this list is a rolling window rather than an archive. */}
+        <div className="history-retention">Chats are deleted after 24 hours.</div>
       </nav>
 
       <div className="sidebar-settings">

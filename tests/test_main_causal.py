@@ -13,7 +13,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy.main as proxy_main
-from tests.conftest import sse_frames, sse_report
+from proxy.main import app
+from tests.conftest import approve_email, session_headers, sse_frames, sse_report
+
+
+@pytest.fixture
+def client(fake_store):
+    """A client that is already through the access gate.
+
+    These tests are about the causal *transport*, not the gate, so the session
+    is attached once here rather than threaded through thirty call sites.
+    """
+    approve_email()
+    with TestClient(app) as c:
+        c.headers.update(session_headers())
+        yield c
 
 
 class DummyCredentials:
