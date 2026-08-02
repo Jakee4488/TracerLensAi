@@ -2413,3 +2413,28 @@ html[data-theme="light"] .token-badge {
     from { opacity: 0; transform: translateX(-5px); }
     to { opacity: 1; transform: translateX(0); }
 }
+
+
+/* Stop button */
+.stop-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: #ef4444; /* red-500 */
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background var(--t-fast), transform var(--t-fast);
+}
+
+.stop-btn:hover {
+    background: #dc2626; /* red-600 */
+    transform: scale(1.05);
+}
+
+.stop-btn:active {
+    transform: scale(0.95);
+}

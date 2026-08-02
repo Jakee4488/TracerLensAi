@@ -6,6 +6,8 @@ interface Props {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
+  onStop?: () => void;
+  isSending?: boolean;
   disabled: boolean;
   attachments: Attachment[];
   onFiles: (files: FileList | null) => void;
@@ -31,6 +33,8 @@ export function Composer({
   value,
   onChange,
   onSend,
+  onStop,
+  isSending,
   disabled,
   attachments,
   onFiles,
@@ -91,9 +95,15 @@ export function Composer({
               }
             }}
           />
-          <button className="send-btn" id="send-btn" aria-label="Send" disabled={disabled} onClick={onSend}>
-            ➤
-          </button>
+          {isSending ? (
+            <button className="stop-btn" id="stop-btn" aria-label="Stop" onClick={onStop}>
+              ■
+            </button>
+          ) : (
+            <button className="send-btn" id="send-btn" aria-label="Send" disabled={disabled} onClick={onSend}>
+              ➤
+            </button>
+          )}
         </div>
         <div className="disclaimer">Agent evaluations are simulated dry-run predictions.</div>
       </div>

@@ -46,6 +46,7 @@ export default function App() {
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
 
   const isSendingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const chatIdRef = useRef<string | null>(null);
   const { attachments, handleFiles, remove, clear } = useAttachments();
   const history = useHistory();
@@ -74,6 +75,13 @@ export default function App() {
     setMessages((prev) => [...prev, message]);
   }, []);
 
+  const stop = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  }, []);
+
   const send = useCallback(async (overrideText?: string) => {
     const text = (typeof overrideText === "string" ? overrideText : input).trim();
     if (!text || isSendingRef.current) return;
@@ -94,6 +102,9 @@ export default function App() {
     isSendingRef.current = true;
     setSelectedMessageId("live"); // Open the panel for the live run
     
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       const report = await analyzePrompt(
         {
@@ -104,7 +115,11 @@ export default function App() {
           chat_id: chatIdRef.current,
           attachments: ready.map((a) => a.id as string),
         },
-        { onProgress: run.onProgress, onGraph: run.onGraph },
+        { 
+          signal: abortController.signal,
+          onProgress: run.onProgress, 
+          onGraph: run.onGraph 
+        },
       );
       if (report.total_token_count) {
         setTokenTally((prev) => prev + report.total_token_count);
@@ -126,16 +141,19 @@ export default function App() {
       clear();
       void reloadHistory();
     } catch (error) {
-      console.error(error);
-      append({
-        key: nextMessageKey("error"),
-        role: "error",
-        content: (error as Error).message,
-      });
-      setSelectedMessageId(null);
+      if ((error as Error).name !== "AbortError") {
+        console.error(error);
+        append({
+          key: nextMessageKey("error"),
+          role: "error",
+          content: (error as Error).message,
+        });
+        setSelectedMessageId(null);
+      }
     } finally {
       setIsSending(false);
       isSendingRef.current = false;
+      abortControllerRef.current = null;
     }
   }, [input, attachments, causal, webSearch, model, append, clear, reloadHistory, run]);
 
@@ -227,7 +245,9 @@ export default function App() {
           value={input}
           onChange={setInput}
           onSend={send}
-          disabled={isSending}
+          onStop={stop}
+          isSending={isSending}
+          disabled={isSending || (!input.trim() && attachments.length === 0)}
           attachments={attachments}
           onFiles={handleFiles}
           onRemoveAttachment={remove}
