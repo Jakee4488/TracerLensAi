@@ -31,8 +31,8 @@ const LEGEND: [string, string][] = [
  * iteration, so without this every node re-renders on every frame.
  * `--hop` drives the ripple's transition-delay purely in CSS — no JS timers.
  */
-const CausalNodeView = memo(function CausalNodeView({ data }: NodeProps<CausalNode>) {
-  const { label, kind, status, hop, onCritical, highlighted } = data as CausalNodeData;
+const CausalNodeView = memo(function CausalNodeView({ data }: NodeProps) {
+  const { label, kind, status, hop, onCritical, highlighted } = data as unknown as CausalNodeData;
   return (
     <div
       className={
