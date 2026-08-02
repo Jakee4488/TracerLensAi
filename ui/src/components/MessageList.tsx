@@ -21,10 +21,10 @@ function AiMessage({ message }: { message: ChatMessage }) {
     <div className="msg ai">
       <div className="avatar" />
       <div className="bubble">
-        <Markdown text={message.content || "No response received."} />
         {report && hasCausalContent(report) && (
           <CausalPanel report={report} stages={message.stages} />
         )}
+        <Markdown text={message.content || "No response received."} />
       </div>
     </div>
   );

@@ -22,13 +22,23 @@ function greetingMessage(): ChatMessage {
   return { key: nextMessageKey("greeting"), role: "greeting", content: GREETING };
 }
 
+// Matches the `@media (max-width: 900px)` breakpoint in styles.css, where the
+// sidebar switches from pushing content over to floating on top of it as an
+// overlay drawer. Below that width it must start closed — the toggle button
+// that opens/closes it sits underneath the sidebar itself, so if the sidebar
+// were visible by default there would be no way to ever dismiss it.
+const NARROW_VIEWPORT_QUERY = "(max-width: 900px)";
+function isNarrowViewport(): boolean {
+  return window.matchMedia(NARROW_VIEWPORT_QUERY).matches;
+}
+
 setTokenGetter(getIdToken);
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([greetingMessage()]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(isNarrowViewport);
   const [theme, setTheme] = useState<Theme>(currentTheme);
   const [tokenTally, setTokenTally] = useState(0);
   const [model, setModel] = useState("gemini-2.5-flash");

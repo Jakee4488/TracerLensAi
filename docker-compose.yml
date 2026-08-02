@@ -1,0 +1,60 @@
+##############################################################################
+# docker-compose.yml — Run the real app end-to-end, locally
+#
+# This is the actual user-facing shape: the built React UI + the FastAPI
+# proxy, in one container, talking to the causal pipeline exactly like
+# production does. It's the missing piece docker-compose.dev.yml doesn't
+# cover — that file only runs the agent side (src/) for backend iteration,
+# never the proxy or the UI.
+#
+# Usage:
+#   docker compose up --build             # real Agent Engine (default)
+#   MODE=mock docker compose up --build   # instant/free canned responses
+#   docker compose down
+#
+# Then open http://localhost:8080
+#
+# Real mode calls the live, already-deployed Vertex AI Agent Engine (see
+# deployment_metadata.json) — genuine LLM calls, small real cost, using your
+# own gcloud ADC credentials. Requires `gcloud auth application-default login`
+# to have been run at least once.
+##############################################################################
+
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    image: tracerlensai-proxy:local
+    container_name: tracerlensai-proxy
+    ports:
+      - "8080:8080"
+
+    environment:
+      - MODE=${MODE:-real}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-icarus-agent-26}
+      # deployment_metadata.json's location, not .env's GOOGLE_CLOUD_REGION —
+      # the latter is stale (us-central1) while the deployed engine is in
+      # europe-west2, and Vertex AI requires the regional endpoint to match.
+      - GOOGLE_CLOUD_REGION=europe-west2
+      - GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json
+
+    volumes:
+      - ./deployment_metadata.json:/app/deployment_metadata.json:ro
+      - ./docker/local-entrypoint.sh:/entrypoint.sh:ro
+      # Windows (this machine): gcloud ADC lives under %APPDATA%. Docker
+      # Compose interpolates ${APPDATA} from the host shell that invokes
+      # `docker compose`. On mac/Linux, replace with:
+      #   ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+      - ${APPDATA}/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    restart: unless-stopped

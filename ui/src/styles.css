@@ -81,7 +81,8 @@ html[data-theme="light"] {
 }
 
 html,
-body {
+body,
+#root {
     height: 100%;
     margin: 0;
 }
@@ -162,6 +163,8 @@ a:focus-visible {
     font-weight: 650;
     letter-spacing: 0.01em;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
 }
 
 .brand-ai {
@@ -508,7 +511,10 @@ html[data-theme="light"] .token-badge {
 
 .signin-btn:hover {
     box-shadow: var(--glow-md);
-    transform: translateY(-1px);
+}
+
+.signin-btn:active {
+    transform: translateY(1px);
 }
 
 .user-chip {
@@ -1328,16 +1334,57 @@ html[data-theme="light"] .token-badge {
         box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
     }
 
+    /* Two independent reasons .chat-header needs rules here:
+       1. position+z-index above .sidebar's 8: the sidebar overlays from x:0,
+          and .menu-btn (the only way to open OR close it) lives inside
+          .chat-header, underneath it. z-index on .menu-btn alone can't fix
+          this — .chat-header/.chat-container are unpositioned (static), so a
+          static ancestor forms no stacking context, and a positioned
+          descendant's z-index bubbles up to compete at the nearest ancestor
+          that IS one: .app-container, the same level .sidebar's z-index:8
+          stacks at. .chat-header itself has to be the positioned element, or
+          there's nothing here for a z-index to out-rank .sidebar within.
+       2. flex-wrap: .header-controls already wraps its own children, but
+          that only helps once the whole header-controls block has somewhere
+          to wrap TO. Without this, .chat-header stays a single nowrap row,
+          so a narrow viewport forces the whole row (title + token badge +
+          controls) wider than the viewport instead of letting anything drop
+          to a second line — the actual cause of the horizontal overflow. */
+    .chat-header {
+        position: relative;
+        z-index: 9;
+        flex-wrap: wrap;
+        row-gap: 8px;
+        padding: 10px 12px;
+    }
+
     .switch-group .sw-label {
         display: none;
     }
 
     .header-controls {
-        gap: 9px;
+        gap: 8px;
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-start;
     }
 
     .bubble {
         max-width: 92%;
+    }
+
+    .composer {
+        padding: 8px 12px 14px;
+    }
+
+    .input-pill {
+        flex-wrap: wrap;
+        border-radius: 16px;
+    }
+
+    .input-pill textarea {
+        min-width: 100%;
+        order: -1;
     }
 }
 

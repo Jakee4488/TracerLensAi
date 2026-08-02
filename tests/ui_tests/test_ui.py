@@ -329,3 +329,38 @@ def test_drawer_empty_state_for_unexecuted_component(page: Page, server):
     expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
     page.locator(".dag-node", has_text="Outcome").click()
     expect(page.locator(".drawer-empty")).to_contain_text("never executed")
+
+
+# ── Responsive sidebar (narrow viewports) ─────────────────────────────────────
+# Regression coverage for a bug found via manual testing: below the 900px
+# breakpoint the sidebar overlays the page (styles.css .sidebar position:
+# absolute), and if it's shown by default there is no way to reach the
+# hamburger button underneath it to dismiss it — the app becomes unusable.
+
+
+def test_sidebar_starts_open_on_desktop_width(page: Page, server):
+    page.set_viewport_size({"width": 1300, "height": 900})
+    page.goto(server)
+    expect(page.locator("#sidebar")).not_to_have_class("sidebar collapsed")
+
+
+def test_sidebar_starts_collapsed_below_breakpoint(page: Page, server):
+    page.set_viewport_size({"width": 420, "height": 800})
+    page.goto(server)
+    expect(page.locator("#sidebar")).to_have_class("sidebar collapsed")
+    # ...and nothing spills outside the viewport at this width.
+    overflow = page.evaluate("() => document.body.scrollWidth > document.body.clientWidth")
+    assert not overflow, "horizontal overflow at 420px viewport width"
+
+
+def test_sidebar_toggle_survives_repeated_open_close_at_narrow_width(page: Page, server):
+    """The hamburger sits underneath the sidebar's overlay; it must stay
+    clickable through repeated open/close, not just the first tap."""
+    page.set_viewport_size({"width": 420, "height": 800})
+    page.goto(server)
+    sidebar = page.locator("#sidebar")
+    for _ in range(3):
+        page.click("#toggle-sidebar", timeout=3000)
+        expect(sidebar).not_to_have_class("sidebar collapsed")
+        page.click("#toggle-sidebar", timeout=3000)
+        expect(sidebar).to_have_class("sidebar collapsed")
