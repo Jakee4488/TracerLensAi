@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { highlightCode, renderMarkdown } from "../lib/markdown";
-import { CausalPanel, hasCausalContent } from "./causal/CausalPanel";
-import { CausalGraph } from "./causal/CausalGraph";
+import { hasCausalContent } from "./causal/CausalPanel";
 import { WorkflowTimeline } from "./causal/WorkflowTimeline";
 import type { Stage } from "../lib/stages";
 import type { CausalGraph as CausalGraphType, ChatMessage } from "../types";
@@ -9,20 +8,28 @@ import type { CausalGraph as CausalGraphType, ChatMessage } from "../types";
 function Markdown({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const html = renderMarkdown(text);
-  // Highlighting mutates the rendered DOM, so it runs after commit. The HTML is
-  // DOMPurify output — the one place model text reaches innerHTML.
   useEffect(() => highlightCode(ref.current), [html]);
   return <div className="md-content" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function AiMessage({ message }: { message: ChatMessage }) {
+function AiMessage({ message, onSelect }: { message: ChatMessage; onSelect?: (msg: ChatMessage) => void }) {
   const report = message.report;
+  const hasCausal = report && hasCausalContent(report);
+  
   return (
     <div className="msg ai">
       <div className="avatar" />
       <div className="bubble">
-        {report && hasCausalContent(report) && (
-          <CausalPanel report={report} stages={message.stages} />
+        {hasCausal && (
+          <div className="causal-summary-box">
+            <div className="causal-summary-header">⚯ Causal reasoning completed</div>
+            {message.stages && <WorkflowTimeline stages={message.stages} compact />}
+            {onSelect && (
+              <button className="view-details-btn" onClick={() => onSelect(message)}>
+                View Details ➔
+              </button>
+            )}
+          </div>
         )}
         <Markdown text={message.content || "No response received."} />
       </div>
@@ -45,32 +52,21 @@ function UserMessage({ message }: { message: ChatMessage }) {
   );
 }
 
-/**
- * In-flight bubble.
- *
- * With causal reasoning on there is a nine-stage pipeline to show, so the
- * timeline replaces the dots — and the DAG joins it as soon as the pipeline
- * emits one, mid-run. With the toggle off there is no pipeline, so the
- * original three-dot indicator stands.
- */
 function PendingBubble({
   causal,
   stages,
-  graph,
 }: {
   causal: boolean;
   stages: Stage[];
-  graph: CausalGraphType | null;
 }) {
   return (
     <div className="msg ai">
       <div className="avatar" />
       <div className="bubble">
         {causal ? (
-          <div className="causal-panel">
-            <div className="causal-head">⚯ Causal reasoning</div>
+          <div className="causal-summary-box">
+            <div className="causal-summary-header">⚯ Causal reasoning...</div>
             <WorkflowTimeline stages={stages} />
-            {graph && graph.nodes?.length > 0 && <CausalGraph graph={graph} />}
           </div>
         ) : (
           <span className="typing" aria-label="Agent is thinking">
@@ -90,14 +86,13 @@ interface Props {
   causal: boolean;
   stages: Stage[];
   liveGraph: CausalGraphType | null;
+  onSelectMessage?: (message: ChatMessage) => void;
+  onPromptClick?: (text: string) => void;
 }
 
-export function MessageList({ messages, isSending, causal, stages, liveGraph }: Props) {
+export function MessageList({ messages, isSending, causal, stages, liveGraph, onSelectMessage, onPromptClick }: Props) {
   const areaRef = useRef<HTMLDivElement>(null);
 
-  // Layout effect so the scroll lands before paint, not a frame after it.
-  // `stages` is a dependency too: the timeline grows as the run proceeds, and
-  // without it the view stops following once the bubble is already on screen.
   useLayoutEffect(() => {
     const area = areaRef.current;
     if (area) area.scrollTop = area.scrollHeight;
@@ -106,7 +101,25 @@ export function MessageList({ messages, isSending, causal, stages, liveGraph }: 
   return (
     <div className="messages" id="messages-area" ref={areaRef}>
       <div className="messages-inner" id="messages-inner">
+        {messages.length === 1 && messages[0].role === "greeting" && (
+          <div className="empty-state">
+            <div className="empty-state-greeting">
+              <div className="avatar" />
+              <p>{messages[0].content}</p>
+            </div>
+            <div className="prompt-cards">
+              <button onClick={() => {
+                if(onPromptClick) onPromptClick("Why does ice float?");
+              }}>🧊 Why does ice float?</button>
+              <button onClick={() => {
+                if(onPromptClick) onPromptClick("Explain how water boils");
+              }}>🔥 Explain how water boils</button>
+            </div>
+          </div>
+        )}
+        
         {messages.map((message) => {
+          if (message.role === "greeting") return null; // handled in empty state
           if (message.role === "user") return <UserMessage key={message.key} message={message} />;
           if (message.role === "error") {
             return (
@@ -118,19 +131,9 @@ export function MessageList({ messages, isSending, causal, stages, liveGraph }: 
               </div>
             );
           }
-          if (message.role === "greeting") {
-            return (
-              <div className="msg ai" key={message.key}>
-                <div className="avatar" />
-                <div className="bubble">
-                  <p>{message.content}</p>
-                </div>
-              </div>
-            );
-          }
-          return <AiMessage key={message.key} message={message} />;
+          return <AiMessage key={message.key} message={message} onSelect={onSelectMessage} />;
         })}
-        {isSending && <PendingBubble causal={causal} stages={stages} graph={liveGraph} />}
+        {isSending && <PendingBubble causal={causal} stages={stages} />}
       </div>
     </div>
   );

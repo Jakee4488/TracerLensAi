@@ -4,10 +4,12 @@ import { Composer } from "./components/Composer";
 import { DropOverlay } from "./components/DropOverlay";
 import { MessageList } from "./components/MessageList";
 import { Sidebar } from "./components/Sidebar";
+import { CausalPanel } from "./components/causal/CausalPanel";
 import { useAttachments } from "./hooks/useAttachments";
 import { useHistory } from "./hooks/useHistory";
 import { useRunProgress } from "./hooks/useRunProgress";
 import { analyzePrompt, fetchConversation, setTokenGetter } from "./lib/api";
+import { hasCausalContent } from "./components/causal/CausalPanel";
 import { finalizeStages } from "./lib/stages";
 import { getIdToken, watchAuth, type User } from "./lib/firebase";
 import { generateSessionId, nextMessageKey } from "./lib/ids";
@@ -22,11 +24,6 @@ function greetingMessage(): ChatMessage {
   return { key: nextMessageKey("greeting"), role: "greeting", content: GREETING };
 }
 
-// Matches the `@media (max-width: 900px)` breakpoint in styles.css, where the
-// sidebar switches from pushing content over to floating on top of it as an
-// overlay drawer. Below that width it must start closed — the toggle button
-// that opens/closes it sits underneath the sidebar itself, so if the sidebar
-// were visible by default there would be no way to ever dismiss it.
 const NARROW_VIEWPORT_QUERY = "(max-width: 900px)";
 function isNarrowViewport(): boolean {
   return window.matchMedia(NARROW_VIEWPORT_QUERY).matches;
@@ -45,13 +42,15 @@ export default function App() {
   const [causal, setCausal] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
 
+  const isSendingRef = useRef(false);
   const chatIdRef = useRef<string | null>(null);
   const { attachments, handleFiles, remove, clear } = useAttachments();
   const history = useHistory();
   const run = useRunProgress();
 
-  // History is per-user, so it reloads on sign-in and empties on sign-out.
   const { reload: reloadHistory, reset: resetHistory } = history;
   useEffect(
     () =>
@@ -75,9 +74,9 @@ export default function App() {
     setMessages((prev) => [...prev, message]);
   }, []);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (!text || isSending) return;
+  const send = useCallback(async (overrideText?: string) => {
+    const text = (typeof overrideText === "string" ? overrideText : input).trim();
+    if (!text || isSendingRef.current) return;
 
     setInput("");
     if (!chatIdRef.current) chatIdRef.current = generateSessionId();
@@ -92,6 +91,9 @@ export default function App() {
 
     run.reset();
     setIsSending(true);
+    isSendingRef.current = true;
+    setSelectedMessageId("live"); // Open the panel for the live run
+    
     try {
       const report = await analyzePrompt(
         {
@@ -108,17 +110,19 @@ export default function App() {
         setTokenTally((prev) => prev + report.total_token_count);
       }
       const failed = report.causal_status?.phase === "failed";
+      
+      const newMsgKey = nextMessageKey("ai");
       append({
-        key: nextMessageKey("ai"),
+        key: newMsgKey,
         role: "ai",
         content: report.response || "No response received.",
         report,
-        // Read from the ref, not state: the last progress frame's setState has
-        // not committed yet at this point in the same tick.
         stages: causal
           ? finalizeStages(run.stagesRef.current, run.elapsedRef.current, failed)
           : undefined,
       });
+      setSelectedMessageId(newMsgKey);
+      
       clear();
       void reloadHistory();
     } catch (error) {
@@ -128,10 +132,12 @@ export default function App() {
         role: "error",
         content: (error as Error).message,
       });
+      setSelectedMessageId(null);
     } finally {
       setIsSending(false);
+      isSendingRef.current = false;
     }
-  }, [input, isSending, attachments, causal, webSearch, model, append, clear, reloadHistory, run]);
+  }, [input, attachments, causal, webSearch, model, append, clear, reloadHistory, run]);
 
   const openConversation = useCallback(async (chatId: string) => {
     try {
@@ -152,13 +158,11 @@ export default function App() {
                 key: nextMessageKey("ai"),
                 role: "ai" as const,
                 content: msg.content || "",
-                // Persisted causal_* fields use the same key names as a live
-                // response, so spreading them replays the diagram and estimand
-                // card without touching the render path.
                 report: { response: msg.content || "", ...(msg.causal || {}) } as Report,
               },
         ),
       );
+      setSelectedMessageId(null);
     } catch (e) {
       console.error("Failed to load conversation:", e);
     }
@@ -169,10 +173,21 @@ export default function App() {
     setTokenTally(0);
     clear();
     setMessages([greetingMessage()]);
+    setSelectedMessageId(null);
   }, [clear]);
 
+  const selectedMsg = messages.find((m) => m.key === selectedMessageId);
+  
+  // Pass dummy report struct for "live" state, so CausalPanel can just render the liveGraph/stages
+  const liveReport: Report | null = selectedMessageId === "live" ? {} as Report : null;
+  const currentReport = selectedMessageId === "live" ? liveReport : selectedMsg?.report;
+  
+  // Right pane condition
+  const showRightPane = (selectedMessageId === "live" && causal) || 
+    (selectedMsg && (selectedMsg.stages?.length || (selectedMsg.report && hasCausalContent(selectedMsg.report))));
+
   return (
-    <div className="app-container">
+    <div className={`app-container ${showRightPane ? "has-right-pane" : ""}`}>
       <Sidebar
         collapsed={sidebarCollapsed}
         signedIn={!!user}
@@ -181,20 +196,20 @@ export default function App() {
         onSelect={openConversation}
         onLoadMore={history.loadMore}
         onNewChat={newChat}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        model={model}
+        onModelChange={setModel}
+        causal={causal}
+        onCausalChange={setCausal}
+        webSearch={webSearch}
+        onWebSearchChange={setWebSearch}
       />
 
       <main className="chat-container">
         <ChatHeader
-          theme={theme}
-          onToggleTheme={toggleTheme}
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           tokenTally={tokenTally}
-          model={model}
-          onModelChange={setModel}
-          causal={causal}
-          onCausalChange={setCausal}
-          webSearch={webSearch}
-          onWebSearchChange={setWebSearch}
           user={user}
         />
 
@@ -204,6 +219,8 @@ export default function App() {
           causal={causal}
           stages={run.stages}
           liveGraph={run.graph}
+          onSelectMessage={(msg) => setSelectedMessageId(msg.key)}
+          onPromptClick={(text) => send(text)}
         />
 
         <Composer
@@ -218,6 +235,17 @@ export default function App() {
 
         <DropOverlay onFiles={handleFiles} />
       </main>
+
+      {showRightPane && (
+        <aside className="causal-pane">
+          <button className="close-pane-btn" onClick={() => setSelectedMessageId(null)}>×</button>
+          <CausalPanel 
+            report={currentReport!} 
+            stages={selectedMessageId === "live" ? run.stages : selectedMsg?.stages} 
+            liveGraph={selectedMessageId === "live" ? run.graph : undefined}
+          />
+        </aside>
+      )}
     </div>
   );
 }

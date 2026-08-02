@@ -2192,3 +2192,188 @@ html[data-theme="light"] .token-badge {
         width: 100vw;
     }
 }
+
+
+/* ── UI Redesign & Modernization ────────────────────────────────────────── */
+
+/* App Container Layout */
+.app-container {
+    display: grid !important;
+    grid-template-columns: auto 1fr;
+    transition: grid-template-columns var(--t-med) ease;
+}
+
+.app-container.has-right-pane {
+    grid-template-columns: auto 1fr 450px;
+}
+
+@media (max-width: 1200px) {
+    .app-container.has-right-pane {
+        grid-template-columns: auto 1fr 350px;
+    }
+}
+
+/* Sidebar Settings */
+.sidebar-settings {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding: 10px 10px;
+}
+.settings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.sidebar-setting, .sidebar-switch {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    font-size: 13px;
+    color: var(--text-2);
+}
+.sidebar-select {
+    width: 120px;
+    padding: 4px;
+}
+.theme-btn {
+    font-size: 12px;
+    padding: 4px 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    cursor: pointer;
+}
+
+/* Causal Right Pane */
+.causal-pane {
+    border-left: 1px solid var(--border);
+    background: var(--surface-0);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow-y: auto;
+}
+.close-pane-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-1);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    z-index: 10;
+    display: grid;
+    place-items: center;
+}
+.causal-pane .causal-panel {
+    border: none;
+    background: transparent;
+    border-radius: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding-top: 12px;
+}
+.causal-pane .graph-container {
+    flex: 1;
+    min-height: 400px;
+}
+.pane-timeline {
+    padding: 10px 20px;
+}
+
+/* Causal Summary Box */
+.causal-summary-box {
+    margin-bottom: 12px;
+    padding: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.causal-summary-header {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cyan);
+}
+.view-details-btn {
+    align-self: flex-start;
+    background: var(--surface-3);
+    border: 1px solid var(--glass-border);
+    color: var(--text-1);
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background var(--t-fast);
+}
+.view-details-btn:hover {
+    background: var(--cyan);
+    color: #fff;
+}
+
+/* Empty State Cards */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 30px;
+    color: var(--text-2);
+}
+.empty-state-greeting {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 16px;
+}
+.prompt-cards {
+    display: flex;
+    gap: 16px;
+}
+.prompt-cards button {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    padding: 16px 20px;
+    border-radius: var(--radius-lg);
+    color: var(--text-1);
+    font-size: 14px;
+    cursor: pointer;
+    box-shadow: var(--glow-sm);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.prompt-cards button:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--glow-md);
+    border-color: var(--cyan);
+}
+
+/* Fix CSS Grid stretch bug */
+.app-container {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+}
+
+.chat-container, .causal-pane, .sidebar {
+    min-height: 0;
+    max-height: 100%;
+}
+
+.causal-pane {
+    height: 100%;
+}
+
+.causal-pane .causal-panel {
+    min-height: min-content;
+}
+

@@ -6,9 +6,8 @@ import { EstimandCard } from "./EstimandCard";
 import { StepDrawer, type DrawerTarget } from "./StepDrawer";
 import { WorkflowTimeline } from "./WorkflowTimeline";
 import type { Stage } from "../../lib/stages";
-import type { Report } from "../../types";
+import type { Report, CausalGraph as CausalGraphType } from "../../types";
 
-/** Trace lines are prefixed "[tag] rest"; the tag renders as a coloured pill. */
 const STEP_TAG_RE = /^\[([a-z_ -]+)\]\s*(.*)$/i;
 
 function StepLine({ step }: { step: string }) {
@@ -32,45 +31,9 @@ function webLabel(web: NonNullable<Report["causal_web_retrieval"]>): string {
   return "web: no data";
 }
 
-/**
- * The finished run's timeline, collapsed to one line.
- *
- * A nine-row timeline would dominate replayed history, so it folds into a
- * summary that expands on click.
- */
-function TimelineSummary({ stages }: { stages: Stage[] }) {
-  const [open, setOpen] = useState(false);
-  const ran = stages.filter((s) => s.status !== "skipped" && s.status !== "pending");
-  if (ran.length === 0) return null;
-  const total = ran.reduce(
-    (acc, s) => acc + (s.startedMs != null && s.endedMs != null ? s.endedMs - s.startedMs : 0),
-    0,
-  );
-  const failed = ran.some((s) => s.status === "failed");
-
-  return (
-    <>
-      <button
-        type="button"
-        className="timeline-summary"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {`${ran.length} stage${ran.length === 1 ? "" : "s"}`}
-        {total > 0 && ` · ${(total / 1000).toFixed(1)}s`}
-        {failed && " · failed"}
-        <span className="chev" aria-hidden="true">
-          ›
-        </span>
-      </button>
-      {open && <WorkflowTimeline stages={stages} compact />}
-    </>
-  );
-}
-
-export function CausalPanel({ report, stages }: { report: Report; stages?: Stage[] }) {
+export function CausalPanel({ report, stages, liveGraph }: { report: Report; stages?: Stage[]; liveGraph?: CausalGraphType | null }) {
   const steps = report.causal_reasoning_steps || [];
-  const graph = report.causal_graph;
+  const graph = liveGraph || report.causal_graph;
   const hasGraph = !!(graph && graph.nodes && graph.nodes.length);
   const estimand = report.causal_estimand;
   const web = report.causal_web_retrieval;
@@ -108,7 +71,11 @@ export function CausalPanel({ report, stages }: { report: Report; stages?: Stage
         />
       )}
 
-      {stages && <TimelineSummary stages={stages} />}
+      {stages && (
+        <div className="pane-timeline">
+           <WorkflowTimeline stages={stages} />
+        </div>
+      )}
 
       {steps.length > 0 && (
         <ul className="causal-steps">
@@ -119,7 +86,9 @@ export function CausalPanel({ report, stages }: { report: Report; stages?: Stage
       )}
 
       {hasGraph && (
-        <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
+        <div className="graph-container">
+          <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
+        </div>
       )}
 
       {drawer && (

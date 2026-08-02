@@ -1,4 +1,5 @@
 import type { Conversation } from "../types";
+import type { Theme } from "../lib/theme";
 
 interface Props {
   collapsed: boolean;
@@ -8,6 +9,15 @@ interface Props {
   onSelect: (chatId: string) => void;
   onLoadMore: () => void;
   onNewChat: () => void;
+  // Settings
+  theme: Theme;
+  onToggleTheme: () => void;
+  model: string;
+  onModelChange: (value: string) => void;
+  causal: boolean;
+  onCausalChange: (value: boolean) => void;
+  webSearch: boolean;
+  onWebSearchChange: (value: boolean) => void;
 }
 
 export function Sidebar({
@@ -18,6 +28,14 @@ export function Sidebar({
   onSelect,
   onLoadMore,
   onNewChat,
+  theme,
+  onToggleTheme,
+  model,
+  onModelChange,
+  causal,
+  onCausalChange,
+  webSearch,
+  onWebSearchChange,
 }: Props) {
   return (
     <aside className={collapsed ? "sidebar collapsed" : "sidebar"} id="sidebar">
@@ -81,9 +99,55 @@ export function Sidebar({
         </div>
       </nav>
 
-      <div className="sidebar-foot">
-        <span>TracerLensAi</span>
-        <span>causal agent</span>
+      <div className="sidebar-settings">
+        <div className="history-title">Settings</div>
+        <div className="settings-panel">
+          <label className="sidebar-setting">
+            <span className="sw-label">Model</span>
+            <select
+              className="model-select sidebar-select"
+              id="model-select"
+              value={model}
+              onChange={(e) => onModelChange(e.target.value)}
+            >
+              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+              <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            </select>
+          </label>
+
+          <label className="switch-group sidebar-switch">
+            <span className="sw-label">Causal</span>
+            <span className="switch">
+              <input
+                type="checkbox"
+                id="causal-toggle"
+                checked={causal}
+                onChange={(e) => onCausalChange(e.target.checked)}
+              />
+              <span className="track" />
+            </span>
+          </label>
+
+          <label className="switch-group sidebar-switch" title="Add observation data from the web">
+            <span className="sw-label">Web data</span>
+            <span className="switch">
+              <input
+                type="checkbox"
+                id="web-search-toggle"
+                checked={webSearch}
+                onChange={(e) => onWebSearchChange(e.target.checked)}
+              />
+              <span className="track" />
+            </span>
+          </label>
+          
+          <label className="switch-group sidebar-switch" title="Toggle dark/light theme">
+            <span className="sw-label">Theme</span>
+            <button className="icon-btn theme-btn" id="theme-toggle" onClick={onToggleTheme}>
+              {theme === "light" ? "☀ Light" : "☾ Dark"}
+            </button>
+          </label>
+        </div>
       </div>
     </aside>
   );
