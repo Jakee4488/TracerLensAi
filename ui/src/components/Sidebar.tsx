@@ -144,7 +144,7 @@ export function Sidebar({
           <label className="switch-group sidebar-switch" title="Toggle dark/light theme">
             <span className="sw-label">Theme</span>
             <button className="icon-btn theme-btn" id="theme-toggle" onClick={onToggleTheme}>
-              {theme === "light" ? "☀ Light" : "☾ Dark"}
+              {theme === "light" ? "☀" : "☾"}
             </button>
           </label>
         </div>

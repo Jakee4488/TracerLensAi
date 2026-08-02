@@ -22,11 +22,9 @@ function AiMessage({ message, onSelect }: { message: ChatMessage; onSelect?: (ms
       <div className="bubble">
         {hasCausal && (
           <div className="causal-summary-box">
-            <div className="causal-summary-header">⚯ Causal reasoning completed</div>
-            {message.stages && <WorkflowTimeline stages={message.stages} compact />}
             {onSelect && (
               <button className="view-details-btn" onClick={() => onSelect(message)}>
-                View Details ➔
+                ⚯ View Causal Details ➔
               </button>
             )}
           </div>
@@ -64,9 +62,13 @@ function PendingBubble({
       <div className="avatar" />
       <div className="bubble">
         {causal ? (
-          <div className="causal-summary-box">
-            <div className="causal-summary-header">⚯ Causal reasoning...</div>
-            <WorkflowTimeline stages={stages} />
+          <div className="causal-summary-box live-pulse">
+            <div className="causal-summary-header">
+              <span className="causal-spinner">⚯</span> Causal reasoning:{" "}
+              <span className="active-step-label" key={stages.find(s => s.status === "active")?.id || "thinking"}>
+                {stages.find(s => s.status === "active")?.label || "Thinking..."}
+              </span>
+            </div>
           </div>
         ) : (
           <span className="typing" aria-label="Agent is thinking">

@@ -2377,3 +2377,39 @@ html[data-theme="light"] .token-badge {
     min-height: min-content;
 }
 
+
+
+/* Animated Live Pending Bubble styles */
+.causal-summary-box.live-pulse {
+    border-color: rgba(34, 211, 238, 0.4);
+    box-shadow: 0 0 12px rgba(34, 211, 238, 0.15);
+    animation: border-pulse 2s infinite ease-in-out;
+}
+
+@keyframes border-pulse {
+    0%, 100% { border-color: rgba(34, 211, 238, 0.2); }
+    50% { border-color: rgba(34, 211, 238, 0.7); box-shadow: 0 0 16px rgba(34, 211, 238, 0.25); }
+}
+
+.causal-spinner {
+    display: inline-block;
+    animation: spin-slow 3s linear infinite;
+    color: var(--cyan);
+    margin-right: 4px;
+}
+
+@keyframes spin-slow {
+    100% { transform: rotate(360deg); }
+}
+
+.active-step-label {
+    display: inline-block;
+    color: var(--cyan);
+    font-weight: 500;
+    animation: fade-in-slide 0.3s ease-out forwards;
+}
+
+@keyframes fade-in-slide {
+    from { opacity: 0; transform: translateX(-5px); }
+    to { opacity: 1; transform: translateX(0); }
+}
