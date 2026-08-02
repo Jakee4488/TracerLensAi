@@ -44,6 +44,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [rightPaneWidth, setRightPaneWidth] = useState(450);
+  const [isResizing, setIsResizing] = useState(false);
 
   const isSendingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -81,6 +83,24 @@ export default function App() {
       abortControllerRef.current = null;
     }
   }, []);
+
+  const startResizing = useCallback(() => setIsResizing(true), []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.max(300, Math.min(window.innerWidth - e.clientX, 800));
+      setRightPaneWidth(newWidth);
+    };
+    const onMouseUp = () => setIsResizing(false);
+    
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isResizing]);
 
   const send = useCallback(async (overrideText?: string) => {
     const text = (typeof overrideText === "string" ? overrideText : input).trim();
@@ -201,11 +221,19 @@ export default function App() {
   const currentReport = selectedMessageId === "live" ? liveReport : selectedMsg?.report;
   
   // Right pane condition
-  const showRightPane = (selectedMessageId === "live" && causal) || 
-    (selectedMsg && (selectedMsg.stages?.length || (selectedMsg.report && hasCausalContent(selectedMsg.report))));
+  const showRightPane = Boolean(
+    (selectedMessageId === "live" && causal) || 
+    (selectedMsg && (
+      (selectedMsg.stages && selectedMsg.stages.length > 0) || 
+      (selectedMsg.report && hasCausalContent(selectedMsg.report))
+    ))
+  );
 
   return (
-    <div className={`app-container ${showRightPane ? "has-right-pane" : ""}`}>
+    <div 
+      className={`app-container ${showRightPane ? "has-right-pane" : ""} ${isResizing ? "is-resizing" : ""}`}
+      style={showRightPane ? { "--right-pane-width": `${rightPaneWidth}px` } as React.CSSProperties : undefined}
+    >
       <Sidebar
         collapsed={sidebarCollapsed}
         signedIn={!!user}
@@ -258,6 +286,7 @@ export default function App() {
 
       {showRightPane && (
         <aside className="causal-pane">
+          <div className="pane-resizer" onMouseDown={startResizing} />
           <button className="close-pane-btn" onClick={() => setSelectedMessageId(null)}>×</button>
           <CausalPanel 
             report={currentReport!} 

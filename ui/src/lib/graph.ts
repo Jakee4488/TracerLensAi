@@ -89,7 +89,7 @@ export function buildEdges(graph: CausalGraph): Edge[] {
       source: edge.source,
       target: edge.target,
       animated: critical,
-      label: edge.relation,
+      label: edge.confidence ? `${edge.relation} (${Math.round(edge.confidence * 100)}%)` : edge.relation,
       style: {
         stroke: critical
           ? EDGE_COLORS.critical
@@ -101,7 +101,17 @@ export function buildEdges(graph: CausalGraph): Edge[] {
       labelStyle: {
         fontSize: 11,
         fill: critical ? EDGE_COLORS.critical : "#94a3b8",
+        fontWeight: 500,
       },
+      labelBgStyle: {
+        fill: "var(--surface-1, #1e293b)",
+        fillOpacity: 0.9,
+        stroke: "var(--border, #334155)",
+        strokeWidth: 1,
+        rx: 4,
+        ry: 4,
+      },
+      labelBgPadding: [6, 4],
       markerEnd: {
         type: "arrowclosed",
         color: critical

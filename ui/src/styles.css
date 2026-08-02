@@ -575,7 +575,7 @@ html[data-theme="light"] .token-badge {
 }
 
 .messages-inner {
-    max-width: 780px;
+    max-width: 1200px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -1121,7 +1121,7 @@ html[data-theme="light"] .token-badge {
 }
 
 .composer-inner {
-    max-width: 780px;
+    max-width: 1200px;
     margin: 0 auto;
 }
 
@@ -2104,6 +2104,21 @@ html[data-theme="light"] .token-badge {
 .drawer-verdict.success { color: var(--ok); }
 .drawer-verdict.failure { color: var(--err); }
 
+.causal-head {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--surface-0);
+    z-index: 20;
+}
+
 .drawer-empty {
     font-size: 12.5px;
     line-height: 1.6;
@@ -2190,12 +2205,16 @@ html[data-theme="light"] .token-badge {
 }
 
 .app-container.has-right-pane {
-    grid-template-columns: auto 1fr 450px;
+    grid-template-columns: auto 1fr var(--right-pane-width, 450px);
+}
+
+.app-container.is-resizing {
+    transition: none !important;
 }
 
 @media (max-width: 1200px) {
     .app-container.has-right-pane {
-        grid-template-columns: auto 1fr 350px;
+        grid-template-columns: auto 1fr var(--right-pane-width, 350px);
     }
 }
 
@@ -2423,4 +2442,18 @@ html[data-theme="light"] .token-badge {
 
 .stop-btn:active {
     transform: scale(0.95);
+}
+
+.pane-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -3px;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 20;
+}
+.pane-resizer:hover, .is-resizing .pane-resizer {
+    background: var(--border);
 }

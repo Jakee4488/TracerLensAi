@@ -62,6 +62,12 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
         )}
       </div>
 
+      {hasGraph && (
+        <div className="graph-container">
+          <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
+        </div>
+      )}
+
       {estimand && (
         <EstimandCard
           estimand={estimand}
@@ -83,12 +89,6 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
             <StepLine key={i} step={step} />
           ))}
         </ul>
-      )}
-
-      {hasGraph && (
-        <div className="graph-container">
-          <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
-        </div>
       )}
 
       {drawer && (

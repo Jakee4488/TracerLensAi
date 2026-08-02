@@ -1,16 +1,16 @@
-#!/bin/sh
+﻿#!/bin/sh
 # Local-dev-only entrypoint for the proxy container (docker-compose.yml).
 #
-# Not used by Dockerfile.proxy's own CMD / the deployed Cloud Run image â€” this
+# Not used by Dockerfile.proxy's own CMD / the deployed Cloud Run image Ã¢â‚¬â€ this
 # is bind-mounted in only for `docker compose up`, so it never touches
 # production. It resolves AGENT_ENGINE_ENDPOINT the same way deploy_to_gcp.sh
 # does: from deployment_metadata.json, which agents-cli keeps current on every
-# agent deploy. That makes this compose file self-updating â€” redeploy the
+# agent deploy. That makes this compose file self-updating Ã¢â‚¬â€ redeploy the
 # agent, and the next `docker compose up` picks up the new engine automatically.
 set -e
 
 if [ "$MODE" = "mock" ]; then
-    echo "[local-entrypoint] MODE=mock â€” AGENT_ENGINE_ENDPOINT left unset; proxy serves its built-in canned responses."
+    echo "[local-entrypoint] MODE=mock Ã¢â‚¬â€ AGENT_ENGINE_ENDPOINT left unset; proxy serves its built-in canned responses."
     unset AGENT_ENGINE_ENDPOINT
 elif [ -z "$AGENT_ENGINE_ENDPOINT" ] && [ -f /app/deployment_metadata.json ]; then
     ENGINE_ID=$(sed -n 's/.*"remote_agent_runtime_id": *"\([^"]*\)".*/\1/p' /app/deployment_metadata.json)
