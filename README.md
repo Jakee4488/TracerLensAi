@@ -14,7 +14,10 @@
 | **Formal Identification (DoWhy)** | For treatment-effect questions, a deterministic DoWhy stage identifies the back-door/IV adjustment set from the variable DAG (0 LLM calls) and, when a dataset is present, estimates the effect, runs refutation tests, and computes counterfactuals — so the numeric answer is grounded in a real adjustment set, not the LLM's guess. |
 | **Data-Driven DAG Correction** | With a dataset available, causal discovery (causal-learn PC + DirectLiNGAM) conservatively corrects the LLM-asserted graph — reversing, dropping, or adding edges only when the data disagrees strongly and directionally — so a wrong edge changes the *answer*, not just an annotation. |
 | **Web Data & Evidence Retrieval** | An optional **Web** toggle lets the causal pipeline fetch best-effort observational data (a CSV) or supporting evidence from the web to feed identification, estimation, and DAG correction. |
-| **Live Causal Graph** | The reasoning graph (nodes, causal edges, critical path, per-step status) streams to the browser and renders as a Mermaid diagram with a status legend, an identification card, and web/graph-fix badges. |
+| **Live Split-Pane UI** | While the agent is running, the chat area and the causal right-pane update side-by-side in real time. The live bubble shows the active pipeline stage (e.g. `⚯ Causal reasoning: Executing steps…`) with an animated spinner; the right pane renders the full `WorkflowTimeline`, `CausalGraph` (ReactFlow DAG), `EstimandCard`, and `StepDrawer` click-through details. |
+| **Interrupt / Stop Button** | A red `■ Stop` button replaces the send button while a run is in-flight; clicking it aborts the SSE stream via the browser's `AbortController` API, immediately stopping execution on both client and server. |
+| **Live Causal Graph** | The reasoning graph (nodes, causal edges, critical path, per-step status) streams to the browser and renders as an interactive ReactFlow diagram with a status legend, an identification card, and web/graph-fix badges. |
+| **React + Vite Frontend** | The UI is a production-grade React 18 + TypeScript + Vite application (`ui/`) compiled to a static bundle and served by the FastAPI proxy. Dark/light theme toggle, Firebase Google Sign-In, multi-turn history, file attachments, starter prompt cards, model selector, and causal/web toggles. |
 | **Gemini Enterprise Agent** | Built with the Agent Development Kit (ADK) and deployed to Vertex AI Agent Runtime, reachable over the reasoning-engine and A2A (Agent2Agent) contracts. |
 | **Code Execution** | Gemini can write and run Python safely inside the Agent Sandbox to compute, model, and verify results. |
 | **Google Sign-In & History** | Firebase Google auth; each signed-in user's conversations are persisted to Firestore and listed in the sidebar. |
@@ -75,11 +78,15 @@ src/                # ADK agent (deployed to Vertex AI Agent Runtime)
   fast_api_app.py   #   agent-side FastAPI server (adk_api, A2A, reasoning-engine)
   causal/           #   the causal-reasoning pipeline engine
   app_utils/        #   shared session/artifact services, A2A, telemetry
-proxy/              # Cloud Run gateway (auth, uploads, history, agent proxy)
+proxy/              # Cloud Run gateway (auth, uploads, history, agent proxy + static file serving)
   main.py           #   FastAPI proxy
-  static/           #   vanilla HTML/CSS/JS frontend
+ui/                 # React + Vite + TypeScript frontend (compiled to proxy/static via Docker)
+  src/              #   App.tsx, components/, hooks/, lib/, styles.css
+  package.json      #   Node dependencies
+  vite.config.ts    #   Build config
 terraform/          # GCP infrastructure as code
 tests/              # pytest suite + Playwright UI tests + eval harness
+Dockerfile.proxy    # Multi-stage: builds ui/ with Node then packages with proxy/
 ```
 
 ---
@@ -111,18 +118,27 @@ tests/              # pytest suite + Playwright UI tests + eval harness
    python -m pytest tests/ --ignore=tests/ui_tests -v
    ```
 
-4. **Run the proxy against the mock agent (no GCP calls):**
+4. **Run the full stack locally with Docker Compose (recommended):**
    ```bash
-   # AGENT_ENGINE_ENDPOINT unset → the proxy returns a canned response and a
-   # sample causal graph, so the whole UI is developable offline.
+   # Dockerfile.proxy builds the React UI (npm ci + vite build) and the proxy in one go.
+   # AGENT_ENGINE_ENDPOINT unset → proxy returns a canned response + sample causal graph,
+   # so the whole UI is developable offline.
+   docker compose up --build
+   # open http://localhost:8080
+   ```
+
+5. **Run the proxy only (no Docker, no GCP calls):**
+   ```bash
+   # Build the React app first:
+   cd ui && npm ci && npm run build && cd ..
    uvicorn proxy.main:app --reload --port 8080
    # open http://localhost:8080
    ```
 
-5. **Run the full stack locally (proxy + real ADK agent):** see
+6. **Run the full stack locally (proxy + real ADK agent):** see
    [Local Development with Vertex AI Agent](docs/local_development_vertex_agent.md).
 
-6. **Browser E2E tests (Playwright):**
+7. **Browser E2E tests (Playwright):**
    ```bash
    pip install -r requirements-dev.txt && playwright install chromium
    python -m pytest tests/ui_tests -v
@@ -141,8 +157,8 @@ tests/              # pytest suite + Playwright UI tests + eval harness
 Authentication is fully keyless via **Workload Identity Federation** (OIDC). The [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) pipeline runs `deploy_to_gcp.sh` on every push to `main`, deploying all three tiers in order:
 
 1. **Agent Engine** — `agents-cli deploy` packages `src/` and updates the Vertex AI Agent Runtime in place.
-2. **Cloud Run proxy** — builds `Dockerfile.proxy` and deploys the `tracerlensai-app` service.
-3. **Firebase Hosting** — publishes `proxy/static/` with the Cloud Run rewrite rule.
+2. **Cloud Run proxy** — builds `Dockerfile.proxy` (multi-stage: Node 20 builds the React UI with `vite build`, then Python packages the proxy); deploys the `tracerlensai-proxy` service.
+3. **Firebase Hosting** — publishes the `proxy/static/` output (pre-built React bundle) with the Cloud Run rewrite rule.
 
 A manual `workflow_dispatch` can target a single stage (`agent`, `proxy`, or `hosting`).
 
@@ -173,4 +189,3 @@ See the [Deployment Guide](docs/deployment_guide.md) and [Advanced Deployment](d
 | [Deployment Guide](docs/deployment_guide.md) | Step-by-step deployment methods and infrastructure provisioning |
 | [Advanced Deployment](docs/advanced_deployment.md) | End-to-end multi-tier architecture, WIF, DNS, and rewrites |
 | [Token Calculation](docs/token_calculation.md) | How token usage is measured and how multi-turn / multi-agent runs compound cost |
-| [Migration & Testing Guide](docs/migration_testing_guide.md) | Verifying and shipping the Agent Platform migration |

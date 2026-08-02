@@ -12,13 +12,13 @@ TracerLensAi is a decoupled application with **two independently deployed backen
 
 | Tier | Technology | Code | Runs on |
 |---|---|---|---|
-| **Frontend** | Vanilla HTML/CSS/JS | `proxy/static/` | Firebase Hosting (CDN) |
+| **Frontend** | React 18 + TypeScript + Vite | `ui/src/` | Built into `proxy/static/` by `Dockerfile.proxy` (Node stage) |
 | **Proxy Gateway** | Python FastAPI | `proxy/main.py` | Cloud Run (serverless) |
 | **ADK Agent** | Python ADK | `src/agent.py`, `src/causal/` | Vertex AI Agent Runtime |
 | **Agent Server** | Python FastAPI | `src/fast_api_app.py` | Local / Vertex Console serving |
 | **User history** | Firestore | (`proxy/main.py`) | Native GCP |
 | **Session context** | ADK session service | `src/app_utils/services.py` | Agent Engine |
-| **LLM** | Google Gemini (`gemini-2.5-flash`) | — | Managed by Agent Runtime |
+| **LLM** | Google Gemini (`gemini-2.5-flash` / `gemini-2.5-pro`) | — | Managed by Agent Runtime |
 
 The **browser only ever talks to the proxy** (directly, or through Firebase Hosting's rewrite). The proxy authenticates the user, stores history, and forwards chat requests to the Agent Runtime using Application Default Credentials — Vertex credentials never reach the client. The ADK agent runs the reasoning; `src/fast_api_app.py` is the same agent wrapped as a standalone server for local runs and the Vertex Console Playground.
 
@@ -35,10 +35,43 @@ The **browser only ever talks to the proxy** (directly, or through Firebase Host
 TracerLensAi/
 ├── proxy/
 │   ├── main.py                 # Gateway: auth, history, uploads, agent proxy
-│   └── static/
-│       ├── index.html          # UI shell + Firebase Auth bridge + CDN libs
-│       ├── causal-agent.js     # Client logic: chat, uploads, history, Mermaid
-│       └── styles.css          # Design system (dark/light)
+│   └── static/                 # Compiled React bundle (output of ui/ build)
+│       └── index.html          # Entry point + Firebase Auth bridge
+│
+├── ui/                         # React + Vite + TypeScript frontend source
+│   ├── src/
+│   │   ├── App.tsx             #   Root component: layout, state, send/stop logic
+│   │   ├── main.tsx            #   React entry point
+│   │   ├── styles.css          #   Design system (dark/light, animations, components)
+│   │   ├── types.ts            #   Shared TypeScript interfaces
+│   │   ├── components/         #   UI components
+│   │   │   ├── ChatHeader.tsx  #     Header: token badge, model select, toggles, auth
+│   │   │   ├── Composer.tsx    #     Input pill: textarea, attach, send/stop button
+│   │   │   ├── DropOverlay.tsx #     Full-page drag-and-drop overlay
+│   │   │   ├── MessageList.tsx #     Chat messages + starter cards + pending bubble
+│   │   │   ├── Sidebar.tsx     #     Brand, history list, settings panel
+│   │   │   └── causal/         #     Causal right-pane components
+│   │   │       ├── CausalPanel.tsx     #  Right-pane container
+│   │   │       ├── CausalGraph.tsx     #  ReactFlow DAG renderer
+│   │   │       ├── EstimandCard.tsx    #  DoWhy identification summary card
+│   │   │       ├── EffectChart.tsx     #  Effect estimate + refutation chart
+│   │   │       ├── StepDrawer.tsx      #  Click-through ledger drawer
+│   │   │       └── WorkflowTimeline.tsx#  Live pipeline stage timeline
+│   │   ├── hooks/
+│   │   │   ├── useAttachments.ts  # File upload state (chips, upload, remove)
+│   │   │   ├── useHistory.ts      # Firestore conversation history
+│   │   │   └── useRunProgress.ts  # Live pipeline stage/graph state
+│   │   └── lib/
+│   │       ├── api.ts         #  analyzePrompt (SSE), uploadFile, fetchHistory
+│   │       ├── firebase.ts    #  Firebase Auth + token accessor
+│   │       ├── graph.ts       #  ReactFlow node/edge layout helpers
+│   │       ├── ids.ts         #  Session/message ID generation
+│   │       ├── markdown.ts    #  marked + DOMPurify renderer
+│   │       ├── sse.ts         #  Async SSE frame reader
+│   │       ├── stages.ts      #  Pipeline stage state machine
+│   │       └── theme.ts       #  Dark/light theme persistence
+│   ├── package.json
+│   └── vite.config.ts
 │
 ├── src/
 │   ├── agent.py                # Root router + general assistant + engine wrapper
@@ -50,7 +83,8 @@ TracerLensAi/
 ├── terraform/                  # GCP IaC
 ├── .github/workflows/          # ci.yml, deploy.yml, uptime.yml
 ├── Dockerfile                  # ADK agent server image (src/)
-├── Dockerfile.proxy            # Cloud Run proxy image (proxy/)
+├── Dockerfile.proxy            # Multi-stage: Node builds ui/, Python packages proxy/
+├── docker-compose.yml          # Production-style single-container build (proxy + React UI)
 ├── docker-compose.dev.yml      # Local dev (hot-reload, test runner, UI tests)
 ├── deploy_to_gcp.sh            # One-step GCP deployment
 ├── firebase.json               # Firebase Hosting config + Cloud Run rewrite
@@ -177,35 +211,76 @@ Per causal turn the LLM budget is `1 (decompose) + ≤max_steps + ≤max_replans
 
 ---
 
-## 7. Frontend — `proxy/static/`
+## 7. Frontend — `ui/`
 
-### `index.html` — UI shell
+The browser UI is a **React 18 + TypeScript + Vite** application. It is compiled during the Docker build (`Dockerfile.proxy` Node stage: `npm ci && npm run build`) and the output (`ui/dist/`) is copied into the proxy container at `/app/ui/dist`, served by the FastAPI proxy at `/static/*` and `/`.
 
-- **Sidebar** (`#sidebar`): brand, "New chat" button, recent-workflows history list.
-- **Header** (`.chat-header`): sidebar toggle, token badge, model selector (`gemini-2.5-flash` / `-pro`), **Causal** and **Web** toggles, theme toggle, and the Google Sign-In / user chip.
-- **Chat** (`.messages` + `.composer`): messages area, attachment chips, input pill with attach + send, and a full-page drag-and-drop overlay for uploads.
-- Loads `marked`, `DOMPurify`, `highlight.js`, and `mermaid` from CDNs, applies the saved theme before first paint, and defines the Firebase Auth bridge `window.tracerAuth` (Google popup sign-in, ID-token accessor, auth-state listeners). `window.TRACERLENS_API_BASE` points the client at the Cloud Run URL directly to bypass Hosting's 60s cap.
+> **No separate Node server.** The FastAPI proxy serves the static bundle directly via `StaticFiles`; there is no Node process in production.
 
-### `causal-agent.js` — client logic
+### `ui/src/App.tsx` — Root component
 
-Grouped by concern:
+Holds all top-level state and orchestrates the full send/receive cycle:
 
-| Area | Key functions |
+| State / Ref | Purpose |
 |---|---|
-| Theme | `applyTheme` (persists to `localStorage`, re-themes Mermaid) |
-| Markdown | `renderMarkdown` (marked → **DOMPurify sanitize**, escaped fallback), `highlightCode`, `escapeHtml`, `parseJsonResponse` (tolerates non-JSON gateway errors) |
-| Messages | `addUserMessage`, `addAiMessage`, `showTyping`, `addErrorMessage`, `addGreeting`, `scrollToBottom` |
-| Causal panel | `buildCausalPanel` (phase badge, web / graph-fix badges, step list, formal-identification card via `buildEstimandCard`, graph card + legend) |
-| Causal graph | `buildMermaidFlowchart`, `renderCausalGraph`, `sanitizeGraphId`, `sanitizeGraphLabel` (LLM output is untrusted → whitelist-sanitized before Mermaid) |
-| Uploads | `handleFiles`, `uploadFile`, `chipNode`, `removeAttachment`, drag-depth overlay handlers |
-| Send flow | `sendMessage` (posts `/analyze-prompt` with toggles, model, `chat_id`, attachment ids; updates token badge) |
-| Auth + history | `authHeaders` (bearer token), `loadHistoryList`, `renderHistoryList`, `loadConversation` |
+| `messages` | All chat messages (user, ai, error) |
+| `input` | Textarea value |
+| `isSending` / `isSendingRef` | Prevents double-submission (ref for sync lock) |
+| `abortControllerRef` | `AbortController` attached to the live SSE fetch; `.abort()` called by `stop()` |
+| `causal`, `webSearch`, `model` | Toggle + model selector state |
+| `selectedMessageId` | Which message's causal data the right pane shows (`"live"` during a run) |
+| `tokenTally` | Cumulative token count across messages |
+| `user` | Firebase `User` — `null` when signed out |
 
-Security posture: **all** model/markdown output is sanitized by DOMPurify; Mermaid runs with `securityLevel: "strict"`; graph ids/labels are whitelist-reduced. A Playwright test (`test_markdown_is_sanitized`) probes the XSS path.
+Key functions:
+- **`send(overrideText?)`** — Assembles the request, creates a new `AbortController`, calls `analyzePrompt` with the signal, updates messages on completion. Catches `AbortError` silently (user-initiated stop).
+- **`stop()`** — Calls `abortControllerRef.current.abort()` to immediately sever the SSE stream.
 
-### `styles.css` — design system
+### `ui/src/components/` — UI Components
 
-CSS custom properties for the neon-dark/light themes, the causal panel and graph legend, the composer/input pill, attachment chips, the drop overlay, and responsive layout.
+| Component | Description |
+|---|---|
+| `Sidebar.tsx` | Brand, "New chat" button, conversation history, settings panel (model, causal, web data, theme toggles) |
+| `ChatHeader.tsx` | Token badge, model selector, causal + web toggles, sign-in / user chip |
+| `MessageList.tsx` | Scrollable message list; starter prompt cards when empty; pending bubble with animated active-step label; `⚯ View Causal Details →` button on completed AI messages |
+| `Composer.tsx` | Attachment chips row, input textarea (auto-resize), attach button, **send/stop button toggle** |
+| `DropOverlay.tsx` | Full-page drag-and-drop file overlay |
+
+### `ui/src/components/causal/` — Causal Right Pane
+
+| Component | Description |
+|---|---|
+| `CausalPanel.tsx` | Container: causal head (phase badge, web badge), `EstimandCard`, `WorkflowTimeline`, causal step list (`[ok]`/`[fail]` tags), `CausalGraph`, and `StepDrawer` |
+| `CausalGraph.tsx` | ReactFlow-based interactive DAG; nodes colored by status/kind; `onOpenNode` click handler opens the `StepDrawer` |
+| `EstimandCard.tsx` | Formal identification summary: treatment, outcome, adjustment set, estimand expression, and `EffectChart` |
+| `EffectChart.tsx` | Bar chart with confidence interval and refutation rows |
+| `WorkflowTimeline.tsx` | Live animated pipeline stage list; each `StageRow` shows label, step counter, and a live elapsed timer (rAF loop) |
+| `StepDrawer.tsx` | Slide-in overlay with the click-through ledger for a specific graph node |
+
+### `ui/src/hooks/`
+
+| Hook | Description |
+|---|---|
+| `useAttachments.ts` | Upload state machine: tracks chips (uploading/done/error), calls `uploadFile`, removes attachments |
+| `useHistory.ts` | Loads `fetchHistory` for the signed-in user; exposes `conversations`, `hasMore`, `loadMore`, `reload` |
+| `useRunProgress.ts` | Accumulates SSE `progress` frames into `Stage[]` and the latest `CausalGraph`; provides `reset`, `onProgress`, `onGraph`, `fail` |
+
+### `ui/src/lib/`
+
+| Module | Description |
+|---|---|
+| `api.ts` | `analyzePrompt` (SSE streaming with `AbortSignal`), `uploadFile`, `fetchHistory`, `fetchConversation`, `authHeaders` |
+| `firebase.ts` | Firebase app init, `watchAuth`, `getIdToken`, `signInWithGoogle`, `signOut` |
+| `graph.ts` | `buildReactFlowGraph` — maps `CausalGraph` nodes/edges to ReactFlow elements with Dagre layout |
+| `ids.ts` | `generateSessionId`, `nextMessageKey`, `getAnonId` (anonymous session cookie) |
+| `markdown.ts` | `renderMarkdown` — `marked` + DOMPurify sanitized HTML with `highlight.js` code blocks |
+| `sse.ts` | `readSse` — async generator that parses the SSE `event:` / `data:` format from a `Response` body |
+| `stages.ts` | `updateStages` — state machine mapping ADK `stage` progress frames to typed `Stage` objects (pending → active → done/failed/skipped) |
+| `theme.ts` | `getTheme` / `setTheme` — persists `light`/`dark` to `localStorage` and updates the `<html data-theme>` attribute |
+
+### `ui/src/styles.css` — Design System
+
+CSS custom properties for the neon-dark/light themes (`--cyan`, `--violet`, `--surface-*`, `--border`, `--glow-*`). Includes: the split-pane grid layout, causal panel, ReactFlow graph overrides, `WorkflowTimeline` stage rows (animated dots, elapsed timers), the composer / input pill, attachment chips, the drag-drop overlay, starter prompt cards, the `StepDrawer` slide-in, and all `@keyframes` animations (`border-pulse`, `spin-slow`, `fade-in-slide`, `stage-glow`, `msg-in`, etc.).
 
 ---
 
