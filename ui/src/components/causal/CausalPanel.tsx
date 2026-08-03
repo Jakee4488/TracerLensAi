@@ -1,8 +1,9 @@
 // Causal reasoning panel. Ported from causal-agent.js:271-337.
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CausalGraph } from "./CausalGraph";
 import { EstimandCard } from "./EstimandCard";
+import { StageDrawer } from "./StageDrawer";
 import { StepDrawer, type DrawerTarget } from "./StepDrawer";
 import { WorkflowTimeline } from "./WorkflowTimeline";
 import type { Stage } from "../../lib/stages";
@@ -41,11 +42,36 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
 
   const ledger = report.causal_ledger || [];
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
+  const [stageDrawer, setStageDrawer] = useState<Stage | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const openNode = useCallback(
     (id: string, label: string) => setDrawer({ componentId: id, title: label }),
     [],
   );
+  const openStage = useCallback(
+    (id: string, label: string) => {
+      const stage = stages?.find((s) => s.id === id);
+      if (stage) setStageDrawer(stage);
+    },
+    [stages],
+  );
+
+  useEffect(() => {
+    const handleHighlight = (e: Event) => {
+      const customEvent = e as CustomEvent<{ id: string | null }>;
+      const targetIdOrLabel = customEvent.detail.id;
+      setHighlighted(targetIdOrLabel);
+      
+      if (targetIdOrLabel && graph && graph.nodes) {
+        const targetNode = graph.nodes.find(n => n.id === targetIdOrLabel || n.label === targetIdOrLabel);
+        if (targetNode) {
+          openNode(targetNode.id, targetNode.label);
+        }
+      }
+    };
+    window.addEventListener("highlight-node", handleHighlight);
+    return () => window.removeEventListener("highlight-node", handleHighlight);
+  }, [graph, openNode]);
 
   return (
     <div className="causal-panel">
@@ -62,6 +88,12 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
         )}
       </div>
 
+      {stages && (
+        <div className="pane-timeline">
+           <WorkflowTimeline stages={stages} onOpenStage={openStage} />
+        </div>
+      )}
+
       {hasGraph && (
         <div className="graph-container">
           <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
@@ -77,18 +109,15 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
         />
       )}
 
-      {stages && (
-        <div className="pane-timeline">
-           <WorkflowTimeline stages={stages} />
-        </div>
-      )}
-
       {steps.length > 0 && (
-        <ul className="causal-steps">
-          {steps.map((step, i) => (
-            <StepLine key={i} step={step} />
-          ))}
-        </ul>
+        <details className="causal-steps-details" open>
+          <summary>Causal Reasoning Trace</summary>
+          <ul className="causal-steps">
+            {steps.map((step, i) => (
+              <StepLine key={i} step={step} />
+            ))}
+          </ul>
+        </details>
       )}
 
       {drawer && (
@@ -102,6 +131,10 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
           }}
           onHighlight={setHighlighted}
         />
+      )}
+
+      {stageDrawer && (
+        <StageDrawer stage={stageDrawer} onClose={() => setStageDrawer(null)} />
       )}
     </div>
   );

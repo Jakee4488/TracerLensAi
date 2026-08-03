@@ -8,7 +8,18 @@ function Markdown({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const html = renderMarkdown(text);
   useEffect(() => highlightCode(ref.current), [html]);
-  return <div className="md-content" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
+  
+  const handleClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.classList.contains("node-citation")) {
+      const nodeLabel = target.getAttribute("data-node");
+      if (nodeLabel) {
+        window.dispatchEvent(new CustomEvent("highlight-node", { detail: { id: nodeLabel } }));
+      }
+    }
+  };
+  
+  return <div className="md-content" ref={ref} onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function AiMessage({ message, onSelect }: { message: ChatMessage; onSelect?: (msg: ChatMessage) => void }) {

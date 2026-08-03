@@ -5,9 +5,22 @@ import { marked } from "marked";
 marked.setOptions({ gfm: true, breaks: true });
 
 export function renderMarkdown(text: string): string {
-  const raw = marked.parse(text ?? "");
+  const processed = text ?? "";
+  const raw = marked.parse(processed);
   const html = typeof raw === "string" ? raw : "";
-  return DOMPurify.sanitize(html);
+  let finalHtml = DOMPurify.sanitize(html);
+
+  // Transform AI's causal citations into superscript badges AFTER sanitize
+  // so DOMPurify doesn't strip the data attributes, and marked doesn't escape them.
+  finalHtml = finalHtml.replace(
+    /\[Node:\s*([^\]]+)\]/gi,
+    (match, label) => {
+      const safeLabel = label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+      return `<sup class="node-citation" data-node="${safeLabel}" title="Causal Node: ${safeLabel}">⚯ ${safeLabel}</sup>`;
+    }
+  );
+
+  return finalHtml;
 }
 
 export function highlightCode(root: HTMLElement | null): void {

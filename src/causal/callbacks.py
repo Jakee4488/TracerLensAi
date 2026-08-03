@@ -214,3 +214,14 @@ def record_replan_denied(state, request: ReplanRequest, reason: str) -> None:
         plan_version=0,
     )
     state[sk.KEY_LEDGER] = append_record(state.get(sk.KEY_LEDGER), record)
+
+
+def mark_complete(callback_context) -> None:
+    state = callback_context.state
+    status_raw = state.get(sk.KEY_STATUS)
+    if status_raw:
+        from .models import CausalStatus, parse_model
+        status = parse_model(CausalStatus, status_raw)
+        if status:
+            status.phase = "complete"
+            state[sk.KEY_STATUS] = status.model_dump(mode="json")

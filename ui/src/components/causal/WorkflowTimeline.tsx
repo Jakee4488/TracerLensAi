@@ -41,14 +41,19 @@ function Elapsed({ startedMs, endedMs, running }: {
   return <span className="stage-time">{ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`}</span>;
 }
 
-const StageRow = memo(function StageRow({ stage }: { stage: Stage }) {
+const StageRow = memo(function StageRow({ stage, onOpenStage }: { stage: Stage; onOpenStage?: (id: string, label: string) => void }) {
   const running = stage.status === "active";
   return (
-    <li className={"stage-row " + stage.status} data-stage={stage.id}>
+    <li 
+      className={"stage-row " + stage.status} 
+      data-stage={stage.id}
+      onClick={() => onOpenStage?.(stage.id, stage.label)}
+      style={{ cursor: onOpenStage ? 'pointer' : 'default' }}
+    >
       <span className="stage-dot" aria-hidden="true" />
       <div className="stage-body">
         <div className="stage-head">
-          <span className="stage-label">{stage.label}</span>
+          <span className="stage-label" title={stage.label}>{stage.label}</span>
           {stage.current && (
             <span className="stage-counter">
               {`step ${stage.current.index} of ${stage.current.total}`}
@@ -56,15 +61,6 @@ const StageRow = memo(function StageRow({ stage }: { stage: Stage }) {
           )}
           <Elapsed startedMs={stage.startedMs} endedMs={stage.endedMs} running={running} />
         </div>
-        {stage.steps.length > 0 && (
-          <ul className="stage-steps">
-            {stage.steps.map((step, i) => (
-              <li key={i} style={{ animationDelay: `calc(${i} * var(--stagger))` }}>
-                {step}
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
     </li>
   );
@@ -74,6 +70,7 @@ interface Props {
   stages: Stage[];
   /** Hide stages that never ran, once the run is over. */
   compact?: boolean;
+  onOpenStage?: (id: string, label: string) => void;
 }
 
 /**
@@ -83,13 +80,14 @@ interface Props {
  * Replaces the three-dot typing bubble in causal mode only — with the toggle
  * off there is no pipeline to show.
  */
-export function WorkflowTimeline({ stages, compact = false }: Props) {
+export function WorkflowTimeline({ stages, compact = false, onOpenStage }: Props) {
   const visible = compact ? stages.filter((s) => s.status !== "skipped") : stages;
+
   return (
     <div className="workflow-timeline" role="status" aria-label="Causal pipeline progress">
       <ol className="stage-list">
         {visible.map((stage) => (
-          <StageRow key={stage.id} stage={stage} />
+          <StageRow key={stage.id} stage={stage} onOpenStage={onOpenStage} />
         ))}
       </ol>
     </div>

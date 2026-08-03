@@ -110,7 +110,10 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
         // onClick inside the custom node is invisible to that decision.
         selectable: true,
         focusable: true,
-        data: { ...node.data, highlighted: highlightedId === node.id },
+        data: { 
+          ...node.data, 
+          highlighted: highlightedId === node.id || highlightedId === (node.data as unknown as CausalNodeData).label 
+        },
       })),
     [nodes, highlightedId],
   );
@@ -152,6 +155,10 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
             {label}
           </span>
         ))}
+        <span className="legend-divider">|</span>
+        <span><i className="lg-line dashed orange" /> Critical Path</span>
+        <span><i className="lg-line solid teal" /> High Confidence</span>
+        <span><i className="lg-line dotted gray" /> Low Confidence</span>
       </div>
     </div>
   );
