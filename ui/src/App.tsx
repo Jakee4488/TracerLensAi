@@ -13,7 +13,7 @@ import { analyzePrompt, fetchConversation, setTokenGetter } from "./lib/api";
 import { hasCausalContent } from "./components/causal/CausalPanel";
 import { finalizeStages } from "./lib/stages";
 import { getIdToken, watchAuth, type User } from "./lib/firebase";
-import { generateSessionId, nextMessageKey } from "./lib/ids";
+import { generateRunId, generateSessionId, nextMessageKey } from "./lib/ids";
 import { applyTheme, currentTheme, type Theme } from "./lib/theme";
 import type { ChatMessage, Report } from "./types";
 
@@ -152,6 +152,9 @@ export default function App() {
           model_name: model,
           chat_id: chatIdRef.current,
           attachments: ready.map((a) => a.id as string),
+          // Minted client-side so this turn is identifiable even if the
+          // response never arrives; the proxy validates and echoes it back.
+          run_id: generateRunId(),
         },
         { 
           signal: abortController.signal,

@@ -3,17 +3,30 @@
 import pytest
 
 from src.causal.graph_engine import CausalTaskGraph
-from src.causal.ledger import append_record, latest_for_step, next_seq
+from src.causal.ledger import (
+    append_record,
+    append_replan_event,
+    append_to_state,
+    latest_for_step,
+    next_seq,
+)
 from src.causal.models import (
     CausalDecomposition,
     CausalEdge,
     ChangeRecord,
     ComponentDraft,
     NewStepDraft,
+    ReplanEvent,
     ReplanRequest,
     ReplanResult,
 )
-from src.causal.state_keys import MAX_COMPONENTS, MAX_EDGES
+from src.causal.state_keys import (
+    KEY_LEDGER,
+    KEY_LEDGER_DROPPED,
+    KEY_REPLAN_EVENTS,
+    MAX_COMPONENTS,
+    MAX_EDGES,
+)
 
 
 def make_decomposition():
@@ -223,9 +236,31 @@ def test_state_roundtrip_and_ui_graph():
     assert restored.to_state() == graph.to_state()
     ui = graph.to_ui_graph()
     assert set(ui.keys()) == {"nodes", "edges", "critical_path", "version"}
-    assert all(set(n.keys()) == {"id", "label", "kind", "status"} for n in ui["nodes"])
+    assert all(
+        set(n.keys()) == {"id", "label", "kind", "status", "description"}
+        for n in ui["nodes"]
+    )
+    assert all(
+        set(e.keys()) == {"source", "target", "relation", "confidence", "rationale"}
+        for e in ui["edges"]
+    )
     import json
     json.dumps(ui)  # must be plain JSON
+
+
+def test_ui_graph_carries_the_explanatory_fields():
+    """description and rationale are the only per-node/per-edge statement of
+    *why*, and to_ui_graph is the boundary they used to be dropped at."""
+    decomposition = make_decomposition()
+    decomposition.components[0].description = "Historical sales rows, weekly."
+    decomposition.edges[0].rationale = "Features cannot be built without the rows."
+
+    ui = CausalTaskGraph.from_decomposition(decomposition).to_ui_graph()
+
+    node = next(n for n in ui["nodes"] if n["id"] == "data")
+    assert node["description"] == "Historical sales rows, weekly."
+    edge = next(e for e in ui["edges"] if e["source"] == "data")
+    assert edge["rationale"] == "Features cannot be built without the rows."
 
 
 def test_subgraph_slice():
@@ -246,6 +281,67 @@ def test_ledger_append_is_pure_and_capped():
     assert next_seq(ledger) == 60
     assert latest_for_step(ledger, "s59")["seq"] == 59
     assert latest_for_step(ledger, "missing") is None
+
+
+def _record(i: int) -> ChangeRecord:
+    return ChangeRecord(seq=i, step_id=f"s{i}", component_id="c", verdict="success")
+
+
+def test_ledger_counts_entries_lost_to_the_cap():
+    """A capped ledger that drops its head silently is an audit trail that lies
+    by omission, so the loss is counted rather than hidden."""
+    state: dict = {}
+    for i in range(1, 51):
+        append_to_state(state, _record(i))
+    assert len(state[KEY_LEDGER]) == 50
+    assert state.get(KEY_LEDGER_DROPPED, 0) == 0  # exactly at the cap, nothing lost
+
+    append_to_state(state, _record(51))
+    assert len(state[KEY_LEDGER]) == 50
+    assert state[KEY_LEDGER_DROPPED] == 1
+    append_to_state(state, _record(52))
+    assert state[KEY_LEDGER_DROPPED] == 2
+    # The surviving window is the newest entries, and seq still advances.
+    assert state[KEY_LEDGER][-1]["seq"] == 52
+    assert next_seq(state[KEY_LEDGER]) == 53
+
+
+def test_ledger_writes_can_target_a_state_delta():
+    """The step controller batches writes into an ADK state_delta dict; reads
+    still come from live state."""
+    state: dict = {KEY_LEDGER: [_record(i).model_dump(mode="json") for i in range(1, 51)]}
+    delta: dict = {}
+
+    append_to_state(state, _record(51), sink=delta)
+
+    assert len(delta[KEY_LEDGER]) == 50
+    assert delta[KEY_LEDGER_DROPPED] == 1
+    # The source state is left untouched — the delta is what ADK applies.
+    assert len(state[KEY_LEDGER]) == 50
+    assert state[KEY_LEDGER][-1]["seq"] == 50
+
+
+def test_replan_events_are_persisted_not_just_summarized():
+    """graph_engine.splice builds a ReplanEvent; it used to be flattened to one
+    prose line and dropped, losing which steps were invalidated and why."""
+    state: dict = {}
+    event = ReplanEvent(
+        seq=1, failed_step_id="s2", invalidated_step_ids=["s2", "s3"],
+        new_step_ids=["s4"], plan_version_from=1, plan_version_to=2,
+        reason="estimator returned no rows",
+    )
+
+    append_replan_event(state, event)
+
+    stored = state[KEY_REPLAN_EVENTS]
+    assert len(stored) == 1
+    assert stored[0]["failed_step_id"] == "s2"
+    assert stored[0]["invalidated_step_ids"] == ["s2", "s3"]
+    assert stored[0]["new_step_ids"] == ["s4"]
+    assert (stored[0]["plan_version_from"], stored[0]["plan_version_to"]) == (1, 2)
+    assert stored[0]["reason"] == "estimator returned no rows"
+    import json
+    json.dumps(stored)  # must survive the state_delta JSON round-trip
 
 
 if __name__ == "__main__":

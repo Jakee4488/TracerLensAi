@@ -8,6 +8,7 @@ UI transport. No LLM calls happen here.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from google.genai import types
@@ -15,7 +16,7 @@ from google.genai import types
 from src.causal import state_keys as sk
 from src.causal.complexity import is_effect_query
 from src.causal.graph_engine import CausalTaskGraph
-from src.causal.ledger import append_record, next_seq
+from src.causal.ledger import append_replan_event, append_to_state, next_seq
 from src.causal.models import (
     CausalDecomposition,
     CausalStatus,
@@ -181,6 +182,10 @@ def splice_replan(callback_context) -> Optional[types.Content]:
 
     steps_trace = list(state.get(sk.KEY_STEPS) or [])
     steps_trace.append(summarize_replan_line(event))
+    # Keep the structured event too, not just its prose summary: which steps
+    # were invalidated and which replaced them is the record of *why* the plan
+    # changed, and a flattened line cannot be queried or rendered.
+    append_replan_event(state, event)
 
     nxt = next_ready_step(plan)
     if nxt is not None:
@@ -212,8 +217,11 @@ def record_replan_denied(state, request: ReplanRequest, reason: str) -> None:
         observed=reason,
         verdict="deviation",
         plan_version=0,
+        # Was omitted here while the controller's records carried it, so
+        # denials were the only untimestamped entries in the ledger.
+        ts=datetime.now(timezone.utc).isoformat(),
     )
-    state[sk.KEY_LEDGER] = append_record(state.get(sk.KEY_LEDGER), record)
+    append_to_state(state, record)
 
 
 def mark_complete(callback_context) -> None:

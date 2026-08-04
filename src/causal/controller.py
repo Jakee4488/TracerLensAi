@@ -17,7 +17,7 @@ from google.adk.events import Event, EventActions
 
 from src.causal import state_keys as sk
 from src.causal.graph_engine import CausalTaskGraph
-from src.causal.ledger import append_record, next_seq
+from src.causal.ledger import append_to_state, next_seq
 from src.causal.models import (
     CausalStatus,
     ChangeRecord,
@@ -168,7 +168,7 @@ class CausalStepController(BaseAgent):
             ts=datetime.now(timezone.utc).isoformat(),
         )
 
-        delta[sk.KEY_LEDGER] = append_record(state.get(sk.KEY_LEDGER), record)
+        append_to_state(state, record, sink=delta)
         delta[sk.KEY_PLAN] = plan.model_dump(mode="json")
         delta[sk.KEY_GRAPH_FULL] = graph.to_state()
         delta[sk.KEY_GRAPH] = graph.to_ui_graph()

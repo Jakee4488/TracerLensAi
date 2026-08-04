@@ -12,7 +12,7 @@
 import { useRef } from "react";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { KIND_LABEL, normalizeKind } from "../../lib/graph";
-import type { ChangeRecord, GraphNode } from "../../types";
+import type { ChangeRecord, GraphEdge, GraphNode } from "../../types";
 
 export interface DrawerTarget {
   /** Component id (a DAG node) or step id, depending on what was clicked. */
@@ -25,16 +25,21 @@ interface Props {
   target: DrawerTarget;
   ledger: ChangeRecord[];
   nodes: GraphNode[];
+  /** Incoming links, so the drawer can show why this component is caused. */
+  edges?: GraphEdge[];
   onClose: () => void;
   /** Highlights a component in the DAG while its chip is hovered. */
   onHighlight: (componentId: string | null) => void;
 }
 
-export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Props) {
+export function StepDrawer({ target, ledger, nodes, edges = [], onClose, onHighlight }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   useFocusTrap(panelRef, onClose);
 
   const labelById = new Map(nodes.map((n) => [n.id, n.label]));
+  const incoming = target.componentId
+    ? edges.filter((e) => e.target === target.componentId && e.rationale)
+    : [];
 
   const records = ledger.filter((r) =>
     target.componentId ? r.component_id === target.componentId : r.step_id === target.stepId,
@@ -69,6 +74,31 @@ export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Prop
         )}
 
         <div className="drawer-scroll">
+          {/* The decomposer's own justification, previously discarded in
+              to_ui_graph(). Shown before the ledger because it explains why
+              the component is in the graph at all. */}
+          {node?.description && (
+            <div className="drawer-field">
+              <span className="drawer-label">why this component</span>
+              <p>{node.description}</p>
+            </div>
+          )}
+
+          {incoming.length > 0 && (
+            <div className="drawer-field">
+              <span className="drawer-label">why it is caused</span>
+              {incoming.map((edge) => (
+                <p key={`${edge.source}->${edge.target}`}>
+                  <span className="drawer-edge-from">
+                    {labelById.get(edge.source) || edge.source} {edge.relation}
+                  </span>
+                  {" — "}
+                  {edge.rationale}
+                </p>
+              ))}
+            </div>
+          )}
+
           {records.length === 0 ? (
             // The ledger records verifications, not executions, and it is
             // sparse by design — so this is the common branch. It used to read

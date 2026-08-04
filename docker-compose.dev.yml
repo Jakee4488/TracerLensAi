@@ -53,9 +53,10 @@ services:
 
     volumes:
       - ./src:/app/src:ro
-      # Windows ADC path. On macOS/Linux replace with:
+      # Windows ADC path — see docker-compose.yml for why this uses the `:?`
+      # guard and the .env fallback. On macOS/Linux replace with:
       #   ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
-      - ${APPDATA}/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+      - ${APPDATA:?Set APPDATA (shell env or .env) to your Windows profile dir, e.g. C:\Users\<you>\AppData\Roaming}/gcloud/application_default_credentials.json:/tmp/adc.json:ro
 
     env_file:
       - .env
@@ -105,9 +106,10 @@ services:
       - ./deployment_metadata.json:/app/deployment_metadata.json:ro
       # Entrypoint: reads deployment_metadata.json -> exports endpoint -> exec uvicorn
       - ./docker/local-entrypoint.sh:/entrypoint.sh:ro
-      # Windows ADC. On macOS/Linux use:
+      # Windows ADC — see docker-compose.yml for why this uses the `:?` guard
+      # and the .env fallback. On macOS/Linux use:
       #   ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
-      - ${APPDATA}/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+      - ${APPDATA:?Set APPDATA (shell env or .env) to your Windows profile dir, e.g. C:\Users\<you>\AppData\Roaming}/gcloud/application_default_credentials.json:/tmp/adc.json:ro
 
     env_file:
       - .env

@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { CausalGraph } from "./CausalGraph";
 import { EstimandCard } from "./EstimandCard";
+import { PlanView } from "./PlanView";
 import { StepDrawer, type DrawerTarget } from "./StepDrawer";
 import { WorkflowTimeline } from "./WorkflowTimeline";
+import { downloadRun } from "../../lib/export";
 import type { Stage } from "../../lib/stages";
 import type { Report, CausalGraph as CausalGraphType } from "../../types";
 
@@ -48,6 +50,10 @@ export function CausalPanel({ report, stages, liveGraph, onClose }: Props) {
   const phase = report.causal_status?.phase;
 
   const ledger = report.causal_ledger || [];
+  const dropped = report.causal_ledger_dropped || 0;
+  // Mid-run App passes a placeholder report and drives the panel from
+  // liveGraph, so there is nothing worth serialising yet.
+  const finished = !!report.response;
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const openNode = useCallback(
@@ -90,12 +96,31 @@ export function CausalPanel({ report, stages, liveGraph, onClose }: Props) {
             {webLabel(web)}
           </span>
         )}
+        {/* An exportable run is what turns the pane from something you read
+            into something you can attach to a ticket or diff. Disabled until
+            the run lands — mid-flight the panel is driven by the live graph and
+            an export would be a near-empty file. */}
+        <button
+          className="export-run-btn"
+          onClick={() => downloadRun(report, stages)}
+          disabled={!finished}
+          title={finished ? "Download this run as JSON" : "Available once the run finishes"}
+        >
+          ↓ Export
+        </button>
         {onClose && (
           <button className="close-pane-btn" onClick={onClose} aria-label="Close causal panel">
             ✕
           </button>
         )}
       </div>
+
+      {report.run_id && (
+        <div className="run-id-strip" title="Correlation id: joins this answer to its server log line and trace">
+          <span className="run-id-label">run</span>
+          <code>{report.run_id}</code>
+        </div>
+      )}
 
       <div className="causal-panel-scroll">
         {stages && (
@@ -119,6 +144,8 @@ export function CausalPanel({ report, stages, liveGraph, onClose }: Props) {
           />
         )}
 
+        <PlanView plan={report.causal_plan} replans={report.causal_replan_events} />
+
         {steps.length > 0 && (
           <details className="causal-steps-details" open>
             <summary>Causal Reasoning Trace</summary>
@@ -127,6 +154,14 @@ export function CausalPanel({ report, stages, liveGraph, onClose }: Props) {
                 <StepLine key={i} step={step} />
               ))}
             </ul>
+            {/* The ledger is capped; saying so beats a trail that quietly
+                loses its head. */}
+            {dropped > 0 && (
+              <p className="ledger-truncated">
+                {`${dropped} earlier ledger ${dropped === 1 ? "entry was" : "entries were"} ` +
+                  `dropped when the run exceeded the ledger cap.`}
+              </p>
+            )}
           </details>
         )}
       </div>
@@ -136,6 +171,7 @@ export function CausalPanel({ report, stages, liveGraph, onClose }: Props) {
           target={drawer}
           ledger={ledger}
           nodes={graph?.nodes || []}
+          edges={graph?.edges || []}
           onClose={() => {
             setDrawer(null);
             setHighlighted(null);

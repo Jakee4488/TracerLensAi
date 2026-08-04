@@ -10,6 +10,8 @@ export interface GraphNode {
   label: string;
   kind: string;
   status: NodeStatus;
+  /** Why this component exists. Capped at 200 chars by the model validator. */
+  description?: string;
 }
 
 export interface GraphEdge {
@@ -17,6 +19,8 @@ export interface GraphEdge {
   target: string;
   relation: string;
   confidence: number;
+  /** Why this link was asserted. Capped at 200 chars by the model validator. */
+  rationale?: string;
 }
 
 /** to_ui_graph() output — see src/causal/graph_engine.py. */
@@ -101,10 +105,45 @@ export interface ChangeRecord {
   ts: string;
 }
 
+/** One executable step of the plan — src/causal/models.py PlanStep. */
+export type StepStatus =
+  | "pending" | "running" | "done" | "failed" | "invalidated" | "skipped";
+
+export interface PlanStep {
+  id: string;
+  component_id: string;
+  objective: string;
+  expected_effect: string;
+  depends_on: string[];
+  status: StepStatus;
+  attempt: number;
+  result_summary: string;
+}
+
+/** src/causal/models.py ExecutionPlan. */
+export interface ExecutionPlan {
+  version: number;
+  rationale: string;
+  steps: PlanStep[];
+}
+
+/** Why the plan changed — src/causal/models.py ReplanEvent. */
+export interface ReplanEvent {
+  seq: number;
+  failed_step_id: string;
+  invalidated_step_ids: string[];
+  new_step_ids: string[];
+  plan_version_from: number;
+  plan_version_to: number;
+  reason: string;
+}
+
 /** The terminal `done` frame: everything needed to render a finished turn. */
 export interface Report {
   status: string;
   response: string;
+  /** Correlation id joining this answer to its proxy log line and trace. */
+  run_id?: string;
   total_token_count: number;
   causal_reasoning_steps: string[];
   causal_graph: CausalGraph | null;
@@ -115,7 +154,10 @@ export interface Report {
   causal_graph_reconcile: GraphReconciliation | null;
   causal_web_retrieval: WebRetrieval | null;
   causal_ledger: ChangeRecord[] | null;
-  causal_plan: { version?: number; steps?: unknown[] } | null;
+  /** Entries lost to LEDGER_CAP, so a truncated audit trail says so. */
+  causal_ledger_dropped?: number | null;
+  causal_plan: ExecutionPlan | null;
+  causal_replan_events?: ReplanEvent[] | null;
 }
 
 export interface ChatMessage {

@@ -111,7 +111,8 @@ def _agent_user_id(user: Optional[dict], anon_id: Optional[str]) -> str:
 
 
 def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, token_count: int,
-                   attachments: Optional[list] = None, causal: Optional[dict] = None):
+                   attachments: Optional[list] = None, causal: Optional[dict] = None,
+                   run_id: Optional[str] = None):
     """Persist a user/AI message pair under users/{uid}/conversations/{chat_id}."""
     db = get_db()
     now = datetime.now(timezone.utc)
@@ -134,8 +135,16 @@ def _save_exchange(user: dict, chat_id: str, prompt: str, response_text: str, to
     user_msg = {"role": "user", "content": prompt, "created_at": now}
     if attachments:
         user_msg["attachments"] = attachments
+    # Stamped on both sides of the exchange so a question about a specific
+    # answer traces back to its proxy log line and Cloud Trace span. Set before
+    # the write — mutating the dict afterwards would not reach Firestore.
+    if run_id:
+        user_msg["run_id"] = run_id
     messages.add(user_msg)
+
     ai_msg = {"role": "ai", "content": response_text, "created_at": datetime.now(timezone.utc)}
+    if run_id:
+        ai_msg["run_id"] = run_id
     if causal:
         # Stored under the same key names the UI renderer reads off the live
         # response, so a reloaded turn replays identically (diagram, estimand
@@ -379,6 +388,23 @@ WEB_MODE_MARKER = "[[web:on]]"
 CAUSAL_STATE_PREFIX = "causal_"
 _CAUSAL_FENCED_RE = re.compile(r"```causal-json\s*(\{.*?\})\s*```", re.DOTALL)
 
+# Per-turn correlation id. Minted by the UI, echoed on the report, stored on the
+# history document, injected to the agent on the marker channel, and logged
+# beside the Cloud Trace context — so one id joins what the user saw, what the
+# agent recorded, and what the platform traced.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _safe_run_id(value: Optional[str]) -> str:
+    """Accept only an id shaped like one we minted; otherwise mint a fresh one.
+
+    The value reaches the agent inside the message text, so it is never
+    interpolated unvalidated.
+    """
+    if value and _RUN_ID_RE.match(value):
+        return value
+    return uuid.uuid4().hex
+
 # ── SSE transport ───────────────────────────────────────────────────────────
 # /analyze-prompt streams the causal pipeline's progress instead of buffering
 # the whole run. Frames: `progress` (stage + newly appended trace lines),
@@ -530,6 +556,7 @@ class PromptRequest(BaseModel):
     model_name: str = "gemini-2.5-flash"
     chat_id: Optional[str] = None  # Maps to Agent Session ID
     attachments: list = Field(default_factory=list)  # file_ids from POST /upload
+    run_id: Optional[str] = None   # correlation id for this turn (see _safe_run_id)
 
 
 def _extract_causal_fallback(text: str):
@@ -558,13 +585,14 @@ def _causal_payload(report: dict) -> Optional[dict]:
 
 
 def _persist_if_signed_in(user: Optional[dict], req: "PromptRequest", response_text: str, token_count: int,
-                          attachment_names: Optional[list] = None, causal: Optional[dict] = None):
+                          attachment_names: Optional[list] = None, causal: Optional[dict] = None,
+                          run_id: Optional[str] = None):
     """Best-effort history write; never fails the chat response."""
     if not user or not req.chat_id:
         return
     try:
         _save_exchange(user, req.chat_id, req.prompt, response_text, token_count,
-                       attachment_names, causal)
+                       attachment_names, causal, run_id)
     except Exception as e:
         print(f"WARNING: failed to persist history for uid={user['uid']}: {e}")
 
@@ -573,12 +601,22 @@ async def analyze_prompt(
     req: PromptRequest,
     user: Optional[dict] = Depends(get_current_user),
     x_anon_id: Optional[str] = Header(None),
+    x_cloud_trace_context: Optional[str] = Header(None),
 ):
     """Proxy the request to the Vertex AI Agent Engine (streaming)."""
 
     agent_engine_base = os.getenv("AGENT_ENGINE_ENDPOINT")
     attachment_files = _resolve_attachments(req.attachments, user)
     attachment_names = [f["filename"] for f in attachment_files]
+
+    # One line per turn carrying the correlation id and the platform's trace id
+    # (Cloud Run sets X-Cloud-Trace-Context), so a run in the UI can be found in
+    # Cloud Logging and followed into Cloud Trace.
+    run_id = _safe_run_id(req.run_id)
+    trace_id = (x_cloud_trace_context or "").split("/")[0] or "-"
+    print(f"run_id={run_id} trace_id={trace_id} chat_id={req.chat_id or '-'} "
+          f"causal={req.causal_reasoning} web={req.web_search} "
+          f"attachments={len(attachment_names)}")
 
     if not agent_engine_base:
         # Mock response for local development if Agent Runtime is not configured
@@ -594,6 +632,7 @@ async def analyze_prompt(
         mock_web = None
         mock_ledger = None
         mock_plan = None
+        mock_replan_events = None
         if req.causal_reasoning:
             # Canned graph so the UI panel/diagram is developable offline.
             mock_steps = [
@@ -616,15 +655,24 @@ async def analyze_prompt(
                              "reason": "data supports this edge (missed by the stated graph)"}],
                 "corrected_edges": [], "latent_confounders": [], "note": "",
             }
+            # description/rationale mirror to_ui_graph(): they are the per-node
+            # and per-edge "why", so the offline path exercises them too.
             mock_graph = {
                 "nodes": [
-                    {"id": "inputs", "label": "Inputs", "kind": "input", "status": "done"},
-                    {"id": "analysis", "label": "Analysis", "kind": "process", "status": "done"},
-                    {"id": "outcome", "label": "Outcome", "kind": "outcome", "status": "done"},
+                    {"id": "inputs", "label": "Inputs", "kind": "input", "status": "done",
+                     "description": "Observations available before any analysis runs."},
+                    {"id": "analysis", "label": "Analysis", "kind": "process", "status": "done",
+                     "description": "Adjusts for the confounder and estimates the effect."},
+                    {"id": "outcome", "label": "Outcome", "kind": "outcome", "status": "done",
+                     "description": "The quantity the question asks about."},
                 ],
                 "edges": [
-                    {"source": "inputs", "target": "analysis", "relation": "informs", "confidence": 0.9},
-                    {"source": "analysis", "target": "outcome", "relation": "causes", "confidence": 0.8},
+                    {"source": "inputs", "target": "analysis", "relation": "informs",
+                     "confidence": 0.9,
+                     "rationale": "The estimator cannot run without the observed rows."},
+                    {"source": "analysis", "target": "outcome", "relation": "causes",
+                     "confidence": 0.8,
+                     "rationale": "The adjusted estimate is what determines the reported outcome."},
                 ],
                 "critical_path": ["inputs", "analysis", "outcome"],
                 "version": 1,
@@ -666,20 +714,39 @@ async def analyze_prompt(
                  "observed": "mocked in proxy", "verdict": "success",
                  "affected": [], "plan_version": 2, "ts": ""},
             ]
+            # Field names mirror PlanStep (objective/expected_effect/depends_on/
+            # attempt) so the plan view renders the same shape offline as live.
             mock_plan = {
                 "version": 2,
+                "rationale": "Global pathway inputs -> analysis -> outcome along the critical path.",
                 "steps": [
-                    {"id": "s1", "component_id": "inputs", "title": "Collect inputs",
-                     "status": "done"},
-                    {"id": "s2", "component_id": "analysis", "title": "Advance 'Analysis'",
-                     "status": "failed"},
+                    {"id": "s1", "component_id": "inputs", "objective": "Collect inputs",
+                     "expected_effect": "Observed rows available to the estimator",
+                     "depends_on": [], "status": "done", "attempt": 1,
+                     "result_summary": "mocked in proxy"},
+                    {"id": "s2", "component_id": "analysis", "objective": "Advance 'Analysis'",
+                     "expected_effect": "Adjusted effect estimated from the rows",
+                     "depends_on": ["s1"], "status": "failed", "attempt": 1,
+                     "result_summary": "estimator returned no rows; replanned"},
                     {"id": "s3", "component_id": "analysis",
-                     "title": "Advance 'Analysis' (replanned)", "status": "done"},
+                     "objective": "Advance 'Analysis' (replanned)",
+                     "expected_effect": "Adjusted effect estimated after widening the window",
+                     "depends_on": ["s1"], "status": "done", "attempt": 2,
+                     "result_summary": "mocked in proxy"},
                 ],
             }
+            # The structured "why the plan changed" record, previously computed
+            # and discarded.
+            mock_replan_events = [
+                {"seq": 1, "failed_step_id": "s2",
+                 "invalidated_step_ids": ["s2"], "new_step_ids": ["s3"],
+                 "plan_version_from": 1, "plan_version_to": 2,
+                 "reason": "estimator returned no rows for the requested window"},
+            ]
         report = {
             "status": "success",
             "response": mock_text,
+            "run_id": run_id,
             "total_token_count": 10,
             "causal_reasoning_steps": mock_steps,
             "causal_graph": mock_graph,
@@ -690,12 +757,14 @@ async def analyze_prompt(
             "causal_graph_reconcile": mock_reconcile,
             "causal_web_retrieval": mock_web,
             "causal_ledger": mock_ledger,
+            "causal_ledger_dropped": 0,
             "causal_plan": mock_plan,
+            "causal_replan_events": mock_replan_events,
         }
         # Persist from the same dict that goes back to the UI so the offline
         # dev path exercises causal history too.
         _persist_if_signed_in(user, req, mock_text, 10, attachment_names,
-                              _causal_payload(report))
+                              _causal_payload(report), run_id)
         return StreamingResponse(
             _mock_stream(report, req.causal_reasoning),
             media_type="text/event-stream", headers=SSE_HEADERS)
@@ -729,6 +798,9 @@ async def analyze_prompt(
         # general path uses a code executor, which cannot mix with Search).
         if req.web_search:
             markers = f"{CAUSAL_MODE_MARKER} {WEB_MODE_MARKER}"
+        # The correlation id rides the same channel; the router strips it into
+        # causal_run_id so every state write this turn is attributable.
+        markers = f"{markers} [[run:{run_id}]]"
         outbound_message = f"{markers} {outbound_message}"
 
     # ADK AdkApp only registers stream_query (no sync "query" method)
@@ -744,7 +816,7 @@ async def analyze_prompt(
     }
 
     return StreamingResponse(
-        _agent_stream(req, user, attachment_names, stream_url, payload, headers),
+        _agent_stream(req, user, attachment_names, stream_url, payload, headers, run_id),
         media_type="text/event-stream", headers=SSE_HEADERS)
 
 
@@ -767,7 +839,7 @@ async def _pump_lines(resp, queue: asyncio.Queue):
 
 async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                         attachment_names: list, stream_url: str,
-                        payload: dict, headers: dict):
+                        payload: dict, headers: dict, run_id: str):
     """Forward the Agent Engine run as SSE, then emit the assembled report."""
     collected_text = []
     causal_state = {}
@@ -907,6 +979,10 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
         # the executor step counter.
         causal_ledger = causal_state.get("causal_ledger")
         causal_plan = causal_state.get("causal_plan")
+        # The replan events say *why* the plan changed; the dropped count keeps
+        # the ledger honest when a long run pushes entries past LEDGER_CAP.
+        causal_replan_events = causal_state.get("causal_replan_events")
+        causal_ledger_dropped = causal_state.get("causal_ledger_dropped")
         if req.causal_reasoning and not causal_state:
             # Fallback transport (agent ran with CAUSAL_TEXT_FALLBACK=1).
             payload_json, response_text = _extract_causal_fallback(response_text)
@@ -926,6 +1002,7 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
         report = {
             "status": "success",
             "response": response_text,
+            "run_id": run_id,
             "total_token_count": total_token_count,
             "causal_reasoning_steps": causal_steps,
             "causal_graph": causal_graph,
@@ -936,12 +1013,14 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
             "causal_graph_reconcile": causal_graph_reconcile,
             "causal_web_retrieval": causal_web_retrieval,
             "causal_ledger": causal_ledger,
+            "causal_ledger_dropped": causal_ledger_dropped,
             "causal_plan": causal_plan,
+            "causal_replan_events": causal_replan_events,
         }
-        # _causal_payload filters on the causal_ prefix, so the two new keys
+        # _causal_payload filters on the causal_ prefix, so the new keys
         # persist to Firestore and replay through history without extra work.
         _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names,
-                              _causal_payload(report))
+                              _causal_payload(report), run_id)
     except Exception as e:
         traceback.print_exc()
         yield _sse("error", {"detail": str(e)})

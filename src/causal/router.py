@@ -9,7 +9,8 @@ turn. Marker matching costs zero.
 from __future__ import annotations
 
 import os
-from typing import AsyncGenerator
+import re
+from typing import AsyncGenerator, Optional
 
 from google.adk.agents import BaseAgent
 from google.adk.events import Event, EventActions
@@ -17,6 +18,8 @@ from google.adk.events import Event, EventActions
 from src.causal import state_keys as sk
 from src.causal.complexity import budgets_for_query, tier_for_query
 from src.causal.models import CausalStatus
+
+_RUN_ID_RE = re.compile(sk.RUN_ID_MARKER_RE)
 
 
 def is_causal_request(text: str) -> bool:
@@ -27,8 +30,20 @@ def is_web_request(text: str) -> bool:
     return sk.WEB_MODE_MARKER in (text or "")
 
 
+def extract_run_id(text: str) -> Optional[str]:
+    """Pull the per-turn correlation id the proxy injected, if present.
+
+    Rides the same marker channel as the mode flags rather than a new transport,
+    so the agent contract stays "everything the proxy needs to say is in the
+    message text".
+    """
+    match = _RUN_ID_RE.search(text or "")
+    return match.group(1) if match else None
+
+
 def strip_marker(text: str) -> str:
-    return (text or "").replace(sk.CAUSAL_MODE_MARKER, "").replace(sk.WEB_MODE_MARKER, "").strip()
+    cleaned = (text or "").replace(sk.CAUSAL_MODE_MARKER, "").replace(sk.WEB_MODE_MARKER, "")
+    return _RUN_ID_RE.sub("", cleaned).strip()
 
 
 def _budgets_from_env() -> dict:
@@ -104,11 +119,16 @@ class CausalRouterAgent(BaseAgent):
         # with include_contents="none" and therefore never sees the user
         # message -- can access the raw data it needs to compute on.
         reset[sk.KEY_QUERY] = query
+        # Correlation id is seeded here so every downstream state write in this
+        # turn is attributable to one run.
+        reset[sk.KEY_RUN_ID] = extract_run_id(text)
         reset[sk.KEY_STEPS] = [
             f"[budget] complexity: {tier.replace('_', ' ')} -> "
             f"{budgets['max_steps']} steps / {budgets['max_replans']} replans"
         ]
         reset[sk.KEY_LEDGER] = []
+        reset[sk.KEY_LEDGER_DROPPED] = 0
+        reset[sk.KEY_REPLAN_EVENTS] = []
         reset[sk.KEY_STATUS] = CausalStatus(phase="decomposing").model_dump(mode="json")
         yield Event(
             author=self.name,

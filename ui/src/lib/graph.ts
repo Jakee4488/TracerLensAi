@@ -52,6 +52,8 @@ export interface CausalNodeData {
   hop: number;
   onCritical: boolean;
   highlighted?: boolean;
+  /** The decomposer's "why this component exists". */
+  description?: string;
 }
 
 export type CausalNode = Node<CausalNodeData, "causal">;
@@ -103,6 +105,7 @@ export function layoutNodes(graph: CausalGraph): CausalNode[] {
         status: node.status,
         hop,
         onCritical: hops.has(node.id),
+        description: node.description,
       },
     } satisfies CausalNode;
   });
@@ -135,6 +138,12 @@ export function buildEdges(graph: CausalGraph): Edge[] {
       // rather than the edge case. Confidence now reads off the stroke, which
       // had nothing to say before.
       label: edge.relation,
+      // The decomposer's justification for the link, shown on hover. It was
+      // captured by the model and dropped in to_ui_graph until now.
+      ariaLabel: edge.rationale
+        ? `${edge.relation}: ${edge.rationale}`
+        : `${edge.source} ${edge.relation} ${edge.target}`,
+      data: { rationale: edge.rationale ?? "", confidence: edge.confidence },
       // Colour, dash and label fill all come from styles.css via these classes,
       // so both themes apply and the legend can be generated from the same
       // three bands the renderer actually uses.
