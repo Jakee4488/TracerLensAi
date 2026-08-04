@@ -4,8 +4,14 @@
 // ChangeRecord already carries expected/observed/verdict/affected per step, so
 // nothing new is computed server-side — this surfaces state that was being
 // collected and thrown away.
+//
+// Rendered as a sheet anchored to the bottom of the pane rather than a
+// full-height panel: at 420px over a 397px graph the old layout covered 99% of
+// the diagram, so clicking a node to learn about it hid the node.
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
+import { KIND_LABEL, normalizeKind } from "../../lib/graph";
 import type { ChangeRecord, GraphNode } from "../../types";
 
 export interface DrawerTarget {
@@ -26,6 +32,8 @@ interface Props {
 
 export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, onClose);
+
   const labelById = new Map(nodes.map((n) => [n.id, n.label]));
 
   const records = ledger.filter((r) =>
@@ -34,15 +42,6 @@ export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Prop
   const node = target.componentId
     ? nodes.find((n) => n.id === target.componentId)
     : undefined;
-
-  useEffect(() => {
-    panelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   return (
     <>
@@ -65,60 +64,66 @@ export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Prop
         {node && (
           <div className="drawer-meta">
             <span className={"drawer-status " + node.status}>{node.status}</span>
-            <span className="drawer-kind">{node.kind}</span>
+            <span className="drawer-kind">{KIND_LABEL[normalizeKind(node.kind)]}</span>
           </div>
         )}
 
-        {records.length === 0 ? (
-          <p className="drawer-empty">
-            {node
-              ? "This component was never executed, so the change ledger has no entry for it."
-              : "No ledger entry for this step."}
-          </p>
-        ) : (
-          records.map((record) => (
-            <div className="drawer-record" key={`${record.seq}-${record.step_id}`}>
-              <div className="drawer-record-head">
-                <span className="drawer-step-id">{record.step_id}</span>
-                <span className={"drawer-verdict " + record.verdict}>{record.verdict}</span>
-              </div>
-
-              {record.expected && (
-                <div className="drawer-field">
-                  <span className="drawer-label">expected</span>
-                  <p>{record.expected}</p>
+        <div className="drawer-scroll">
+          {records.length === 0 ? (
+            // The ledger records verifications, not executions, and it is
+            // sparse by design — so this is the common branch. It used to read
+            // "this component was never executed", directly contradicting the
+            // `done` badge sitting above it.
+            <p className="drawer-empty">
+              {node
+                ? "No verification was recorded for this component during the run — the change ledger only holds entries for steps the executor checked."
+                : "No ledger entry for this step."}
+            </p>
+          ) : (
+            records.map((record) => (
+              <div className="drawer-record" key={`${record.seq}-${record.step_id}`}>
+                <div className="drawer-record-head">
+                  <span className="drawer-step-id">{record.step_id}</span>
+                  <span className={"drawer-verdict " + record.verdict}>{record.verdict}</span>
                 </div>
-              )}
-              {record.observed && (
-                <div className="drawer-field">
-                  <span className="drawer-label">observed</span>
-                  <p>{record.observed}</p>
-                </div>
-              )}
 
-              {(record.affected || []).length > 0 && (
-                <div className="drawer-field">
-                  <span className="drawer-label">invalidated downstream</span>
-                  <div className="drawer-chips">
-                    {record.affected.map((id) => (
-                      <button
-                        type="button"
-                        className="affected-chip"
-                        key={id}
-                        onMouseEnter={() => onHighlight(id)}
-                        onMouseLeave={() => onHighlight(null)}
-                        onFocus={() => onHighlight(id)}
-                        onBlur={() => onHighlight(null)}
-                      >
-                        {labelById.get(id) || id}
-                      </button>
-                    ))}
+                {record.expected && (
+                  <div className="drawer-field">
+                    <span className="drawer-label">expected</span>
+                    <p>{record.expected}</p>
                   </div>
-                </div>
-              )}
-            </div>
-          ))
-        )}
+                )}
+                {record.observed && (
+                  <div className="drawer-field">
+                    <span className="drawer-label">observed</span>
+                    <p>{record.observed}</p>
+                  </div>
+                )}
+
+                {(record.affected || []).length > 0 && (
+                  <div className="drawer-field">
+                    <span className="drawer-label">invalidated downstream</span>
+                    <div className="drawer-chips">
+                      {record.affected.map((id) => (
+                        <button
+                          type="button"
+                          className="affected-chip"
+                          key={id}
+                          onMouseEnter={() => onHighlight(id)}
+                          onMouseLeave={() => onHighlight(null)}
+                          onFocus={() => onHighlight(id)}
+                          onBlur={() => onHighlight(null)}
+                        >
+                          {labelById.get(id) || id}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </>
   );

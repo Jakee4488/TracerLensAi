@@ -1,45 +1,72 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
-import { highlightCode, renderMarkdown } from "../lib/markdown";
+import { enhanceMarkdown, renderMarkdown } from "../lib/markdown";
 import { hasCausalContent } from "./causal/CausalPanel";
 import type { Stage } from "../lib/stages";
-import type { CausalGraph as CausalGraphType, ChatMessage } from "../types";
+import type { CausalGraph as CausalGraphType, ChatMessage, Report } from "../types";
 
 function Markdown({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const html = renderMarkdown(text);
-  useEffect(() => highlightCode(ref.current), [html]);
-  
+  // Citation buttons are built here, over the mounted DOM, so re-run whenever
+  // the rendered HTML changes.
+  useEffect(() => enhanceMarkdown(ref.current), [html]);
+
   const handleClick = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.classList.contains("node-citation")) {
-      const nodeLabel = target.getAttribute("data-node");
-      if (nodeLabel) {
-        window.dispatchEvent(new CustomEvent("highlight-node", { detail: { id: nodeLabel } }));
-      }
+    const target = (e.target as HTMLElement).closest(".node-citation");
+    const label = target?.getAttribute("data-node");
+    if (label) {
+      window.dispatchEvent(new CustomEvent("highlight-node", { detail: { id: label } }));
     }
   };
-  
+
   return <div className="md-content" ref={ref} onClick={handleClick} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/**
+ * What the details button is worth opening for.
+ *
+ * The button used to say only "View Causal Details", which asked the reader to
+ * spend a click to find out whether there was anything behind it. These are the
+ * three facts the panel leads with anyway.
+ */
+function causalSummary(report: Report): string[] {
+  const bits: string[] = [];
+  const nodes = report.causal_graph?.nodes?.length ?? 0;
+  if (nodes) bits.push(`${nodes} component${nodes === 1 ? "" : "s"}`);
+
+  const effect = report.causal_effect;
+  if (effect && effect.ci_low != null && effect.ci_high != null) {
+    bits.push(effect.ci_low <= 0 && effect.ci_high >= 0 ? "CI crosses zero" : "CI excludes zero");
+  } else if (report.causal_estimand && !report.causal_estimand.identifiable) {
+    bits.push("not identifiable");
+  }
+
+  const failed = (report.causal_graph?.nodes || []).filter((n) => n.status === "failed").length;
+  if (failed) bits.push(`${failed} failed`);
+
+  return bits;
 }
 
 function AiMessage({ message, onSelect }: { message: ChatMessage; onSelect?: (msg: ChatMessage) => void }) {
   const report = message.report;
   const hasCausal = report && hasCausalContent(report);
-  
+  const summary = hasCausal ? causalSummary(report) : [];
+
   return (
     <div className="msg ai">
       <div className="avatar" />
       <div className="bubble">
-        {hasCausal && (
-          <div className="causal-summary-box">
-            {onSelect && (
-              <button className="view-details-btn" onClick={() => onSelect(message)}>
-                ⚯ View Causal Details ➔
-              </button>
-            )}
-          </div>
-        )}
         <Markdown text={message.content || "No response received."} />
+        {/* Below the answer: it annotates what was just read, rather than
+            asking for a click before there is anything to annotate. */}
+        {hasCausal && onSelect && (
+          <button className="view-details-btn" onClick={() => onSelect(message)}>
+            <span className="vdb-mark" aria-hidden="true">⚯</span>
+            <span className="vdb-text">How this was derived</span>
+            {summary.length > 0 && <span className="vdb-summary">{summary.join(" · ")}</span>}
+            <span className="vdb-arrow" aria-hidden="true">→</span>
+          </button>
+        )}
       </div>
     </div>
   );

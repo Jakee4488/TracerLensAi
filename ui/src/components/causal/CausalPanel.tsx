@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { CausalGraph } from "./CausalGraph";
 import { EstimandCard } from "./EstimandCard";
-import { StageDrawer } from "./StageDrawer";
 import { StepDrawer, type DrawerTarget } from "./StepDrawer";
 import { WorkflowTimeline } from "./WorkflowTimeline";
 import type { Stage } from "../../lib/stages";
@@ -32,7 +31,15 @@ function webLabel(web: NonNullable<Report["causal_web_retrieval"]>): string {
   return "web: no data";
 }
 
-export function CausalPanel({ report, stages, liveGraph }: { report: Report; stages?: Stage[]; liveGraph?: CausalGraphType | null }) {
+interface Props {
+  report: Report;
+  stages?: Stage[];
+  liveGraph?: CausalGraphType | null;
+  /** Rendered into the pane's fixed header, so it never scrolls away. */
+  onClose?: () => void;
+}
+
+export function CausalPanel({ report, stages, liveGraph, onClose }: Props) {
   const steps = report.causal_reasoning_steps || [];
   const graph = liveGraph || report.causal_graph;
   const hasGraph = !!(graph && graph.nodes && graph.nodes.length);
@@ -42,18 +49,10 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
 
   const ledger = report.causal_ledger || [];
   const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
-  const [stageDrawer, setStageDrawer] = useState<Stage | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const openNode = useCallback(
     (id: string, label: string) => setDrawer({ componentId: id, title: label }),
     [],
-  );
-  const openStage = useCallback(
-    (id: string, label: string) => {
-      const stage = stages?.find((s) => s.id === id);
-      if (stage) setStageDrawer(stage);
-    },
-    [stages],
   );
 
   useEffect(() => {
@@ -61,7 +60,7 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
       const customEvent = e as CustomEvent<{ id: string | null }>;
       const targetIdOrLabel = customEvent.detail.id;
       setHighlighted(targetIdOrLabel);
-      
+
       if (targetIdOrLabel && graph && graph.nodes) {
         const targetNode = graph.nodes.find(n => n.id === targetIdOrLabel || n.label === targetIdOrLabel);
         if (targetNode) {
@@ -75,8 +74,13 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
 
   return (
     <div className="causal-panel">
+      {/* Fixed header. The close control used to be absolutely positioned
+          inside the scroll container, so it sat at y=-97 the moment you
+          scrolled to anything worth reading. */}
       <div className="causal-head">
-        ⚯ Causal reasoning
+        <span className="causal-head-title">
+          <span aria-hidden="true">⚯</span> Causal reasoning
+        </span>
         {phase && <span className="phase-badge">{String(phase).replace(/_/g, " ")}</span>}
         {web?.mode && (
           <span
@@ -86,39 +90,46 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
             {webLabel(web)}
           </span>
         )}
+        {onClose && (
+          <button className="close-pane-btn" onClick={onClose} aria-label="Close causal panel">
+            ✕
+          </button>
+        )}
       </div>
 
-      {stages && (
-        <div className="pane-timeline">
-           <WorkflowTimeline stages={stages} onOpenStage={openStage} />
-        </div>
-      )}
+      <div className="causal-panel-scroll">
+        {stages && (
+          <div className="pane-timeline">
+            <WorkflowTimeline stages={stages} />
+          </div>
+        )}
 
-      {hasGraph && (
-        <div className="graph-container">
-          <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
-        </div>
-      )}
+        {hasGraph && (
+          <div className="graph-container">
+            <CausalGraph graph={graph} onOpenNode={openNode} highlightedId={highlighted} />
+          </div>
+        )}
 
-      {estimand && (
-        <EstimandCard
-          estimand={estimand}
-          effect={report.causal_effect}
-          counterfactual={report.causal_counterfactual}
-          reconcile={report.causal_graph_reconcile}
-        />
-      )}
+        {estimand && (
+          <EstimandCard
+            estimand={estimand}
+            effect={report.causal_effect}
+            counterfactual={report.causal_counterfactual}
+            reconcile={report.causal_graph_reconcile}
+          />
+        )}
 
-      {steps.length > 0 && (
-        <details className="causal-steps-details" open>
-          <summary>Causal Reasoning Trace</summary>
-          <ul className="causal-steps">
-            {steps.map((step, i) => (
-              <StepLine key={i} step={step} />
-            ))}
-          </ul>
-        </details>
-      )}
+        {steps.length > 0 && (
+          <details className="causal-steps-details" open>
+            <summary>Causal Reasoning Trace</summary>
+            <ul className="causal-steps">
+              {steps.map((step, i) => (
+                <StepLine key={i} step={step} />
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
 
       {drawer && (
         <StepDrawer
@@ -131,10 +142,6 @@ export function CausalPanel({ report, stages, liveGraph }: { report: Report; sta
           }}
           onHighlight={setHighlighted}
         />
-      )}
-
-      {stageDrawer && (
-        <StageDrawer stage={stageDrawer} onClose={() => setStageDrawer(null)} />
       )}
     </div>
   );

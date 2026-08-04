@@ -1,4 +1,4 @@
-﻿#!/bin/sh
+#!/bin/sh
 # Local-dev-only entrypoint for the proxy container (docker-compose.yml).
 #
 # Not used by Dockerfile.proxy's own CMD / the deployed Cloud Run image Ã¢â‚¬â€ this
@@ -15,7 +15,7 @@ if [ "$MODE" = "mock" ]; then
 elif [ -z "$AGENT_ENGINE_ENDPOINT" ] && [ -f /app/deployment_metadata.json ]; then
     ENGINE_ID=$(sed -n 's/.*"remote_agent_runtime_id": *"\([^"]*\)".*/\1/p' /app/deployment_metadata.json)
     if [ -n "$ENGINE_ID" ]; then
-        export AGENT_ENGINE_ENDPOINT="https://${GOOGLE_CLOUD_REGION:-europe-west2}-aiplatform.googleapis.com/v1beta1/${ENGINE_ID}:query"
+        export AGENT_ENGINE_ENDPOINT="https://${GOOGLE_CLOUD_REGION:-europe-west2}-aiplatform.googleapis.com/v1/${ENGINE_ID}:query"
         echo "[local-entrypoint] Resolved from deployment_metadata.json -> AGENT_ENGINE_ENDPOINT=$AGENT_ENGINE_ENDPOINT"
     else
         echo "[local-entrypoint] deployment_metadata.json present but remote_agent_runtime_id not found; falling back to mock mode."
@@ -24,4 +24,5 @@ else
     echo "[local-entrypoint] Using AGENT_ENGINE_ENDPOINT from the environment: $AGENT_ENGINE_ENDPOINT"
 fi
 
-exec uvicorn proxy.main:app --host 0.0.0.0 --port 8080
+# Use --reload when the proxy volume is mounted (dev); production CMD skips it.
+exec uvicorn proxy.main:app --host 0.0.0.0 --port 8080 --reload --reload-dir /app/proxy
