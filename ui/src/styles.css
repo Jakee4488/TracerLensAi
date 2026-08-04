@@ -1453,11 +1453,16 @@ html[data-theme="light"] .token-badge {
 .stage-list {
     display: flex;
     flex-direction: row;
-    overflow: hidden;
-    
+    overflow-x: auto;
+    overflow-y: hidden;
     padding-bottom: 0;
     margin: 0;
     list-style: none;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.stage-list::-webkit-scrollbar {
+    display: none;
 }
 
 .stage-row {
@@ -1467,12 +1472,12 @@ html[data-theme="light"] .token-badge {
     align-items: center;
     gap: 8px;
     padding: 0;
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 0 58px;
+    min-width: 58px;
 }
 
 .stage-row:last-child {
-    min-width: 0;
+    min-width: 58px;
 }
 
 /* Horizontal connector rail between dots */
@@ -2301,22 +2306,31 @@ html[data-theme="light"] .token-badge {
     display: flex;
     flex-direction: column;
     position: relative;
-    overflow-y: auto;
+    overflow: hidden; /* close button pinned; content scrolls inside .causal-panel */
 }
 .close-pane-btn {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 14px;
+    right: 14px;
     background: var(--surface-2);
     border: 1px solid var(--border);
-    color: var(--text-1);
-    width: 28px;
-    height: 28px;
+    color: var(--text-2);
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     cursor: pointer;
     z-index: 10;
     display: grid;
     place-items: center;
+    font-size: 18px;
+    line-height: 1;
+    font-weight: 400;
+    transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.close-pane-btn:hover {
+    background: var(--surface-3);
+    color: var(--text-1);
+    border-color: var(--accent);
 }
 .causal-pane .causal-panel {
     border: none;
@@ -2326,6 +2340,8 @@ html[data-theme="light"] .token-badge {
     display: flex;
     flex-direction: column;
     padding-top: 12px;
+    overflow-y: auto; /* scroll content; close btn stays pinned */
+    min-height: 0;
 }
 .causal-pane .graph-container {
     flex: 1;
