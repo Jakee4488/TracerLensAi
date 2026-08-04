@@ -15,6 +15,7 @@ from src.causal.agents import build_causal_pipeline, build_root_agent
 from src.causal.models import CausalDecomposition, CausalEstimand, ReplanResult
 from src.causal.router import (
     CausalRouterAgent,
+    extract_run_id,
     is_causal_request,
     is_web_request,
     strip_marker,
@@ -201,6 +202,20 @@ def test_web_marker_detection_and_strip():
     assert not is_web_request(f"{sk.CAUSAL_MODE_MARKER} no web here")
     # Both markers are stripped, leaving the clean query.
     assert strip_marker(both) == "effect of x on y?"
+
+
+def test_run_id_marker_is_extracted_and_stripped():
+    """The correlation id rides the marker channel, so it must never leak into
+    the query the LLM roles see."""
+    text = f"{sk.CAUSAL_MODE_MARKER} [[run:abc123DEF-_]] effect of x on y?"
+    assert extract_run_id(text) == "abc123DEF-_"
+    assert strip_marker(text) == "effect of x on y?"
+
+    # Absent, malformed, or empty -> no id, and the text is otherwise untouched.
+    assert extract_run_id(f"{sk.CAUSAL_MODE_MARKER} no run id") is None
+    assert extract_run_id("[[run:has spaces]] q") is None
+    assert extract_run_id("") is None
+    assert strip_marker("[[run:has spaces]] q") == "[[run:has spaces]] q"
 
 
 def test_web_skip_gate():

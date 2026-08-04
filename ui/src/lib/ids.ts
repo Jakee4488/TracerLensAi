@@ -16,6 +16,17 @@ export function nextMessageKey(role: string): string {
   return `${role}-${Date.now().toString(36)}-${messageCounter}`;
 }
 
+/**
+ * Correlation id for one turn.
+ *
+ * Minted here so the client can identify a run even if the response never
+ * arrives. Hex only, to match the `[[run:...]]` marker the proxy injects — the
+ * proxy re-validates and replaces anything that doesn't fit.
+ */
+export function generateRunId(): string {
+  return randomHex(32);
+}
+
 export function getAnonId(): string {
   const existing = document.cookie
     .split(";")

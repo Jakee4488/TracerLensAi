@@ -56,9 +56,10 @@ function RefutationRow({
   const state = r.passed ? "pass" : "fail";
   return (
     <>
-      {/* Names truncate in a narrow bubble; keep the full one reachable. */}
+      {/* "…_refuter" is a suffix every row carries, so it costs width and
+          distinguishes nothing. The raw method stays in the title. */}
       <span className={"refute-name " + state} title={r.method}>
-        {String(r.method || "").replace(/_/g, " ")}
+        {String(r.method || "").replace(/_refuter$/, "").replace(/_/g, " ")}
       </span>
       <div className="plot-track refute-track">
         <span className="effect-zero" style={{ left: `${zero}%` }} />

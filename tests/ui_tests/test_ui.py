@@ -331,6 +331,98 @@ def test_drawer_empty_state_for_unexecuted_component(page: Page, server):
     expect(page.locator(".drawer-empty")).to_contain_text("never executed")
 
 
+# ── Traceability & explainability ─────────────────────────────────────────────
+# Each of these renders something the pipeline already produced but which never
+# reached a reader: the correlation id, the execution plan, the replan events,
+# and the decomposer's per-edge rationale.
+
+
+def test_run_id_is_shown_for_the_turn(page: Page, server):
+    """The id that joins this answer to its server log line and Cloud Trace."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    strip = page.locator(".run-id-strip code")
+    expect(strip).to_be_visible(timeout=25000)
+    assert (strip.text_content() or "").strip(), "run id rendered empty"
+
+
+def test_plan_is_rendered_with_status_and_detail(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    expect(page.locator(".plan-card")).to_be_visible(timeout=25000)
+    # The mock plan is s1 done / s2 failed / s3 done (replanned).
+    expect(page.locator(".plan-step")).to_have_count(3)
+    expect(page.locator(".plan-step.failed")).to_have_count(1)
+
+    # Objective, expected effect and result are the "what did it intend" record.
+    page.locator(".plan-step.failed .plan-step-toggle").click()
+    detail = page.locator(".plan-step.failed .plan-detail")
+    expect(detail).to_contain_text("expected")
+    expect(detail).to_contain_text("result")
+
+
+def test_replan_narrative_explains_what_changed(page: Page, server):
+    """ReplanEvent used to be flattened to one trace line and dropped."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    event = page.locator(".replan-event")
+    expect(event).to_have_count(1, timeout=25000)
+    expect(event).to_contain_text("s2")           # the step that failed
+    expect(event).to_contain_text("v1")           # plan version transition
+    expect(event).to_contain_text("v2")
+    expect(page.locator(".replan-detail")).to_contain_text("s3")  # what replaced it
+
+
+def test_node_drawer_shows_why_the_component_exists(page: Page, server):
+    """description/rationale were captured by the models and dropped in
+    to_ui_graph() before they could reach anyone."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    expect(page.locator(".estimand-card")).to_be_visible(timeout=25000)
+    page.locator(".dag-node", has_text="Analysis").click()
+
+    drawer = page.locator(".step-drawer")
+    expect(drawer).to_contain_text("why this component")
+    expect(drawer).to_contain_text("Adjusts for the confounder")
+    # ...and the incoming edge's justification.
+    expect(drawer).to_contain_text("why it is caused")
+    expect(drawer).to_contain_text("cannot run without the observed rows")
+
+
+def test_export_is_disabled_until_the_run_lands(page: Page, server):
+    """Mid-flight the panel runs off the live graph, so an export would be a
+    near-empty file."""
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    expect(page.locator(".export-run-btn")).to_be_disabled()
+    expect(page.locator(".export-run-btn")).to_be_enabled(timeout=25000)
+
+
+def test_run_exports_as_one_auditable_file(page: Page, server):
+    page.goto(server)
+    page.check("#causal-toggle")
+    send_prompt(page, "Why does it rain?")
+    # Wait for the terminal report, not just the header control.
+    expect(page.locator(".estimand-card")).to_be_visible(timeout=25000)
+
+    with page.expect_download() as download:
+        page.click(".export-run-btn")
+    import json
+    with open(download.value.path(), encoding="utf-8") as handle:
+        payload = json.load(handle)
+
+    assert payload["run_id"]
+    assert len(payload["plan"]["steps"]) == 3
+    assert len(payload["replan_events"]) == 1
+    assert payload["graph"]["edges"][0]["rationale"]
+    assert payload["identification"]["estimand_type"] == "backdoor"
+
+
 # ── Responsive sidebar (narrow viewports) ─────────────────────────────────────
 # Regression coverage for a bug found via manual testing: below the 900px
 # breakpoint the sidebar overlays the page (styles.css .sidebar position:

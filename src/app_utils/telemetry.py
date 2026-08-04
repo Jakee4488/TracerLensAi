@@ -17,7 +17,27 @@ import os
 
 
 def setup_telemetry() -> str | None:
-    """Configure GenAI prompt/response logging via OpenTelemetry."""
+    """Configure GenAI prompt/response logging via OpenTelemetry.
+
+    Content-capture policy — deliberate, not a leftover default
+    ----------------------------------------------------------
+    Prompts and responses are never written to spans, and the GenAI upload runs
+    in ``NO_CONTENT`` mode (metadata only). User prompts routinely carry
+    attached CSVs and business context, so shipping them into trace storage
+    would put user data somewhere with a different retention and access model
+    than Firestore.
+
+    What this costs: a trace tells you *that* a role ran, with what token count
+    and latency, but not what it said. Reasoning is reconstructed instead from
+    the causal state the agent records deliberately and shows the user — the
+    graph, plan, replan events, change ledger and identification results — all
+    keyed by ``causal_run_id`` so a turn can be followed end to end.
+
+    To capture content in a non-production project, set both
+    ``LOGS_BUCKET_NAME`` and ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT``;
+    only do that where the bucket's retention and IAM are appropriate for user
+    data.
+    """
     # Keep full prompts/responses out of trace span attributes (use GenAI logging instead).
     os.environ.setdefault("ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS", "false")
     os.environ.setdefault("GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY", "true")
