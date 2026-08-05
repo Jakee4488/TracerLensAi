@@ -4,6 +4,24 @@
 # Triggers: every pull_request targeting main
 # Jobs    : pytest (backend suite; UI tests excluded — they need a live stack)
 # Purpose : Gate PRs — must pass before merge is allowed
+#
+# Two dependency-drift guards, added after an incident where `a2a-sdk`'s
+# unbounded `>=0.3.22` pin floated onto a breaking 1.x release during
+# `agents-cli deploy`'s own fresh dependency resolve (independent of this
+# repo's lockfile) and crash-looped the deployed container on startup:
+#
+#   - "Verify uv.lock matches pyproject.toml" (uv lock --check) catches
+#     pyproject.toml/uv.lock drift — e.g. a constraint edited without
+#     regenerating the lock. This does NOT reproduce the actual incident:
+#     agents-cli ignores this repo's lockfile entirely when it packages the
+#     agent bundle, so an in-sync lockfile does not guarantee agents-cli
+#     resolves the same versions.
+#   - tests/test_app_entrypoint.py imports src/fast_api_app.py — the real
+#     production ASGI entrypoint — under the same unpinned `pip install -r
+#     requirements.txt` this job already runs. Every other test in this suite
+#     only touches src.agent/src.causal (credential-free by design; see
+#     src/__init__.py), so this was the actual gap: nothing previously
+#     exercised the import chain that broke in production.
 # =============================================================================
 name: "CI — Pull Request Checks"
 
@@ -28,6 +46,12 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Verify uv.lock matches pyproject.toml
+        run: uv lock --check
 
       - name: Install dependencies
         run: pip install -r requirements.txt
