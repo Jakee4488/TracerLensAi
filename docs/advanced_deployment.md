@@ -9,7 +9,7 @@ The system is deployed as a decoupled three-tier application:
 2. **Backend Proxy (FastAPI)**: Hosted dynamically on **Google Cloud Run**.
 3. **Agent Runtime (Vertex AI)**: Hosts the core ADK agent logic (`src/agent.py`) and manages state natively via the **Memory Bank**.
 
-Firebase Hosting acts as a reverse proxy, rewriting API requests directly to the Cloud Run backend proxy. The proxy authenticates the request with Application Default Credentials (no stored API keys) and forwards it to the Vertex AI Agent Engine. It also handles Firebase Google Sign-In, per-user history in Firestore, and file uploads.
+Firebase Hosting acts as a reverse proxy, rewriting API requests directly to the Cloud Run backend proxy. The proxy authenticates the request with Application Default Credentials (no stored API keys) and forwards it to the Vertex AI Agent Engine. It also handles the email access gate and token quota (see [access_control.md](access_control.md)), per-user history in Firestore, and file uploads.
 
 ---
 

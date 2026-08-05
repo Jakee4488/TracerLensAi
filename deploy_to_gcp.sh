@@ -13,6 +13,12 @@
 #   ./deploy_to_gcp.sh --only proxy     # just the Cloud Run proxy
 #   ./deploy_to_gcp.sh --only hosting   # just Firebase Hosting
 #
+#   # A preview copy on its own Cloud Run URL, leaving production alone.
+#   # Pair it with --only proxy: the hosting stage publishes the live domain,
+#   # and the agent stage updates the one shared engine in place.
+#   DEPLOY_SERVICE_NAME=tracerlensai-app-staging APP_URL=https://... \
+#     ./deploy_to_gcp.sh --only proxy
+#
 # Requires: gcloud (authed), agents-cli, docker, firebase CLI or npx.
 # Reads GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_REGION / AGENT_ENGINE_ENDPOINT
 # from .env.
@@ -44,7 +50,15 @@ fi
 
 PROJECT_ID=${GOOGLE_CLOUD_PROJECT}
 REGION=${GOOGLE_CLOUD_REGION:-europe-west2}
-SERVICE_NAME="tracerlensai-app"
+# DEPLOY_SERVICE_NAME retargets the whole proxy stage at another Cloud Run
+# service, which is how the staging workflow gets a full copy of the app on its
+# own URL without touching the live one. Deliberately not named SERVICE_NAME or
+# IMAGE_NAME: .env already carries an IMAGE_NAME for the GKE path, and this file
+# sources .env, so reusing either name would let a local .env silently retarget
+# a production deploy.
+SERVICE_NAME="${DEPLOY_SERVICE_NAME:-tracerlensai-app}"
+# Tagged per service, so a staging build can never be promoted to production by
+# a `latest` tag that both services happen to share.
 IMAGE_NAME="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
 # ── Stage 1: Agent Engine ────────────────────────────────────────────────────
@@ -73,6 +87,18 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
         --region "${REGION}"
         --project "${PROJECT_ID}"
         --allow-unauthenticated
+        # Explicit, not left to default: `gcloud run deploy` only preserves an
+        # existing service's service account on a REDEPLOY. The very first
+        # deploy of any new SERVICE_NAME (every dev push, every PR preview)
+        # falls back to the project's default Compute Engine SA, which has
+        # none of agent-app-sa's grants (datastore.user, aiplatform.user) —
+        # every Firestore write then fails with a 403 that has nothing to do
+        # with the code path that triggered it. Reusing the same runtime SA
+        # across all three tiers is safe: its Firestore role is project-scoped
+        # (applies to every named database, not just "tracerlensai"), and
+        # per-tier isolation already comes from FIRESTORE_DATABASE_ID plus a
+        # separate Cloud Run service, not from a separate identity.
+        --service-account "agent-app-sa@${PROJECT_ID}.iam.gserviceaccount.com"
     )
     # Point the proxy at the Agent Engine. deployment_metadata.json is kept
     # current by agents-cli on every agent deploy, so it is the source of
@@ -97,6 +123,40 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
         # not parsed by gcloud as separate env-var assignments.
         DEPLOY_ARGS+=(--update-env-vars "^##^CORS_ORIGINS=${CORS_ORIGINS}")
     fi
+
+    # ── Access gate (docs/access_control.md) ─────────────────────────────────
+    # Only forwarded when present in the environment, so a partial deploy never
+    # blanks a value already set on the service. The two secrets are the ones
+    # that matter: without ACCESS_SIGNING_SECRET every cold start signs all
+    # users out, and without ADMIN_TOKEN the dashboard answers 503.
+    # FIRESTORE_DATABASE_ID is here so a staging service can be pointed at its
+    # own database; unset, proxy/access.py defaults to "tracerlensai" and
+    # staging shares production's records. SMTP_* mirrors RESEND_API_KEY as the
+    # alternative mail transport.
+    for VAR in ACCESS_SIGNING_SECRET ADMIN_TOKEN RESEND_API_KEY \
+               SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD \
+               ACCESS_NOTIFY_EMAIL ACCESS_FROM_EMAIL APP_URL \
+               FIRESTORE_DATABASE_ID \
+               ACCESS_TOKEN_LIMIT ACCESS_TOKEN_GRANT \
+               CHAT_RETENTION_HOURS RUN_METRICS_RETENTION_DAYS; do
+        if [ -n "${!VAR:-}" ]; then
+            DEPLOY_ARGS+=(--update-env-vars "${VAR}=${!VAR}")
+        fi
+    done
+    if [ -z "${ACCESS_SIGNING_SECRET:-}" ]; then
+        echo "WARNING: ACCESS_SIGNING_SECRET is not set in this environment." >&2
+        echo "         Leaving whatever the service already has. If it has none," >&2
+        echo "         every cold start invalidates all sessions." >&2
+    fi
+    if [ -z "${APP_URL:-}" ]; then
+        echo "WARNING: APP_URL is not set in this environment." >&2
+        echo "         Leaving whatever the service already has. If it has none," >&2
+        echo "         the revision now refuses to start rather than mail out" >&2
+        echo "         sign-in links pointing at http://localhost:8080." >&2
+        echo "         Set it to the public origin, e.g.:" >&2
+        echo "           export APP_URL=https://tracerlensai.com" >&2
+    fi
+
     gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_ARGS[@]}"
 fi
 
@@ -114,4 +174,18 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "hosting" ]; then
     fi
 fi
 
-echo "✅ Deployment finished. Live at https://tracerlensai.com"
+# Report what was actually deployed. A dev or preview run targets a different
+# Cloud Run service via DEPLOY_SERVICE_NAME and never touches Firebase
+# Hosting, so claiming the live domain unconditionally would tell a preview
+# deploy it had just published production.
+if [ "$ONLY" = "hosting" ] || { [ "$ONLY" = "all" ] && [ "${SERVICE_NAME}" = "tracerlensai-app" ]; }; then
+    echo "✅ Deployment finished. Live at https://tracerlensai.com"
+elif [ "${SERVICE_NAME}" = "tracerlensai-app" ]; then
+    echo "✅ Deployment finished. Service ${SERVICE_NAME} (${REGION}) — serving https://tracerlensai.com"
+else
+    SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+        --region "${REGION}" --project "${PROJECT_ID}" \
+        --format='value(status.url)' 2>/dev/null || true)
+    echo "✅ Deployment finished. Service ${SERVICE_NAME} (${REGION})${SERVICE_URL:+ — ${SERVICE_URL}}"
+    echo "   Production (https://tracerlensai.com) was not touched."
+fi

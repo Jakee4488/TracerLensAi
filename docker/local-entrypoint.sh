@@ -12,6 +12,14 @@ set -e
 if [ "$MODE" = "mock" ]; then
     echo "[local-entrypoint] MODE=mock Ã¢â‚¬â€ AGENT_ENGINE_ENDPOINT left unset; proxy serves its built-in canned responses."
     unset AGENT_ENGINE_ENDPOINT
+    # The access gate reads a record on every request, so without an in-memory
+    # store mock mode would still need Firestore credentials just to open the
+    # chat. Approve yourself from the link printed in these logs.
+    export ACCESS_STORE="${ACCESS_STORE:-memory}"
+    export ADMIN_TOKEN="${ADMIN_TOKEN:-local-admin}"
+    export APP_URL="${APP_URL:-http://localhost:8080}"
+    echo "[local-entrypoint] ACCESS_STORE=$ACCESS_STORE — access records are in-memory and reset on restart."
+    echo "[local-entrypoint] Emails are printed here, not sent. Admin dashboard: $APP_URL/admin (password: $ADMIN_TOKEN)"
 elif [ -z "$AGENT_ENGINE_ENDPOINT" ] && [ -f /app/deployment_metadata.json ]; then
     ENGINE_ID=$(sed -n 's/.*"remote_agent_runtime_id": *"\([^"]*\)".*/\1/p' /app/deployment_metadata.json)
     if [ -n "$ENGINE_ID" ]; then

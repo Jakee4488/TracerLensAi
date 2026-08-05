@@ -9,6 +9,9 @@ interface Props {
   onStop?: () => void;
   isSending?: boolean;
   disabled: boolean;
+  /** Behind the access gate: the whole composer is inert, not just Send. */
+  locked?: boolean;
+  onUnlock?: () => void;
   attachments: Attachment[];
   onFiles: (files: FileList | null) => void;
   onRemoveAttachment: (localId: string) => void;
@@ -36,6 +39,8 @@ export function Composer({
   onStop,
   isSending,
   disabled,
+  locked = false,
+  onUnlock,
   attachments,
   onFiles,
   onRemoveAttachment,
@@ -59,12 +64,13 @@ export function Composer({
             <Chip key={att.localId} att={att} onRemove={() => onRemoveAttachment(att.localId)} />
           ))}
         </div>
-        <div className="input-pill">
+        <div className={locked ? "input-pill locked" : "input-pill"} onClick={locked ? onUnlock : undefined}>
           <button
             className="attach-btn"
             id="attach-btn"
             aria-label="Attach files"
             title="Attach files"
+            disabled={locked}
             onClick={() => fileInputRef.current?.click()}
           >
             +
@@ -85,7 +91,10 @@ export function Composer({
             id="chat-input"
             rows={1}
             ref={textareaRef}
-            placeholder="Ask about cause and effect… (Enter to send, Shift+Enter for newline)"
+            disabled={locked}
+            placeholder={locked
+              ? "Log in with your email to use the agent"
+              : "Ask about cause and effect… (Enter to send, Shift+Enter for newline)"}
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => {

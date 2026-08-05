@@ -1,15 +1,20 @@
-import { signIn, signOutUser, type User } from "../lib/firebase";
+import type { Access } from "../hooks/useAccess";
+import { ProfileMenu } from "./ProfileMenu";
 
 interface Props {
   onToggleSidebar: () => void;
   tokenTally: number;
-  user: User | null;
+  access: Access;
+  onLogin: () => void;
+  onRequestTokens: () => void;
 }
 
 export function ChatHeader({
   onToggleSidebar,
   tokenTally,
-  user,
+  access,
+  onLogin,
+  onRequestTokens,
 }: Props) {
   return (
     <header className="chat-header">
@@ -29,21 +34,13 @@ export function ChatHeader({
       </span>
 
       <div className="header-controls">
-        <button
-          className="signin-btn"
-          id="sign-in-btn"
-          style={user ? { display: "none" } : undefined}
-          onClick={signIn}
-        >
-          Sign in with Google
-        </button>
-        <div className="user-chip" id="user-chip" style={user ? { display: "flex" } : { display: "none" }}>
-          <img id="user-avatar" alt="" referrerPolicy="no-referrer" src={user?.photoURL || ""} />
-          <span id="user-name">{user?.displayName || user?.email || ""}</span>
-          <button id="sign-out-btn" onClick={signOutUser}>
-            Sign out
+        {access.approved ? (
+          <ProfileMenu access={access} onRequestTokens={onRequestTokens} />
+        ) : (
+          <button className="signin-btn" id="sign-in-btn" onClick={onLogin}>
+            Login
           </button>
-        </div>
+        )}
       </div>
     </header>
   );

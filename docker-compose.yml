@@ -39,6 +39,33 @@ services:
       - GOOGLE_CLOUD_REGION=europe-west2
       - GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json
 
+      # ── Access gate ──────────────────────────────────────────────────────
+      # Bare names, NOT `KEY=${KEY:-}`. Compose omits a bare name entirely when
+      # it isn't set in the invoking shell, whereas the `:-` form always sets
+      # it — to the empty string. That distinction matters here because
+      # proxy/access.py reads these with os.getenv(name, default), and getenv
+      # only falls back when a variable is *absent*. Passing an empty
+      # ACCESS_NOTIFY_EMAIL therefore silently overrides the built-in default
+      # and addresses the approval email to nobody.
+      #
+      # Set them on the command line for a live run, e.g.
+      #   MODE=real ADMIN_TOKEN=... docker compose up -d
+      # MODE=mock forces ACCESS_STORE/ADMIN_TOKEN/APP_URL in
+      # docker/local-entrypoint.sh, so mock mode needs none of them.
+      - RESEND_API_KEY
+      - SMTP_HOST
+      - SMTP_PORT
+      - SMTP_USER
+      - SMTP_PASSWORD
+      - ACCESS_NOTIFY_EMAIL
+      - ACCESS_FROM_EMAIL
+      - ACCESS_SIGNING_SECRET
+      - ADMIN_TOKEN
+      - ACCESS_STORE
+      # Sign-in and admin links are built from this, so it must be the origin
+      # you actually open in the browser — not the production domain.
+      - APP_URL=${APP_URL:-http://localhost:8080}
+
     volumes:
       - ./deployment_metadata.json:/app/deployment_metadata.json:ro
       - ./docker/local-entrypoint.sh:/entrypoint.sh:ro

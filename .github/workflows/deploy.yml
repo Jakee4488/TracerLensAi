@@ -29,15 +29,27 @@ on:
           - proxy
           - hosting
 
+# PROJECT_ID and REGION stay here rather than in the production Environment:
+# all three environments share one GCP project and region, so scoping them
+# would imply a difference that doesn't exist. Only values that genuinely
+# differ per stage (or want protecting) live on the Environment.
 env:
   PROJECT_ID: 'icarus-agent-26'
   REGION: 'europe-west2'
-  APP_URL: 'https://tracerlensai.com'
 
 jobs:
   deploy:
     name: "Deploy Agent Engine → Cloud Run → Firebase Hosting"
     runs-on: ubuntu-latest
+    # Binds the job to the `production` GitHub Environment, so same-named
+    # secrets and variables defined there shadow the repo-level ones. That is
+    # what lets every ${{ secrets.* }} expression below stay untouched while
+    # dev and staging resolve entirely different values from their own
+    # Environments. It also makes GitHub's Environment protection rules (e.g.
+    # restricting deployments to `main`) applicable to this job.
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
 
     # id-token: Workload Identity Federation. deployments: GitHub Deployment
     # record linking the run to https://tracerlensai.com.
@@ -95,6 +107,23 @@ jobs:
       - name: Deploy
         id: deploy
         continue-on-error: true
+        # Access-gate configuration (docs/access_control.md). deploy_to_gcp.sh
+        # forwards each of these to Cloud Run only when non-empty, so an
+        # unconfigured secret leaves the service's current value alone rather
+        # than blanking it. Set the secrets in the repo before the first
+        # deploy: without ACCESS_SIGNING_SECRET every cold start signs all
+        # visitors out, and without ADMIN_TOKEN /admin answers 503.
+        env:
+          ACCESS_SIGNING_SECRET: ${{ secrets.ACCESS_SIGNING_SECRET }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ACCESS_NOTIFY_EMAIL: ${{ vars.ACCESS_NOTIFY_EMAIL }}
+          ACCESS_FROM_EMAIL: ${{ vars.ACCESS_FROM_EMAIL }}
+          # From the production Environment, matching how dev and staging get
+          # theirs. FIRESTORE_DATABASE_ID is deliberately absent: access.py
+          # already defaults to "tracerlensai", and deploy_to_gcp.sh forwards
+          # only non-empty values, so omitting it cannot blank what is live.
+          APP_URL: ${{ vars.APP_URL }}
         run: |
           chmod +x deploy_to_gcp.sh
           set +e
@@ -117,7 +146,7 @@ jobs:
         env:
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
           DEPLOYMENT_ID: ${{ steps.create_deployment.outputs.deployment_id }}
-          APP_URL: ${{ env.APP_URL }}
+          APP_URL: ${{ vars.APP_URL }}
         with:
           script: |
             const state = process.env.DEPLOY_OUTCOME === 'success' ? 'success' : 'failure';

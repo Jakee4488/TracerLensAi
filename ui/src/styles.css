@@ -544,44 +544,6 @@ html[data-theme="light"] .token-badge {
     transform: translateY(1px);
 }
 
-.user-chip {
-    display: none;
-    align-items: center;
-    gap: 8px;
-}
-
-.user-chip img {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    border: 1px solid var(--glass-border);
-}
-
-.user-chip span {
-    font-size: 12.5px;
-    color: var(--text-1);
-    max-width: 140px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.user-chip button {
-    font-size: 11.5px;
-    color: var(--text-2);
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 5px 11px;
-    cursor: pointer;
-    transition: color var(--t-fast), border-color var(--t-fast);
-}
-
-.user-chip button:hover {
-    color: var(--text-1);
-    border-color: var(--err);
-}
-
 /* ── Messages ──────────────────────────────────────────────────────────── */
 
 .messages {
@@ -3080,4 +3042,415 @@ button.stage-head:hover .stage-label {
     color: var(--text-1);
     background: color-mix(in srgb, var(--cyan) 16%, transparent);
     border-radius: 3px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Access gate — login / approval / quota modal, and the profile menu.
+   All colour comes from the existing tokens, so light and dark work for free.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.access-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(4, 6, 12, 0.72);
+    backdrop-filter: blur(3px);
+    animation: fade-in var(--t-med) var(--ease-out);
+}
+
+.access-modal {
+    position: fixed;
+    z-index: 61;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(440px, calc(100vw - 32px));
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding: 28px;
+    background: var(--surface-1);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), var(--glow-md);
+    animation: access-in var(--t-med) var(--ease-spring);
+}
+
+.access-modal:focus {
+    outline: none;
+}
+
+@keyframes access-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -46%) scale(0.97);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+.access-close {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    font-size: 19px;
+    line-height: 1;
+    color: var(--text-3);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color var(--t-fast), background var(--t-fast);
+}
+
+.access-close:hover {
+    color: var(--text-1);
+    background: var(--glass-bg);
+}
+
+.access-title {
+    margin: 0 0 10px;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    background: var(--grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.access-lede {
+    margin: 0 0 18px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text-2);
+}
+
+.access-lede strong {
+    color: var(--text-1);
+    font-weight: 600;
+}
+
+.access-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-2);
+}
+
+.access-optional {
+    font-weight: 400;
+    color: var(--text-3);
+}
+
+.access-input {
+    width: 100%;
+    padding: 11px 13px;
+    margin-bottom: 14px;
+    font: inherit;
+    font-size: 14px;
+    color: var(--text-1);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.access-input:focus {
+    outline: none;
+    border-color: var(--cyan);
+    box-shadow: var(--glow-sm);
+}
+
+.access-textarea {
+    resize: vertical;
+    min-height: 72px;
+    line-height: 1.5;
+}
+
+.access-primary {
+    width: 100%;
+    padding: 11px 18px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: #06121a;
+    background: var(--grad);
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: box-shadow var(--t-fast), transform var(--t-fast), opacity var(--t-fast);
+}
+
+.access-primary:hover:not(:disabled) {
+    box-shadow: var(--glow-md);
+}
+
+.access-primary:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.access-primary:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.access-secondary {
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-2);
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.access-secondary:hover {
+    color: var(--text-1);
+    border-color: var(--cyan);
+}
+
+.access-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.access-error {
+    margin: 12px 0 0;
+    font-size: 12.5px;
+    color: var(--err);
+}
+
+/* Secondary guidance under the resend control — quieter than the lede, and
+   not an error, so it must not read as one. */
+.access-hint {
+    margin: 12px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-3);
+}
+
+.access-privacy {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-3);
+}
+
+.access-privacy summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-2);
+    list-style: none;
+}
+
+.access-privacy summary::-webkit-details-marker {
+    display: none;
+}
+
+.access-privacy summary::before {
+    content: "\25B8  ";
+    color: var(--cyan);
+}
+
+.access-privacy[open] summary::before {
+    content: "\25BE  ";
+}
+
+.access-privacy p {
+    margin: 12px 0 0;
+}
+
+.access-privacy strong {
+    color: var(--text-2);
+}
+
+.access-privacy a {
+    color: var(--cyan);
+}
+
+/* ── Usage bar (shared by the modal and the profile menu) ───────────────── */
+
+.usage-bar {
+    height: 6px;
+    margin-bottom: 16px;
+    background: var(--surface-3);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.usage-bar-fill {
+    height: 100%;
+    background: var(--grad);
+    border-radius: 999px;
+    transition: width var(--t-med) var(--ease-out);
+}
+
+/* ── Profile menu ──────────────────────────────────────────────────────── */
+
+.profile-wrap {
+    position: relative;
+}
+
+.profile-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px 4px 4px;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--text-1);
+    background: var(--glass-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.profile-btn:hover {
+    border-color: var(--cyan);
+    box-shadow: var(--glow-sm);
+}
+
+.profile-avatar {
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: #06121a;
+    background: var(--grad);
+    border-radius: 50%;
+}
+
+.profile-email {
+    max-width: 150px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.profile-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 50;
+    width: 260px;
+    padding: 8px;
+    background: var(--surface-1);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+    animation: fade-in var(--t-fast) var(--ease-out);
+}
+
+.profile-header {
+    padding: 8px 10px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-1);
+    word-break: break-all;
+}
+
+.profile-usage {
+    padding: 10px;
+    margin-bottom: 4px;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+}
+
+.profile-usage-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--text-2);
+}
+
+.profile-usage-row strong {
+    font-size: 14px;
+    color: var(--text-1);
+}
+
+.profile-usage .usage-bar {
+    margin-bottom: 6px;
+}
+
+.profile-usage-sub {
+    font-size: 11px;
+    color: var(--text-3);
+}
+
+.profile-item {
+    display: block;
+    width: 100%;
+    padding: 9px 10px;
+    text-align: left;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-2);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--t-fast), color var(--t-fast);
+}
+
+.profile-item:hover {
+    background: var(--glass-bg);
+    color: var(--text-1);
+}
+
+.profile-item.danger:hover {
+    color: var(--err);
+}
+
+.profile-note {
+    padding: 9px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--warn);
+}
+
+.profile-footer {
+    padding: 10px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-3);
+}
+
+/* ── Locked composer ───────────────────────────────────────────────────── */
+
+.input-pill.locked {
+    opacity: 0.55;
+    cursor: pointer;
+}
+
+.input-pill.locked #chat-input {
+    cursor: pointer;
+}
+
+.history-retention {
+    margin-top: 10px;
+    padding: 0 4px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--text-3);
 }

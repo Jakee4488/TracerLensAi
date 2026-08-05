@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AccessGate } from "./components/AccessGate";
 import { ChatHeader } from "./components/ChatHeader";
 import { Composer } from "./components/Composer";
 import { DropOverlay } from "./components/DropOverlay";
 import { MessageList } from "./components/MessageList";
 import { Sidebar } from "./components/Sidebar";
 import { CausalPanel } from "./components/causal/CausalPanel";
+import { useAccess } from "./hooks/useAccess";
 import { useAttachments } from "./hooks/useAttachments";
 import { useHistory } from "./hooks/useHistory";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useRunProgress } from "./hooks/useRunProgress";
-import { analyzePrompt, fetchConversation, setTokenGetter } from "./lib/api";
+import { AccessError, analyzePrompt, fetchConversation } from "./lib/api";
 import { hasCausalContent } from "./components/causal/CausalPanel";
 import { finalizeStages } from "./lib/stages";
-import { getIdToken, watchAuth, type User } from "./lib/firebase";
 import { generateRunId, generateSessionId, nextMessageKey } from "./lib/ids";
 import { applyTheme, currentTheme, type Theme } from "./lib/theme";
 import type { ChatMessage, Report } from "./types";
@@ -36,8 +37,6 @@ const CHAT_MIN_WIDTH = 420;
 const PANE_MIN_WIDTH = 300;
 const PANE_MAX_WIDTH = 800;
 
-setTokenGetter(getIdToken);
-
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([greetingMessage()]);
   const [input, setInput] = useState("");
@@ -50,8 +49,8 @@ export default function App() {
   const [model, setModel] = useState("gemini-2.5-flash");
   const [causal, setCausal] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
-  
+  const [showExtension, setShowExtension] = useState(false);
+
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [rightPaneWidth, setRightPaneWidth] = useState(450);
   const [isResizing, setIsResizing] = useState(false);
@@ -59,20 +58,17 @@ export default function App() {
   const isSendingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const chatIdRef = useRef<string | null>(null);
+  const access = useAccess();
   const { attachments, handleFiles, remove, clear } = useAttachments();
   const history = useHistory();
   const run = useRunProgress();
 
+  const { approved, applyRefusal, logOut } = access;
   const { reload: reloadHistory, reset: resetHistory } = history;
-  useEffect(
-    () =>
-      watchAuth((nextUser) => {
-        setUser(nextUser);
-        if (nextUser) void reloadHistory();
-        else resetHistory();
-      }),
-    [reloadHistory, resetHistory],
-  );
+  useEffect(() => {
+    if (approved) void reloadHistory();
+    else resetHistory();
+  }, [approved, reloadHistory, resetHistory]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => {
@@ -123,6 +119,9 @@ export default function App() {
   const send = useCallback(async (overrideText?: string) => {
     const text = (typeof overrideText === "string" ? overrideText : input).trim();
     if (!text || isSendingRef.current) return;
+    // The gate is enforced server-side; this just keeps the modal in front of
+    // someone who got here without a session instead of firing a doomed request.
+    if (!approved) return;
 
     setInput("");
     if (!chatIdRef.current) chatIdRef.current = generateSessionId();
@@ -182,7 +181,11 @@ export default function App() {
       clear();
       void reloadHistory();
     } catch (error) {
-      if ((error as Error).name !== "AbortError") {
+      if (error instanceof AccessError) {
+        // Running out of quota, or losing a session, is a state — not a failed
+        // turn — so it raises the right modal instead of an error bubble.
+        applyRefusal(error);
+      } else if ((error as Error).name !== "AbortError") {
         console.error(error);
         append({
           key: nextMessageKey("error"),
@@ -196,7 +199,8 @@ export default function App() {
       isSendingRef.current = false;
       abortControllerRef.current = null;
     }
-  }, [input, attachments, causal, webSearch, model, append, clear, reloadHistory, run]);
+  }, [input, attachments, causal, webSearch, model, approved, applyRefusal,
+      append, clear, reloadHistory, run]);
 
   const openConversation = useCallback(async (chatId: string) => {
     try {
@@ -262,7 +266,7 @@ export default function App() {
     >
       <Sidebar
         collapsed={sidebarCollapsed}
-        signedIn={!!user}
+        signedIn={approved}
         conversations={history.conversations}
         hasMore={history.hasMore}
         onSelect={openConversation}
@@ -282,7 +286,11 @@ export default function App() {
         <ChatHeader
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           tokenTally={tokenTally}
-          user={user}
+          access={access}
+          // Resetting to the signed-out state is what surfaces the login form;
+          // the gate modal is driven entirely by access status.
+          onLogin={logOut}
+          onRequestTokens={() => setShowExtension(true)}
         />
 
         <MessageList
@@ -301,13 +309,15 @@ export default function App() {
           onSend={send}
           onStop={stop}
           isSending={isSending}
-          disabled={isSending || (!input.trim() && attachments.length === 0)}
+          disabled={!approved || isSending || (!input.trim() && attachments.length === 0)}
+          locked={!approved}
+          onUnlock={logOut}
           attachments={attachments}
           onFiles={handleFiles}
           onRemoveAttachment={remove}
         />
 
-        <DropOverlay onFiles={handleFiles} />
+        {approved && <DropOverlay onFiles={handleFiles} />}
       </main>
 
       {showRightPane && (
@@ -328,6 +338,12 @@ export default function App() {
           </aside>
         </>
       )}
+
+      <AccessGate
+        access={access}
+        showExtension={showExtension}
+        onCloseExtension={() => setShowExtension(false)}
+      />
     </div>
   );
 }

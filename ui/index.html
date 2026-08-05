@@ -17,18 +17,28 @@
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"
         rel="stylesheet">
 
-    <!-- API base for backend calls. Empty = same-origin. In production the UI
-         is served by Firebase Hosting, so it targets the Cloud Run URL directly
-         to bypass Hosting's 60s cap on long causal runs. Served from localhost
-         the proxy is the origin, so same-origin is both correct and what the
-         E2E suite exercises — pointing local runs at production would send dev
-         traffic to the live service. -->
+    <!-- API base for backend calls. Empty = same-origin.
+
+         Only the production custom domain is served through Firebase
+         Hosting, which caps a request at 60s — too short for a long causal
+         run — so only there does the UI need to bypass Hosting and call
+         Cloud Run directly. Every other origin (localhost, the E2E suite,
+         production's own Cloud Run URL accessed directly, and every
+         dev/staging preview from .github/workflows/deploy-{dev,staging}.yml)
+         already serves the UI and the API from the same origin — pointing
+         those at a hardcoded different origin instead sends the request
+         cross-origin, where CORS_ORIGINS on the target rejects it outright
+         (a preview's origin is never on that allow-list) and every API call
+         fails with an opaque "Failed to fetch". This used to be a plain
+         `!isLocal` check, which happened to work only because the sole
+         non-local deployment target was production itself; it broke the
+         moment a second Cloud Run service existed. -->
     <script>
         (function () {
-            var isLocal = ["localhost", "127.0.0.1", "[::1]"].indexOf(location.hostname) !== -1;
-            window.TRACERLENS_API_BASE = isLocal
-                ? ""
-                : "https://tracerlensai-app-gi2oexvg3a-nw.a.run.app";
+            var PRODUCTION_HOSTING_DOMAINS = ["tracerlensai.com", "www.tracerlensai.com"];
+            window.TRACERLENS_API_BASE = PRODUCTION_HOSTING_DOMAINS.indexOf(location.hostname) !== -1
+                ? "https://tracerlensai-app-gi2oexvg3a-nw.a.run.app"
+                : "";
         })();
     </script>
 </head>

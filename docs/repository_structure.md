@@ -90,7 +90,7 @@ ui/
 │   │   └── useRunProgress.ts        # SSE → Stage[] + live CausalGraph state
 │   └── lib/
 │       ├── api.ts                   # analyzePrompt (SSE + AbortSignal), uploadFile, fetchHistory
-│       ├── firebase.ts              # Firebase Auth (watchAuth, getIdToken, sign-in/out)
+│       ├── access.ts                # Access session (localStorage, sign-in link capture)
 │       ├── graph.ts                 # buildReactFlowGraph: CausalGraph → ReactFlow + Dagre layout
 │       ├── ids.ts                   # generateSessionId, nextMessageKey, getAnonId
 │       ├── markdown.ts              # renderMarkdown: marked + DOMPurify + highlight.js

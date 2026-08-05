@@ -1,0 +1,169 @@
+# =============================================================================
+# deploy-dev.yml — CD: every non-main push lands on a shared dev URL
+#
+# Trigger : push to any branch except main.
+# Target  : ONE shared Cloud Run service, tracerlensai-app-dev. Deliberately
+#           not one-per-branch — the most recent push from *any* branch
+#           overwrites this same URL. When you need an isolated URL that
+#           won't be trampled, open a PR against main: deploy-staging.yml
+#           gives each PR its own service.
+# Stages  : deploy_to_gcp.sh --only proxy. Never `hosting` (firebase.json has
+#           a single unnamed site whose rewrite points at the production
+#           service, so deploying it republishes the live domain) and never
+#           `agent` (agents-cli updates the one shared Vertex AI Agent Engine
+#           in place — there is no dev engine).
+#
+#           Consequence worth remembering: changes under src/ are NOT
+#           exercised here. Dev and staging both talk to whatever engine
+#           production last deployed, so agent-side changes are only tested
+#           for real once they reach main.
+#
+# Config comes from the `development` GitHub Environment. Secret names are
+# unprefixed and identical across all three environments — GitHub resolves
+# them from whichever Environment the job declares.
+# =============================================================================
+name: "Dev — Deploy branch to shared preview URL"
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+# One shared target, so runs must not overlap. This serialises racing pushes;
+# it does not stop a later push replacing an earlier one, which is the
+# intended behaviour for a rolling dev URL.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: 'icarus-agent-26'
+  REGION: 'europe-west2'
+  SERVICE_NAME: 'tracerlensai-app-dev'
+
+jobs:
+  deploy-dev:
+    name: "Deploy ${{ github.ref_name }} to dev"
+    runs-on: ubuntu-latest
+    environment:
+      name: development
+      url: ${{ steps.preview.outputs.url }}
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      deployments: 'write'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Google Auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ vars.GCP_SERVICE_ACCOUNT }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create .env for deploy_to_gcp.sh
+        run: |
+          echo "GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" > .env
+          echo "GOOGLE_CLOUD_REGION=${{ env.REGION }}" >> .env
+
+      - name: Look up existing dev URL
+        id: existing
+        # APP_URL has to be known before the deploy: proxy/main.py resolves it
+        # in its startup handler and the revision refuses to boot without one,
+        # so a service cannot simply be deployed blank and fixed afterwards.
+        # On the first ever run this comes back empty and the deploy below
+        # uses a placeholder, which the next step corrects.
+        run: |
+          URL=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
+            --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" \
+            --format='value(status.url)' 2>/dev/null || true)
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          if [ -n "$URL" ]; then
+            echo "Existing dev URL: $URL"
+          else
+            echo "First-ever deploy of ${{ env.SERVICE_NAME }}."
+          fi
+
+      - name: Deploy proxy to dev service
+        env:
+          DEPLOY_SERVICE_NAME: ${{ env.SERVICE_NAME }}
+          ACCESS_SIGNING_SECRET: ${{ secrets.ACCESS_SIGNING_SECRET }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ACCESS_NOTIFY_EMAIL: ${{ vars.ACCESS_NOTIFY_EMAIL }}
+          ACCESS_FROM_EMAIL: ${{ vars.ACCESS_FROM_EMAIL }}
+          # Set to tracerlensai-dev on the development Environment, so dev
+          # approvals and quota never touch production's access records.
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+          # Placeholder only on a first deploy; corrected below. Deliberately
+          # not a localhost URL, which the startup guard rejects outright.
+          APP_URL: ${{ steps.existing.outputs.url || 'https://dev-url-pending.invalid' }}
+        run: |
+          chmod +x deploy_to_gcp.sh
+          ./deploy_to_gcp.sh --only proxy
+
+      - name: Resolve dev URL and correct APP_URL
+        id: preview
+        # Every emailed sign-in link is built from APP_URL, so a first deploy
+        # has to have the placeholder replaced before anyone tries to sign in.
+        run: |
+          URL=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
+            --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" \
+            --format='value(status.url)')
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          if [ "$URL" != "${{ steps.existing.outputs.url }}" ]; then
+            echo "Setting APP_URL=${URL}"
+            gcloud run services update "${{ env.SERVICE_NAME }}" \
+              --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" \
+              --update-env-vars "APP_URL=${URL}" --quiet
+          fi
+
+      - name: Smoke test
+        # Catches the deploy that reports success over a crash-looping
+        # revision — including the APP_URL startup guard firing, which is
+        # precisely the class of mistake a preview tier exists to surface.
+        run: |
+          URL="${{ steps.preview.outputs.url }}"
+          for i in $(seq 1 10); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${URL}/health" || true)
+            [ "$CODE" = "200" ] && { echo "healthy"; break; }
+            echo "attempt $i: /health -> ${CODE:-no response}"; sleep 6
+          done
+          [ "$CODE" = "200" ] || { echo "::error title=Dev deploy unhealthy::${URL}/health returned ${CODE}"; exit 1; }
+          # The access gate must be on: an unauthenticated run has to be refused.
+          GATE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST "${URL}/analyze-prompt" \
+            -H 'Content-Type: application/json' -d '{"prompt":"ping","chat_id":"smoke"}' || true)
+          echo "unauthenticated /analyze-prompt -> ${GATE}"
+          case "$GATE" in
+            401|403) echo "gate enforced";;
+            *) echo "::error title=Gate not enforced::expected 401/403, got ${GATE}"; exit 1;;
+          esac
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Dev deployment"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Service | \`${{ env.SERVICE_NAME }}\` |"
+            echo "| URL | ${{ steps.preview.outputs.url }} |"
+            echo ""
+            echo "This URL is shared: the next push on **any** branch replaces it."
+            echo "For an isolated preview, open a PR against \`main\`."
+            echo ""
+            echo "Neither Firebase Hosting nor the shared Agent Engine was redeployed,"
+            echo "so chat responses still come from whatever production last deployed."
+          } >> "$GITHUB_STEP_SUMMARY"

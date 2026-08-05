@@ -43,7 +43,10 @@ def run_controller(state):
         assert len(events) == 1, "controller must yield exactly one event"
         state.update(events[0].actions.state_delta or {})
         return events[0]
-    return asyncio.get_event_loop().run_until_complete(_run())
+    # asyncio.run, not get_event_loop().run_until_complete: the latter only
+    # works while some *other* test has left a loop installed on this thread,
+    # so these tests passed or failed depending on what ran before them.
+    return asyncio.run(_run())
 
 
 DECOMPOSITION = json.dumps({
