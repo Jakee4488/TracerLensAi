@@ -116,9 +116,28 @@ jobs:
         env:
           ACCESS_SIGNING_SECRET: ${{ secrets.ACCESS_SIGNING_SECRET }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # Gmail SMTP, matching dev and staging — same account, same
+          # deliverability, one mail path to operate instead of two. In
+          # proxy/access.py's send_email(), SMTP is checked before Resend and
+          # wins whenever it's configured, so RESEND_API_KEY is deliberately
+          # not mapped here: keeping it would be dead weight, not a fallback —
+          # a failed SMTP send returns its own error rather than trying Resend
+          # next, so leaving RESEND_API_KEY wired up would not add resilience,
+          # only a second, unused credential to rotate and forget about.
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           ACCESS_NOTIFY_EMAIL: ${{ vars.ACCESS_NOTIFY_EMAIL }}
-          ACCESS_FROM_EMAIL: ${{ vars.ACCESS_FROM_EMAIL }}
+          # ACCESS_FROM_EMAIL is deliberately NOT set here, same reasoning as
+          # dev/staging: Gmail rewrites the From header to the authenticated
+          # mailbox regardless of what this claims, so from_email() is left to
+          # fall through to its SMTP_USER default — the one value that will
+          # actually match what Gmail sends as. Setting this to an
+          # @tracerlensai.com address while sending over Gmail SMTP would
+          # produce a From header that contradicts the envelope, which reads
+          # as spoofed rather than as branding.
+          #
           # From the production Environment, matching how dev and staging get
           # theirs. FIRESTORE_DATABASE_ID is deliberately absent: access.py
           # already defaults to "tracerlensai", and deploy_to_gcp.sh forwards
