@@ -228,6 +228,77 @@ def test_extension_approval_adds_a_grant(client: TestClient, fake_store, no_emai
                        headers=session_headers()).status_code == 200
 
 
+def test_approve_surfaces_a_failed_send_instead_of_lying(client: TestClient, fake_store,
+                                                          admin_headers, monkeypatch):
+    """Approving must not report success while the visitor has no way in."""
+    client.post("/auth/login", json={"email": TEST_EMAIL})
+
+    async def fails(to, subject, text, html=None):
+        return False, "smtp auth rejected"
+
+    monkeypatch.setattr(access, "send_email", fails)
+
+    response = client.post("/admin/access/approve", json={"email": TEST_EMAIL},
+                           headers=admin_headers)
+    assert response.status_code == 502
+    # The status change already stuck — that's the point of the error message:
+    # a retry option, not "approval failed" (which would be misleading).
+    assert access.get_record(TEST_EMAIL, cached=False)["status"] == "approved"
+    # Unlike /auth/login's visitor-facing 502, the caller here is already an
+    # authenticated admin — the raw transport reason is useful diagnostics,
+    # not a leak, so it's fine for it to appear in the detail.
+    assert "smtp auth rejected" in response.json()["detail"].lower()
+
+
+def test_deny_surfaces_a_failed_send(client: TestClient, fake_store, admin_headers, monkeypatch):
+    client.post("/auth/login", json={"email": TEST_EMAIL})
+
+    async def fails(to, subject, text, html=None):
+        return False, "smtp auth rejected"
+
+    monkeypatch.setattr(access, "send_email", fails)
+
+    response = client.post("/admin/access/deny", json={"email": TEST_EMAIL},
+                           headers=admin_headers)
+    assert response.status_code == 502
+    assert access.get_record(TEST_EMAIL, cached=False)["status"] == "denied"
+
+
+def test_grant_surfaces_a_failed_send(client: TestClient, fake_store, admin_headers, monkeypatch):
+    approve_email(tokens_used=200000, token_limit=200000)
+    client.post("/access/extension", json={"message": "more please"},
+                headers=session_headers())
+
+    async def fails(to, subject, text, html=None):
+        return False, "smtp auth rejected"
+
+    monkeypatch.setattr(access, "send_email", fails)
+
+    response = client.post("/admin/extension/approve", json={"email": TEST_EMAIL},
+                           headers=admin_headers)
+    assert response.status_code == 502
+    # The grant itself already landed, same as approve/deny.
+    assert access.get_record(TEST_EMAIL, cached=False)["token_limit"] == 400000
+
+
+def test_admin_act_link_renders_the_failure_not_a_crash(client: TestClient, fake_store,
+                                                         monkeypatch):
+    """The one-click email link path must not 500 on a failed notification."""
+    client.post("/auth/login", json={"email": TEST_EMAIL})
+
+    async def fails(to, subject, text, html=None):
+        return False, "smtp auth rejected"
+
+    monkeypatch.setattr(access, "send_email", fails)
+
+    approve = access.sign({"a": "approve", "email": TEST_EMAIL},
+                          access.PURPOSE_ADMIN_ACT, access.ADMIN_ACT_TTL_S)
+    response = client.get(f"/admin/act?t={approve}")
+    assert response.status_code == 502
+    assert "text/html" in response.headers["content-type"]
+    assert access.get_record(TEST_EMAIL, cached=False)["status"] == "approved"
+
+
 def test_admin_delete_removes_the_user(client: TestClient, fake_store, no_email, admin_headers):
     approve_email()
     client.post("/analyze-prompt", json={"prompt": "Hi", "chat_id": "c1"},

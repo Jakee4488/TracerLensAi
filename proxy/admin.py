@@ -206,13 +206,33 @@ class EmailBody(BaseModel):
     email: str
 
 
+def _require_sent(sent: bool, error: str, email: str, action: str) -> None:
+    """Raise on a failed send instead of reporting success either way.
+
+    Every one of these calls changes the record's status *before* attempting
+    to notify — set_status/grant_extension already committed by the time this
+    runs. So a failed send here does not roll that back; it makes the failure
+    visible instead of silently telling the admin "Approved" while the
+    visitor never got a way in. The dashboard's Alerts tab and /admin's
+    printed-email fallback are the recovery paths this points them at.
+    """
+    if not sent:
+        access.log(f"ERROR event={action}_email_failed email={email} {error}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"{action.title()} recorded, but the email failed to send "
+                   f"({error}). The status change stuck — retry the notification "
+                   f"from the Alerts tab, or resend from the dashboard.")
+
+
 async def _approve(email: str) -> dict:
     """Approve and immediately email a sign-in link — approve, click, in."""
     record = access.set_status(email, "approved")
     if record is None:
         raise HTTPException(status_code=404, detail="No such request")
     nonce = access.issue_login_nonce(email)
-    await access.send_approval_email(email, access.login_link(email, nonce))
+    sent, error = await access.send_approval_email(email, access.login_link(email, nonce))
+    _require_sent(sent, error, email, "approve")
     return {"status": "approved", "email": email}
 
 
@@ -220,7 +240,8 @@ async def _deny(email: str) -> dict:
     record = access.set_status(email, "denied")
     if record is None:
         raise HTTPException(status_code=404, detail="No such request")
-    await access.send_denied_email(email)
+    sent, error = await access.send_denied_email(email)
+    _require_sent(sent, error, email, "deny")
     return {"status": "denied", "email": email}
 
 
@@ -229,7 +250,8 @@ async def _grant(email: str) -> dict:
     if record is None:
         raise HTTPException(status_code=404, detail="No such request")
     new_limit = int(record.get("token_limit", 0))
-    await access.send_extension_granted(email, new_limit)
+    sent, error = await access.send_extension_granted(email, new_limit)
+    _require_sent(sent, error, email, "grant")
     return {"status": "granted", "email": email, "token_limit": new_limit}
 
 

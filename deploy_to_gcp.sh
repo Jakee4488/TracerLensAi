@@ -87,6 +87,18 @@ if [ "$ONLY" = "all" ] || [ "$ONLY" = "proxy" ]; then
         --region "${REGION}"
         --project "${PROJECT_ID}"
         --allow-unauthenticated
+        # Explicit, not left to default: `gcloud run deploy` only preserves an
+        # existing service's service account on a REDEPLOY. The very first
+        # deploy of any new SERVICE_NAME (every dev push, every PR preview)
+        # falls back to the project's default Compute Engine SA, which has
+        # none of agent-app-sa's grants (datastore.user, aiplatform.user) —
+        # every Firestore write then fails with a 403 that has nothing to do
+        # with the code path that triggered it. Reusing the same runtime SA
+        # across all three tiers is safe: its Firestore role is project-scoped
+        # (applies to every named database, not just "tracerlensai"), and
+        # per-tier isolation already comes from FIRESTORE_DATABASE_ID plus a
+        # separate Cloud Run service, not from a separate identity.
+        --service-account "agent-app-sa@${PROJECT_ID}.iam.gserviceaccount.com"
     )
     # Point the proxy at the Agent Engine. deployment_metadata.json is kept
     # current by agents-cli on every agent deploy, so it is the source of
