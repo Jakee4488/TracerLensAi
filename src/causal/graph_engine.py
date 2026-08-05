@@ -104,15 +104,24 @@ class CausalTaskGraph:
         return cls(CausalGraph.model_validate(raw))
 
     def to_ui_graph(self) -> dict:
-        """The exact payload the proxy forwards to the UI."""
+        """The exact payload the proxy forwards to the UI.
+
+        Carries ``description`` and ``rationale``: the decomposer already
+        produces both (capped at 200 chars by the model validators) and they
+        are the only per-node and per-edge statement of *why* this component
+        and this link exist. They used to be dropped right here, so the most
+        directly explanatory fields in the schema never reached a reader.
+        """
         return {
             "nodes": [
-                {"id": c.id, "label": c.label, "kind": c.kind, "status": c.status}
+                {"id": c.id, "label": c.label, "kind": c.kind, "status": c.status,
+                 "description": c.description}
                 for c in self.model.components
             ],
             "edges": [
                 {"source": e.source, "target": e.target,
-                 "relation": e.relation, "confidence": e.confidence}
+                 "relation": e.relation, "confidence": e.confidence,
+                 "rationale": e.rationale}
                 for e in self.model.edges
             ],
             "critical_path": self.model.critical_path,

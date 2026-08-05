@@ -24,6 +24,7 @@ metrics). Both hold the minimum the feature needs and nothing else — no IP
 addresses, no prompt text, no user agents — because the privacy notice shown in
 the access modal promises exactly that.
 """
+import asyncio
 import base64
 import functools
 import hashlib
@@ -32,9 +33,12 @@ import json
 import os
 import re
 import secrets
+import smtplib
+import ssl
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from typing import NamedTuple, Optional
 
 import httpx
@@ -58,13 +62,23 @@ PURPOSE_ADMIN_ACT = "admin_act"
 PURPOSE_ADMIN_SESSION = "admin_session"
 
 LOGIN_LINK_TTL_S = 15 * 60
-SESSION_TTL_S = 30 * 24 * 60 * 60
+# 24 hours, paired with the UI holding the token in sessionStorage: closing the
+# browser ends the session, and a browser left open all week still expires.
+# Neither bound is sufficient alone — sessionStorage survives indefinitely in a
+# tab nobody closes, and a TTL alone leaves a live token on a shared machine.
+# Re-entry is cheap (one emailed link), so this costs little for the reduction
+# in how long a leaked token stays useful.
+SESSION_TTL_S = 24 * 60 * 60
 ADMIN_ACT_TTL_S = 7 * 24 * 60 * 60
 ADMIN_SESSION_TTL_S = 12 * 60 * 60
 
 # Don't re-email the admin every time an impatient visitor resubmits.
 NOTIFY_COOLDOWN_S = 15 * 60
 NOTIFY_MAX_ATTEMPTS = 5
+# Per-address gap between sign-in link resends. Matches the admin OTP cooldown.
+# Without it a held-down button turns a personal Gmail into a bulk sender,
+# against a ~500/day cap and a spam reputation that is hard to win back.
+RESEND_COOLDOWN_S = 30
 
 _RECORD_CACHE_TTL_S = 30.0
 
@@ -95,11 +109,65 @@ def notify_email() -> str:
 
 
 def from_email() -> str:
-    return os.getenv("ACCESS_FROM_EMAIL", "Tracer Lens <onboarding@resend.dev>")
+    explicit = os.getenv("ACCESS_FROM_EMAIL")
+    if explicit:
+        return explicit
+    # Over SMTP the provider rewrites From to the authenticated mailbox anyway
+    # (Gmail silently replaces a mismatched sender), so defaulting to the login
+    # account is what the recipient will actually see. Falling back to the
+    # Resend sandbox sender here would produce a header that contradicts the
+    # envelope and reads as spoofed.
+    smtp = _smtp_config()
+    if smtp:
+        return f"Tracer Lens <{smtp.user}>"
+    return "Tracer Lens <onboarding@resend.dev>"
+
+
+LOCAL_APP_URL = "http://localhost:8080"
+
+
+class AppUrlNotConfigured(RuntimeError):
+    """APP_URL is missing somewhere its absence would break every sign-in."""
+
+
+def is_managed_runtime() -> bool:
+    """True on Cloud Run / Cloud Functions / App Engine.
+
+    Those runtimes set these themselves, so this needs no configuration of its
+    own — which matters, because a variable you must remember to set cannot be
+    the thing that catches the variable you forgot to set.
+    """
+    return bool(os.getenv("K_SERVICE") or os.getenv("GAE_ENV")
+                or os.getenv("FUNCTION_TARGET"))
 
 
 def app_url() -> str:
-    return os.getenv("APP_URL", "http://localhost:8080").rstrip("/")
+    """Public origin every emailed link is built from.
+
+    Deliberately *not* derived from the request's Host header. Magic-link
+    email is the textbook target for host-header injection: an attacker sends
+    a login request carrying ``Host: evil.com``, the victim receives a mail
+    whose link points there, and clicking it hands the single-use token to the
+    attacker. The origin therefore comes from configuration only.
+
+    An empty value counts as unset — os.getenv(name, default) returns the empty
+    string rather than the default when a var is present but blank, which a
+    compose file or a CI secret that resolved to nothing produces easily, and
+    the resulting links would be rooted at ``/?auth=...`` with no origin.
+    """
+    configured = (os.getenv("APP_URL") or "").strip().rstrip("/")
+    if configured:
+        return configured
+    # Falling back to localhost in production would mail out links pointing at
+    # the recipient's own machine — delivered successfully, dead on arrival,
+    # and silent. Refusing is the safer failure.
+    if is_managed_runtime() and not os.getenv("ALLOW_LOCALHOST_APP_URL"):
+        raise AppUrlNotConfigured(
+            "APP_URL is not set, so every sign-in and admin link would point at "
+            "http://localhost:8080 instead of the real site. Set APP_URL to the "
+            "public origin (e.g. https://tracerlensai.com) on the service. To "
+            "override deliberately, set ALLOW_LOCALHOST_APP_URL=1.")
+    return LOCAL_APP_URL
 
 
 # ── Firestore ────────────────────────────────────────────────────────────────
@@ -634,19 +702,109 @@ def admin_action_link(action: str, email: str) -> str:
 
 # ── Notifications ────────────────────────────────────────────────────────────
 
-async def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> tuple:
-    """Send via Resend. Returns ``(sent, error)``.
+class _SmtpConfig(NamedTuple):
+    host: str
+    port: int
+    user: str
+    password: str
 
-    With RESEND_API_KEY unset the message is printed instead — that is what
-    lets mock mode, CI, and the E2E suite exercise the whole approval flow
-    without a single secret configured.
+
+def _smtp_config() -> Optional[_SmtpConfig]:
+    """SMTP settings, or None when SMTP isn't configured.
+
+    All four parts must be present: a half-configured mailer that silently
+    falls through to a different transport is worse than one that is plainly
+    off, because the failure only shows up as mail arriving from the wrong
+    sender. SMTP_PORT defaults to 587 (STARTTLS), which is what Gmail,
+    Fastmail and Outlook all expect.
     """
+    host = os.getenv("SMTP_HOST")
+    user = os.getenv("SMTP_USER")
+    password = os.getenv("SMTP_PASSWORD")
+    if not (host and user and password):
+        return None
+    try:
+        port = int(os.getenv("SMTP_PORT", "587"))
+    except ValueError:
+        port = 587
+    return _SmtpConfig(host, port, user, password)
+
+
+def _send_via_smtp_blocking(cfg: _SmtpConfig, sender: str, to: str, subject: str,
+                            text: str, html: Optional[str]) -> tuple:
+    """Blocking SMTP send. Runs off the event loop via asyncio.to_thread.
+
+    Uses stdlib smtplib rather than adding a dependency, matching how the
+    signing code sticks to stdlib hmac.
+    """
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = to
+    message["Subject"] = subject
+    message.set_content(text)
+    if html:
+        # Both parts, so a plain-text client still gets the link — these mails
+        # exist to carry a URL, and an HTML-only body would strand anyone
+        # reading in a terminal client.
+        message.add_alternative(html, subtype="html")
+
+    context = ssl.create_default_context()
+    try:
+        if cfg.port == 465:
+            with smtplib.SMTP_SSL(cfg.host, cfg.port, context=context, timeout=20) as server:
+                server.login(cfg.user, cfg.password)
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(cfg.host, cfg.port, timeout=20) as server:
+                server.starttls(context=context)
+                server.login(cfg.user, cfg.password)
+                server.send_message(message)
+        return True, ""
+    except smtplib.SMTPAuthenticationError as e:
+        # By far the most common setup failure, and the raw message ("Username
+        # and Password not accepted") sends people to reset their password when
+        # the real answer is that Gmail needs an App Password.
+        return False, (f"smtp auth rejected for {cfg.user} — Gmail requires a 16-character "
+                       f"App Password (with 2-Step Verification on), not the account "
+                       f"password: {e}")
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+async def send_email(to: str, subject: str, text: str, html: Optional[str] = None) -> tuple:
+    """Send via SMTP or Resend. Returns ``(sent, error)``.
+
+    Transport precedence is SMTP → Resend → print, so configuring SMTP_* is
+    enough to route mail through a personal mailbox without touching the
+    Resend settings that a deployment may still carry.
+
+    With neither configured the message is printed instead — that is what lets
+    mock mode, CI, and the E2E suite exercise the whole approval flow without a
+    single secret configured.
+    """
+    if not to:
+        # getenv(name, default) only falls back when a variable is *absent*, so
+        # an empty ACCESS_NOTIFY_EMAIL (easy to produce from a compose file or
+        # a CI secret that resolved to nothing) would otherwise reach the
+        # provider as a send to nobody and fail far from its cause.
+        log("ERROR event=notify_failed reason=empty_recipient "
+            f"subject={subject!r}")
+        return False, "no recipient address configured"
+
+    smtp = _smtp_config()
+    if smtp:
+        sent, error = await asyncio.to_thread(
+            _send_via_smtp_blocking, smtp, from_email(), to, subject, text, html)
+        if not sent:
+            log(f"ERROR event=notify_failed to={to} {error}")
+        return sent, error
+
     api_key = os.getenv("RESEND_API_KEY")
     if not api_key:
         rule = "-" * 46
-        log(f"\n{rule}\nEMAIL (not sent, RESEND_API_KEY unset)\n"
+        log(f"\n{rule}\nEMAIL (not sent, no SMTP_* or RESEND_API_KEY configured)\n"
             f"To: {to}\nSubject: {subject}\n\n{text}\n{rule}\n")
-        return False, "RESEND_API_KEY unset"
+        return False, "no mail transport configured"
     payload = {"from": from_email(), "to": [to], "subject": subject, "text": text}
     if html:
         payload["html"] = html

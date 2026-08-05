@@ -1,5 +1,7 @@
 """The email gate: login, approval, quota, extensions, and erasure."""
 import json
+import time
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -431,3 +433,231 @@ def test_access_record_holds_only_what_the_notice_promises(client: TestClient, f
 def test_mock_turn_reports_the_token_split(client: TestClient, fake_store, approved):
     report = sse_report(client.post("/analyze-prompt", json=CHAT, headers=approved))
     assert report["total_token_count"] == 10
+
+
+# ── Mail transport ───────────────────────────────────────────────────────────
+
+def _smtp_env(monkeypatch, **overrides):
+    settings = {"SMTP_HOST": "smtp.gmail.com", "SMTP_PORT": "587",
+                "SMTP_USER": "owner@gmail.com", "SMTP_PASSWORD": "app-password"}
+    settings.update(overrides)
+    for key, value in settings.items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+
+
+def test_smtp_config_requires_every_part(monkeypatch):
+    """A half-configured mailer must read as off, not fall back silently."""
+    _smtp_env(monkeypatch)
+    assert access._smtp_config() is not None
+
+    for missing in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
+        _smtp_env(monkeypatch, **{missing: None})
+        assert access._smtp_config() is None, f"{missing} absent should disable SMTP"
+
+
+def test_smtp_port_defaults_and_survives_garbage(monkeypatch):
+    _smtp_env(monkeypatch, SMTP_PORT=None)
+    assert access._smtp_config().port == 587
+    _smtp_env(monkeypatch, SMTP_PORT="not-a-number")
+    assert access._smtp_config().port == 587
+
+
+@pytest.mark.anyio
+async def test_smtp_takes_precedence_over_resend(monkeypatch):
+    """SMTP_* configured routes mail there even when a Resend key is present."""
+    _smtp_env(monkeypatch)
+    monkeypatch.setenv("RESEND_API_KEY", "re_should_not_be_used")
+    captured = {}
+
+    def fake_smtp(cfg, sender, to, subject, text, html):
+        captured.update(cfg=cfg, sender=sender, to=to, subject=subject)
+        return True, ""
+
+    monkeypatch.setattr(access, "_send_via_smtp_blocking", fake_smtp)
+
+    def explode(*a, **k):  # any Resend call is a routing bug
+        raise AssertionError("Resend must not be used while SMTP is configured")
+
+    monkeypatch.setattr(httpx, "AsyncClient", explode)
+
+    sent, error = await access.send_email("visitor@example.com", "Subj", "body")
+    assert (sent, error) == (True, "")
+    assert captured["to"] == "visitor@example.com"
+    assert captured["cfg"].host == "smtp.gmail.com"
+
+
+@pytest.mark.anyio
+async def test_from_email_defaults_to_the_smtp_account(monkeypatch):
+    """Gmail rewrites From to the authenticated mailbox; the header must agree."""
+    _smtp_env(monkeypatch)
+    monkeypatch.delenv("ACCESS_FROM_EMAIL", raising=False)
+    assert access.from_email() == "Tracer Lens <owner@gmail.com>"
+
+    monkeypatch.setenv("ACCESS_FROM_EMAIL", "Tracer Lens <hello@tracerlensai.com>")
+    assert access.from_email() == "Tracer Lens <hello@tracerlensai.com>"
+
+
+@pytest.mark.anyio
+async def test_smtp_auth_failure_explains_app_passwords(monkeypatch):
+    """The raw Gmail message misdirects people to reset their password."""
+    import smtplib
+    _smtp_env(monkeypatch)
+
+    def refuse(*args, **kwargs):
+        raise smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+    monkeypatch.setattr(smtplib, "SMTP", refuse)
+
+    sent, error = await access.send_email("visitor@example.com", "Subj", "body")
+    assert sent is False
+    assert "App Password" in error
+
+
+@pytest.mark.anyio
+async def test_send_email_refuses_an_empty_recipient(monkeypatch):
+    """An empty ACCESS_NOTIFY_EMAIL must fail loudly, not address mail to nobody."""
+    _smtp_env(monkeypatch, SMTP_HOST=None)
+    sent, error = await access.send_email("", "Subj", "body")
+    assert sent is False
+    assert "recipient" in error
+
+
+def test_login_link_delivery_failure_is_surfaced(client: TestClient, fake_store, monkeypatch):
+    """"Check your inbox" for mail that was never sent strands the visitor."""
+    approve_email()
+
+    async def fails(to, subject, text, html=None):
+        return False, "smtp auth rejected"
+
+    monkeypatch.setattr(access, "send_email", fails)
+
+    response = client.post("/auth/login", json={"email": TEST_EMAIL})
+    assert response.status_code == 502
+    # The provider detail can carry credentials, so it stays server-side.
+    assert "smtp" not in response.json()["detail"].lower()
+
+
+def test_login_link_success_still_reports_link_sent(client: TestClient, fake_store, no_email):
+    approve_email()
+    response = client.post("/auth/login", json={"email": TEST_EMAIL})
+    assert response.status_code == 200
+    assert response.json()["status"] == "link_sent"
+
+
+# ── Public origin ────────────────────────────────────────────────────────────
+
+def test_app_url_treats_blank_as_unset(monkeypatch):
+    """A var set to "" must not produce origin-less links like /?auth=..."""
+    monkeypatch.setenv("APP_URL", "   ")
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    assert access.app_url() == access.LOCAL_APP_URL
+
+
+def test_app_url_strips_trailing_slash(monkeypatch):
+    monkeypatch.setenv("APP_URL", "https://tracerlensai.com/")
+    assert access.app_url() == "https://tracerlensai.com"
+
+
+def test_app_url_refuses_localhost_in_production(monkeypatch):
+    """Mailing a localhost link from Cloud Run is worse than failing."""
+    monkeypatch.delenv("APP_URL", raising=False)
+    monkeypatch.setenv("K_SERVICE", "tracerlensai-proxy")
+    monkeypatch.delenv("ALLOW_LOCALHOST_APP_URL", raising=False)
+
+    with pytest.raises(access.AppUrlNotConfigured) as excinfo:
+        access.app_url()
+    # The message has to name the fix, since it surfaces in a deploy log.
+    assert "APP_URL" in str(excinfo.value)
+
+    monkeypatch.setenv("ALLOW_LOCALHOST_APP_URL", "1")
+    assert access.app_url() == access.LOCAL_APP_URL
+
+
+def test_app_url_configured_wins_in_production(monkeypatch):
+    monkeypatch.setenv("K_SERVICE", "tracerlensai-proxy")
+    monkeypatch.setenv("APP_URL", "https://tracerlensai.com")
+    assert access.app_url() == "https://tracerlensai.com"
+    assert access.login_link("v@example.com", "nonce").startswith(
+        "https://tracerlensai.com/?auth=")
+
+
+def test_resend_is_rate_limited_per_address(client: TestClient, fake_store, no_email):
+    """A second link immediately after the first kills the one being waited on."""
+    approve_email()
+
+    first = client.post("/auth/login", json={"email": TEST_EMAIL})
+    assert first.json()["status"] == "link_sent"
+
+    second = client.post("/auth/login", json={"email": TEST_EMAIL})
+    assert second.status_code == 429
+    assert "wait" in second.json()["detail"].lower()
+    assert len(no_email) == 1, "no second email may be sent inside the cooldown"
+
+
+def test_resend_allowed_once_the_cooldown_passes(client: TestClient, fake_store, no_email):
+    approve_email()
+    client.post("/auth/login", json={"email": TEST_EMAIL})
+
+    stale = access.utcnow() - timedelta(seconds=access.RESEND_COOLDOWN_S + 1)
+    access.update_record(TEST_EMAIL, {"login_sent_at": stale})
+
+    again = client.post("/auth/login", json={"email": TEST_EMAIL})
+    assert again.status_code == 200
+    assert again.json()["status"] == "link_sent"
+    assert len(no_email) == 2
+
+
+def test_resend_issues_a_fresh_nonce_that_kills_the_old_link(client: TestClient, fake_store, no_email):
+    """Only the newest link may work — an old one must not still sign you in."""
+    approve_email()
+    client.post("/auth/login", json={"email": TEST_EMAIL})
+    first_nonce = access.get_record(TEST_EMAIL, cached=False)["login_nonce"]
+
+    access.update_record(TEST_EMAIL, {
+        "login_sent_at": access.utcnow() - timedelta(seconds=access.RESEND_COOLDOWN_S + 1)})
+    client.post("/auth/login", json={"email": TEST_EMAIL})
+
+    stale_link = access.sign({"email": TEST_EMAIL, "n": first_nonce},
+                             access.PURPOSE_LOGIN, access.LOGIN_LINK_TTL_S)
+    assert client.post("/auth/exchange", json={"auth": stale_link}).status_code == 401
+
+
+def test_a_failed_send_does_not_start_the_cooldown(client: TestClient, fake_store, monkeypatch):
+    """A delivery failure must leave the visitor able to retry immediately."""
+    approve_email()
+
+    async def fails(to, subject, text, html=None):
+        return False, "smtp temporarily unavailable"
+
+    monkeypatch.setattr(access, "send_email", fails)
+    assert client.post("/auth/login", json={"email": TEST_EMAIL}).status_code == 502
+    # Not 429 — the cooldown stamp is only written after a confirmed send.
+    assert client.post("/auth/login", json={"email": TEST_EMAIL}).status_code == 502
+
+
+def test_session_lifetime_is_one_day(client: TestClient, fake_store, no_email):
+    """Paired with sessionStorage in the UI: browser close or 24h, whichever first."""
+    assert access.SESSION_TTL_S == 24 * 60 * 60
+
+    record = approve_email()
+    token = access.mint_session(TEST_EMAIL, record)
+    payload = access.unsign(token, access.PURPOSE_SESSION)
+    lifetime = payload["exp"] - int(time.time())
+    assert 24 * 60 * 60 - 60 <= lifetime <= 24 * 60 * 60
+
+
+def test_app_url_ignores_the_host_header(client: TestClient, fake_store, no_email, monkeypatch):
+    """Host-header injection must not be able to redirect a sign-in link."""
+    monkeypatch.setenv("APP_URL", "https://tracerlensai.com")
+    approve_email()
+
+    client.post("/auth/login", json={"email": TEST_EMAIL},
+                headers={"Host": "evil.example.com",
+                         "X-Forwarded-Host": "evil.example.com"})
+
+    link = [m for m in no_email if "sign-in" in m["subject"].lower()][-1]["text"]
+    assert "https://tracerlensai.com/?auth=" in link
+    assert "evil.example.com" not in link

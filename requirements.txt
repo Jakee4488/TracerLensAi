@@ -15,7 +15,9 @@ google-genai>=1.12.0
 google-auth>=2.29.0
 google-agents-cli>=0.1.0
 google-adk[gcp]>=2.0.0
-a2a-sdk[http-server]>=0.3.22
+# <0.4: see the matching comment in pyproject.toml — a2a-sdk 1.x moved
+# a2a.server.apps.A2AFastAPIApplication and broke the deployed container.
+a2a-sdk[http-server]>=0.3.22,<0.4
 
 google-cloud-logging
 python-dotenv

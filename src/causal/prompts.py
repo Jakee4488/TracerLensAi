@@ -278,13 +278,27 @@ def synthesizer_instruction(ctx) -> str:
     plan = parse_model(ExecutionPlan, state.get(sk.KEY_PLAN))
     steps_trace = state.get(sk.KEY_STEPS) or []
 
+    # Inject the graph topology so the model has the exact nodes/edges to reference
+    components = graph.get("components", []) if isinstance(graph, dict) else []
+    edges = graph.get("edges", []) if isinstance(graph, dict) else []
+    graph_topology = "Causal Graph Topology:\n"
+    if components or edges:
+        for c in components:
+            graph_topology += f"- Node [{c.get('id')}]: {c.get('label')} ({c.get('kind')})\n"
+        for e in edges:
+            conf = e.get('confidence', 1.0) * 100
+            graph_topology += f"- Edge: {e.get('source')} -> {e.get('target')} [{e.get('relation')}, {conf:.0f}% confidence]\n"
+    else:
+        graph_topology += "(No graph available)\n"
+
     # Feed the model the substance of each step (what it was for and what it
     # found) WITHOUT step ids or status flags -- those are execution-engine
     # internals that must never reach the user-facing answer.
     results = ""
     if plan:
+        node_labels = {c.get("id"): c.get("label", c.get("id")) for c in components}
         results = "\n".join(
-            f"- {s.objective[:120]}" + (f" => {s.result_summary}" if s.result_summary else "")
+            f"- [Node: {node_labels.get(s.component_id, s.component_id)}] {s.objective[:120]}" + (f" => {s.result_summary}" if s.result_summary else "")
             for s in plan.steps
             if s.result_summary or s.status != "pending"
         )
@@ -305,23 +319,25 @@ def synthesizer_instruction(ctx) -> str:
         ),
     }.get(status.phase, "")
 
+    import logging
+    logger = logging.getLogger("causal.prompts")
+    logger.error("SYNTHESIZER RESULTS STRING:\n%s", results)
+    
     grounding = _estimand_grounding(state)
 
     return (
         "You are writing the FINAL user-facing answer. Address the goal below "
         "directly, grounded in the analysis results.\n"
-        "Lead with the answer and the key quantitative results, then a brief, "
-        "plain-language explanation of the causal reasoning (confounders, "
-        "adjustment, direction/size of effect).\n"
-        "STRICT: Write as a self-contained answer to the user. Never mention the "
-        "plan, steps, step ids (e.g. s1, s6.r1), replanning, budgets, status "
-        "phases, control markers, or internal state. The reader has no idea an "
-        "internal pipeline exists. No 'Replanning' or 'What Remains Undone' "
-        "sections.\n"
+        "Lead with the answer and the key quantitative results, then explain the causal reasoning "
+        "step-by-step using a 'Chain of Thought' format. "
+        "STRICT: You MUST cite the specific source node responsible for each causal claim by appending the exact [Node: Label] tag at the end of the relevant sentence "
+        "(e.g., '...water expands upon freezing [Node: Open Hexagonal Lattice].'). You must output the literal string `[Node: Label]` exactly as it appears in the analysis results. "
+        "Do not remove these [Node: ...] tags when summarizing!\n"
         f"Goal: {goal or '(the user message in this conversation)'}\n"
         + (f"{outcome_note}\n" if outcome_note else "")
         + (f"{grounding}\n" if grounding else "")
-        + f"Analysis results (for your grounding -- rewrite, do not quote verbatim):\n{results or '(none)'}\n"
+        + f"{graph_topology}\n"
+        + f"Analysis results (you MUST retain the [Node: X] citations in your response):\n{results or '(none)'}\n"
         "Internal notes (context only -- never quote or reference these):\n"
         + "\n".join(f"- {line}" for line in steps_trace[-15:])
     )

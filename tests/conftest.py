@@ -28,11 +28,16 @@ def _fast_mock_stream(monkeypatch):
 def _clean_access_state(monkeypatch):
     """Isolate the access layer between tests.
 
-    Also unsets RESEND_API_KEY unconditionally: with a real key in the
-    developer's environment, any test that triggers a notification would send
-    actual email. The notifier prints instead when the key is absent.
+    Also unsets every mail transport unconditionally: with real credentials in
+    the developer's environment, any test that triggers a notification would
+    send actual email. The notifier prints instead when none is configured.
+    SMTP_* is covered as well as RESEND_API_KEY — SMTP takes precedence in
+    send_email, so leaving it set would route test mail through a personal
+    mailbox and silently defeat this guard.
     """
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    for name in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
     proxy_access._record_cache.clear()
     yield
     proxy_access._record_cache.clear()

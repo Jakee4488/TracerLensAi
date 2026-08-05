@@ -1,20 +1,42 @@
-##############################################################################
+﻿##############################################################################
 # docker-compose.dev.yml — Local Development Environment
 #
-# Usage:
-#   docker compose -f docker-compose.dev.yml up --build       # Start with rebuild
-#   docker compose -f docker-compose.dev.yml up               # Start (cached)
-#   docker compose -f docker-compose.dev.yml down              # Stop & remove
-#   docker compose -f docker-compose.dev.yml down -v --rmi local  # Full cleanup
+# Two services, two purposes:
 #
-# Notes:
-#   - Mounts ./src as a volume for live code reloading
-#   - Uses uvicorn --reload for hot-reload on file changes
-#   - Reads environment from .env (create from .env.example)
-#   - Optionally mounts GCP ADC for Vertex AI access
+#   tracerlensai-app  — Runs src/fast_api_app.py (the ADK agent backend).
+#                       Use when iterating on agent logic in src/.
+#                       Hot-reloads on any change under ./src.
+#                       Port 8080.
+#
+#   proxy             — Runs proxy/main.py (the UI + live-endpoint proxy).
+#                       Use to test the full stack locally against the
+#                       real deployed Vertex AI Agent Engine.
+#                       Auto-resolves AGENT_ENGINE_ENDPOINT from
+#                       deployment_metadata.json — stays correct after every
+#                       `agents-cli deploy` with no manual edits.
+#                       Hot-reloads on any change under ./proxy.
+#                       Port 8081 -> open http://localhost:8081
+#
+# Quick-start (full stack, live LLM):
+#   docker compose -f docker-compose.dev.yml up proxy --build
+#
+# Quick-start (instant / free canned responses):
+#   MODE=mock docker compose -f docker-compose.dev.yml up proxy --build
+#
+# Agent backend only (for src/ iteration):
+#   docker compose -f docker-compose.dev.yml up tracerlensai-app --build
+#
+# Full cleanup:
+#   docker compose -f docker-compose.dev.yml down -v --rmi local
+#
+# Prerequisites (one-time):
+#   gcloud auth application-default login
+#   gcloud auth application-default set-quota-project icarus-agent-26
 ##############################################################################
 
 services:
+
+  # ── Agent backend (src/) ─────────────────────────────────────────────────
   tracerlensai-app:
     build:
       context: .
@@ -25,44 +47,104 @@ services:
     ports:
       - "8080:8080"
 
-    # Override the production CMD with hot-reload for development
+    # Hot-reload the ADK FastAPI app on any src/ change
     command: >
       uvicorn src.fast_api_app:app --host 0.0.0.0 --port 8080 --reload --reload-dir /app/src
 
-    # Mount source code for live editing (overrides the COPY in Dockerfile)
     volumes:
       - ./src:/app/src:ro
-      - ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+      # Windows ADC path — see docker-compose.yml for why this uses the `:?`
+      # guard and the .env fallback. On macOS/Linux replace with:
+      #   ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+      - ${APPDATA:?Set APPDATA (shell env or .env) to your Windows profile dir, e.g. C:\Users\<you>\AppData\Roaming}/gcloud/application_default_credentials.json:/tmp/adc.json:ro
 
-    # Load environment from .env file (create from .env.example)
     env_file:
       - .env
-    
+
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=development
       - GOOGLE_CLOUD_PROJECT=icarus-agent-26
-      - GOOGLE_CLOUD_LOCATION=us-central1
+      # Must match deployment_metadata.json (europe-west2), not the stale us-central1
+      - GOOGLE_CLOUD_LOCATION=europe-west2
+      - GOOGLE_CLOUD_REGION=europe-west2
       - GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json
-      - PYTHONPATH=/home/tracerlensaiuser/.local/lib/python3.12/site-packages:/app
+      - PYTHONPATH=/app
 
-    # Health check matching the production readiness probe
     healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" ]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
+
+    restart: unless-stopped
+
+  # ── Proxy — Full-stack local test against the live Agent Engine ───────────
+  #
+  # Runs proxy/main.py (the lightweight frontend + Vertex AI proxy) built from
+  # Dockerfile.proxy. AGENT_ENGINE_ENDPOINT is resolved automatically from
+  # deployment_metadata.json by docker/local-entrypoint.sh, so the compose
+  # file self-updates on every `agents-cli deploy`.
+  #
+  # Usage:
+  #   docker compose -f docker-compose.dev.yml up proxy --build
+  #   MODE=mock docker compose -f docker-compose.dev.yml up proxy   # free mock
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    image: tracerlensai-proxy-dev:latest
+    container_name: tracerlensai-proxy-dev
+    ports:
+      - "8081:8080"
+
+    volumes:
+      # Live-reload proxy code without rebuilding the image
+      - ./proxy:/app/proxy:ro
+      # Auto-resolves AGENT_ENGINE_ENDPOINT from the last agents-cli deploy
+      - ./deployment_metadata.json:/app/deployment_metadata.json:ro
+      # Entrypoint: reads deployment_metadata.json -> exports endpoint -> exec uvicorn
+      - ./docker/local-entrypoint.sh:/entrypoint.sh:ro
+      # Windows ADC — see docker-compose.yml for why this uses the `:?` guard
+      # and the .env fallback. On macOS/Linux use:
+      #   ~/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+      - ${APPDATA:?Set APPDATA (shell env or .env) to your Windows profile dir, e.g. C:\Users\<you>\AppData\Roaming}/gcloud/application_default_credentials.json:/tmp/adc.json:ro
+
+    env_file:
+      - .env
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=development
+      # real (default) -> streams from the live Vertex AI Agent Engine
+      # mock           -> instant, free canned responses (no LLM cost)
+      - MODE=${MODE:-real}
+      - GOOGLE_CLOUD_PROJECT=icarus-agent-26
+      # Must match the deployed engine region (europe-west2)
+      - GOOGLE_CLOUD_REGION=europe-west2
+      - GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json
+
+    # Resolves AGENT_ENGINE_ENDPOINT from deployment_metadata.json, then starts uvicorn
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
     restart: unless-stopped
 
   # ── Test Runner ───────────────────────────────────────────────────────────
-  # One-shot container for running tests (not started by default)
+  # One-shot container for the unit/integration test suite. Not started by
+  # default — activate with: --profile test
   test-runner:
     image: tracerlensai-dev:latest
     container_name: tracerlensai-test
     profiles:
-      - test # Only runs when explicitly requested via --profile test
+      - test
     volumes:
       - ./src:/app/src:ro
       - ./tests:/app/tests:ro
@@ -73,7 +155,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - ENVIRONMENT=test
-    # Default: run the full test suite.  Overridden per-step in run_tests.sh
     command: python -m pytest tests/ --ignore=tests/ui_tests -v --tb=short
 
   # ── Causal Agent UI Test Runner ───────────────────────────────────────────

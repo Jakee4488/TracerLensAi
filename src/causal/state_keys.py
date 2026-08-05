@@ -10,6 +10,11 @@ plain keys are session-scoped and persisted by VertexAiSessionService.
 
 CAUSAL_MODE_MARKER = "[[causal:on]]"
 WEB_MODE_MARKER = "[[web:on]]"
+# Correlation id for one turn, minted by the UI and injected by the proxy on the
+# same channel as the mode markers. It is what joins a rendered answer to its
+# proxy log line, its Cloud Trace span and its stored run — without it every
+# artifact exists but nothing links them.
+RUN_ID_MARKER_RE = r"\[\[run:([A-Za-z0-9_-]{1,64})\]\]"
 
 # Session-state keys. Everything stored under these keys must be plain JSON.
 KEY_GRAPH = "causal_graph"                       # to_ui_graph() shape for the UI
@@ -17,6 +22,9 @@ KEY_GRAPH_FULL = "causal_graph_full"             # full CausalGraph dump for reh
 KEY_PLAN = "causal_plan"                         # ExecutionPlan dump
 KEY_STEPS = "causal_steps"                       # list[str], human-readable trace lines
 KEY_LEDGER = "causal_ledger"                     # list[ChangeRecord dumps]
+KEY_LEDGER_DROPPED = "causal_ledger_dropped"     # int: entries lost to LEDGER_CAP
+KEY_REPLAN_EVENTS = "causal_replan_events"       # list[ReplanEvent dumps]
+KEY_RUN_ID = "causal_run_id"                     # str: per-turn correlation id
 KEY_STATUS = "causal_status"                     # CausalStatus dump
 KEY_CURRENT_STEP = "causal_current_step"         # PlanStep dump or None
 KEY_STEP_OUTPUT = "causal_step_output"           # raw executor output text
@@ -41,7 +49,8 @@ KEY_WEB_RETRIEVAL = "causal_web_retrieval"       # WebRetrieval dump (UI-facing)
 
 # All keys the router resets at the start of a causal turn.
 ALL_KEYS = (
-    KEY_GRAPH, KEY_GRAPH_FULL, KEY_PLAN, KEY_STEPS, KEY_LEDGER, KEY_STATUS,
+    KEY_GRAPH, KEY_GRAPH_FULL, KEY_PLAN, KEY_STEPS, KEY_LEDGER,
+    KEY_LEDGER_DROPPED, KEY_REPLAN_EVENTS, KEY_RUN_ID, KEY_STATUS,
     KEY_CURRENT_STEP, KEY_STEP_OUTPUT, KEY_DECOMPOSITION_RAW,
     KEY_REPLAN_REQUEST, KEY_REPLAN_RAW, KEY_FINAL, KEY_BUDGETS, KEY_QUERY,
     KEY_ESTIMAND_SPEC_RAW, KEY_ESTIMAND, KEY_EFFECT, KEY_COUNTERFACTUAL,

@@ -23,6 +23,7 @@ from src.causal import prompts
 from src.causal import state_keys as sk
 from src.causal.callbacks import (
     build_graph_and_plan,
+    mark_complete,
     skip_if_aborted,
     skip_if_no_ready_step,
     skip_unless_effect_query,
@@ -195,6 +196,7 @@ def build_causal_pipeline() -> SequentialAgent:
         instruction=prompts.synthesizer_instruction,
         include_contents="none",
         output_key=sk.KEY_FINAL,
+        after_agent_callback=mark_complete,
         disallow_transfer_to_parent=True,
         disallow_transfer_to_peers=True,
     )

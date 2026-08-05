@@ -10,9 +10,22 @@
     --surface-3: #1b2030;
     --text-1: #e9edf7;
     --text-2: #98a2b8;
-    --text-3: #5c6478;
+    /* --text-3 carries the entire quantitative layer: axis ticks, elapsed
+       times, step counters, p-values, the graph key. At #5c6478 all of it sat
+       between 2.74:1 and 3.30:1 — the numbers were the least readable text in
+       a numbers product. This clears 4.5:1 on every surface token below
+       (6.00:1 on surface-0, 4.97:1 on surface-3). */
+    --text-3: #858fa1;
     --cyan: #22d3ee;
+    /* Cyan as *text*. Identical in dark, darkened in light where the mark
+       colour only reaches 3.1:1 on the badge grounds it is used on. */
+    --cyan-text: #22d3ee;
     --violet: #8b5cf6;
+    /* Edge bands. Single source of truth for the canvas *and* the legend —
+       graph.ts no longer writes colour inline, so these apply in both themes. */
+    --edge-critical: #a78bfa;
+    --edge-firm: #2dd4bf;
+    --edge-soft: #7b8798;
     --grad: linear-gradient(135deg, var(--cyan), var(--violet));
     --glass-bg: rgba(255, 255, 255, 0.035);
     --glass-border: rgba(255, 255, 255, 0.08);
@@ -50,9 +63,15 @@ html[data-theme="light"] {
     --surface-3: #eceff8;
     --text-1: #1b2233;
     --text-2: #59637a;
-    --text-3: #97a0b4;
+    /* 6.00:1 on white, 5.30:1 on surface-0, 4.83:1 on the tinted plot grounds
+       — the light theme was the worse of the two here, at 2.14–2.62:1. */
+    --text-3: #5b6472;
     --cyan: #0894b3;
+    --cyan-text: #046b83;
     --violet: #7c3aed;
+    --edge-critical: #6d28d9;
+    --edge-firm: #0d7a6c;
+    --edge-soft: #6b7686;
     --glass-bg: rgba(255, 255, 255, 0.65);
     --glass-border: rgba(27, 34, 51, 0.10);
     --user-bubble-bg: linear-gradient(135deg, rgba(8, 148, 179, 0.10), rgba(124, 58, 237, 0.12));
@@ -306,12 +325,20 @@ a:focus-visible {
 
 /* ── Chat column & header ──────────────────────────────────────────────── */
 
+/* The chat column is the only one of the three with no width asserted, so it
+   absorbed the remainder — including when the remainder went negative. A floor
+   here is what stops the pane starving it. */
 .chat-container {
-    flex: 1;
-    min-width: 0;
+    flex: 1 1 auto;
+    min-width: 320px;
     display: flex;
     flex-direction: column;
     position: relative;
+}
+
+/* Overlaid, the pane no longer consumes width, so the chat keeps the row. */
+.pane-overlay .chat-container {
+    min-width: 0;
 }
 
 .chat-header {
@@ -380,7 +407,7 @@ a:focus-visible {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-size: 11.5px;
-    color: var(--cyan);
+    color: var(--cyan-text);
     background: rgba(34, 211, 238, 0.10);
     border: 1px solid rgba(34, 211, 238, 0.28);
     padding: 3px 10px;
@@ -523,7 +550,7 @@ html[data-theme="light"] .token-badge {
     flex: 1;
     overflow-y: auto;
     padding: 26px 20px 10px;
-    scrollbar-width: thin;
+    
     scrollbar-color: var(--surface-3) transparent;
 }
 
@@ -537,7 +564,7 @@ html[data-theme="light"] .token-badge {
 }
 
 .messages-inner {
-    max-width: 780px;
+    max-width: 1200px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -677,7 +704,7 @@ html[data-theme="light"] .token-badge {
 }
 
 .md-content a {
-    color: var(--cyan);
+    color: var(--cyan-text);
 }
 
 .md-content blockquote {
@@ -694,7 +721,7 @@ html[data-theme="light"] .token-badge {
     margin: 10px 0;
     font-size: 13px;
     display: block;
-    overflow-x: auto;
+    overflow: hidden;
 }
 
 .md-content th,
@@ -705,6 +732,14 @@ html[data-theme="light"] .token-badge {
 
 .md-content th {
     background: var(--surface-2);
+}
+
+/* Numeric columns, tagged by enhanceMarkdown(). Answers routinely carry effect
+   tables, and left-aligned magnitudes cannot be compared down a column. */
+.md-content th.md-num,
+.md-content td.md-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
 .md-content code {
@@ -725,7 +760,7 @@ html[data-theme="light"] .token-badge {
     background: var(--code-bg);
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-sm);
-    overflow-x: auto;
+    overflow: hidden;
     line-height: 1.6;
 }
 
@@ -754,6 +789,8 @@ html[data-theme="light"] .token-badge {
     background: rgba(139, 92, 246, 0.05);
     padding: 13px 15px;
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    /* Anchor for the detail sheet and its backdrop. */
+    position: relative;
 }
 
 .causal-head {
@@ -914,7 +951,7 @@ html[data-theme="light"] .token-badge {
 
 /* Web-retrieval status badge in the causal-panel head. */
 .web-badge.dataset {
-    color: var(--cyan);
+    color: var(--cyan-text);
     background: rgba(34, 211, 238, 0.12);
     border: 1px solid rgba(34, 211, 238, 0.35);
 }
@@ -954,7 +991,7 @@ html[data-theme="light"] .token-badge {
     font-size: 10.5px;
     padding: 1px 7px;
     border-radius: 5px;
-    color: var(--cyan);
+    color: var(--cyan-text);
     background: rgba(34, 211, 238, 0.10);
     border: 1px solid rgba(34, 211, 238, 0.25);
 }
@@ -976,7 +1013,7 @@ html[data-theme="light"] .token-badge {
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-sm);
     padding: 10px;
-    overflow-x: auto;
+    overflow: hidden;
     animation: graph-reveal 500ms ease both;
 }
 
@@ -1020,20 +1057,59 @@ html[data-theme="light"] .token-badge {
     display: inline-block;
 }
 
+.legend-divider {
+    color: var(--border);
+    margin: 0 4px;
+}
+
+/* The three link bands, matching the classes buildEdges() actually applies.
+   The previous key advertised a dotted-grey "low confidence" line the renderer
+   never produced, and called critical edges orange when the stylesheet drew
+   them violet. Both now read from --edge-* so key and canvas cannot drift. */
+.lg-line {
+    width: 24px;
+    height: 0;
+    display: inline-block;
+    vertical-align: middle;
+    border-bottom: 2px solid transparent;
+}
+
+.lg-line.critical {
+    border-bottom: 2px dashed var(--edge-critical);
+}
+
+.lg-line.firm {
+    border-bottom: 2px solid var(--edge-firm);
+}
+
+.lg-line.soft {
+    border-bottom: 2px dashed var(--edge-soft);
+    opacity: 0.85;
+}
+
+.legend-group-label {
+    font-weight: 650;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    font-size: 9.5px;
+    color: var(--text-3);
+}
+
 .lg-dot.done {
     background: var(--ok);
 }
 
 .lg-dot.pending {
-    background: var(--text-2);
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+.lg-dot.active {
+    background: var(--grad);
 }
 
 .lg-dot.failed {
     background: var(--err);
-}
-
-.lg-dot.critical {
-    background: var(--violet);
 }
 
 /* ── Typing indicator ──────────────────────────────────────────────────── */
@@ -1083,7 +1159,7 @@ html[data-theme="light"] .token-badge {
 }
 
 .composer-inner {
-    max-width: 780px;
+    max-width: 1200px;
     margin: 0 auto;
 }
 
@@ -1352,7 +1428,7 @@ html[data-theme="light"] .token-badge {
        Status colours are untouched: the timeline stays fully readable. */
     .stage-row.done .stage-rail::after,
     .stage-row.failed .stage-rail::after {
-        transform: scaleY(1) !important;
+        transform: scaleX(1) !important;
     }
 
     .stage-steps li {
@@ -1386,49 +1462,58 @@ html[data-theme="light"] .token-badge {
     margin-top: 4px;
 }
 
+/* Vertical. The horizontal form pinned all eight stages to 58px columns inside
+   a ~379px pane: every label ellipsised, and the last three — Execute plan,
+   Replan and Synthesize — sat outside the clip box with the scrollbar
+   suppressed, so the stage that wrote the answer was unreachable. */
 .stage-list {
-    list-style: none;
+    display: flex;
+    flex-direction: column;
     margin: 0;
     padding: 0;
+    list-style: none;
 }
 
 .stage-row {
     position: relative;
     display: flex;
-    gap: 12px;
-    padding: 0 0 14px 0;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 0 0 10px;
 }
 
 .stage-row:last-child {
     padding-bottom: 0;
 }
 
-/* Connector rail between dots. Drawn on the row (not a separate element) so
-   there is nothing to keep in sync with the list. */
+/* Vertical connector rail between dots */
 .stage-row:not(:last-child)::before {
     content: "";
     position: absolute;
     left: 5px;
-    top: 16px;
-    bottom: 2px;
+    top: 12px;
+    bottom: 0;
     width: 2px;
     background: var(--surface-3);
     border-radius: 1px;
+    z-index: 0;
 }
 
-/* ...and the gradient fill that grows down it as the stage completes. */
+/* ...and the gradient fill that grows down it */
 .stage-row:not(:last-child)::after {
     content: "";
     position: absolute;
     left: 5px;
-    top: 16px;
-    bottom: 2px;
+    top: 12px;
+    bottom: 0;
     width: 2px;
     border-radius: 1px;
     background: var(--grad);
     transform: scaleY(0);
     transform-origin: top;
     transition: transform var(--t-med) var(--ease-out);
+    z-index: 0;
 }
 
 .stage-row.done::after,
@@ -1440,7 +1525,7 @@ html[data-theme="light"] .token-badge {
     flex: none;
     width: 12px;
     height: 12px;
-    margin-top: 4px;
+    margin-top: 3px;
     border-radius: 50%;
     border: 2px solid var(--text-3);
     background: var(--surface-1);
@@ -1448,6 +1533,7 @@ html[data-theme="light"] .token-badge {
         background var(--t-med) ease,
         border-color var(--t-med) ease,
         box-shadow var(--t-med) ease;
+    z-index: 1;
 }
 
 .stage-row.active .stage-dot {
@@ -1490,19 +1576,47 @@ html[data-theme="light"] .token-badge {
 .stage-body {
     flex: 1;
     min-width: 0;
+    width: 100%;
 }
 
 .stage-head {
     display: flex;
+    flex-direction: row;
     align-items: baseline;
-    gap: 8px;
+    gap: 7px;
+    width: 100%;
+    padding: 0;
+    text-align: left;
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    border-radius: var(--radius-sm);
+}
+
+/* Only rows with recorded steps are buttons; the rest must not look clickable. */
+button.stage-head {
+    cursor: pointer;
+}
+
+button.stage-head:hover .stage-label {
+    color: var(--text-1);
+}
+
+.stage-caret {
+    flex: 0 0 9px;
+    font-size: 9px;
+    line-height: 1.6;
+    color: var(--text-3);
 }
 
 .stage-label {
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 500;
     color: var(--text-2);
     transition: color var(--t-med) ease;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .stage-row.active .stage-label {
@@ -1533,21 +1647,25 @@ html[data-theme="light"] .token-badge {
 }
 
 .stage-time {
+    /* Pushed to the trailing edge so durations form a readable column. */
     margin-left: auto;
     font-variant-numeric: tabular-nums;
 }
 
+/* Trace lines for the expanded stage — in place, rather than in a full-height
+   modal that rendered a single string into 1200px of empty panel. */
 .stage-steps {
     list-style: none;
-    margin: 6px 0 0;
-    padding: 0;
+    margin: 6px 0 2px 4px;
+    padding: 0 0 0 9px;
+    border-left: 1px solid var(--border);
 }
 
 .stage-steps li {
-    font-size: 12px;
+    font-size: 11.5px;
     line-height: 1.55;
     color: var(--text-2);
-    padding: 1px 0;
+    padding: 2px 0;
     animation: step-in var(--t-fast) var(--ease-out) both;
 }
 
@@ -1614,11 +1732,14 @@ html[data-theme="light"] .token-badge {
 }
 
 .dag-node {
-    display: grid;
-    place-items: center;
-    width: 168px;
-    height: 44px;
-    padding: 0 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    width: 176px;
+    min-height: 52px;
+    padding: 6px 10px;
     border-radius: var(--radius-sm);
     border: 1.5px solid var(--text-3);
     background: var(--surface-3);
@@ -1636,10 +1757,38 @@ html[data-theme="light"] .token-badge {
     transition-delay: calc(var(--hop, 0) * var(--stagger));
 }
 
+/* Role, not status, is what a reader reasons with: a confounder is a different
+   object from a mediator. It used to live only in a title attribute. */
+/* Full-strength ink: the node fill is a status tint, and against it --text-2
+   lands at 4.2:1 — under the floor for 8.5px type. Size and tracking carry the
+   hierarchy here, not a lighter colour. */
+.dag-node-kind {
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--text-1);
+    line-height: 1.1;
+}
+
+/* Colour is fully spent on status, so role gets a shape channel instead: a
+   confounder sits off the causal path, and a broken outline reads that way.
+   Tinting the role text per kind would have added three more contrast pairs
+   to maintain for no information the word itself doesn't already carry. */
+.dag-node.kind-confounder {
+    border-style: dashed;
+}
+
+/* Two lines before ellipsis. At one line "Ocean surface temperature" clipped at
+   168px, and label length is not something the UI gets to control. */
 .dag-node-label {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
     max-width: 100%;
 }
 
@@ -1687,27 +1836,77 @@ html[data-theme="light"] .token-badge {
     50%      { box-shadow: 0 0 0 8px rgba(34, 211, 238, 0); }
 }
 
+/* Edge colour lives here and only here. graph.ts used to write inline hex,
+   which both overrode these rules (leaving them dead) and made every edge
+   theme-blind — #94a3b8 labels landed at ~2.7:1 on the light ground. */
 .causal-graph-container .react-flow__edge-path {
-    stroke: var(--text-3);
-    stroke-width: 1.5;
+    stroke: var(--edge-firm);
 }
 
 .causal-graph-container .causal-edge.soft .react-flow__edge-path {
+    stroke: var(--edge-soft);
     stroke-dasharray: 4 3;
 }
 
 .causal-graph-container .causal-edge.critical .react-flow__edge-path {
-    stroke: var(--violet);
-    stroke-width: 3;
+    stroke: var(--edge-critical);
+}
+
+.causal-graph-container .react-flow__arrowhead polyline,
+.causal-graph-container .react-flow__arrowhead path {
+    stroke: var(--edge-firm);
+    fill: var(--edge-firm);
+}
+
+.causal-graph-container .causal-edge.soft .react-flow__arrowhead polyline,
+.causal-graph-container .causal-edge.soft .react-flow__arrowhead path {
+    stroke: var(--edge-soft);
+    fill: var(--edge-soft);
+}
+
+.causal-graph-container .causal-edge.critical .react-flow__arrowhead polyline,
+.causal-graph-container .causal-edge.critical .react-flow__arrowhead path {
+    stroke: var(--edge-critical);
+    fill: var(--edge-critical);
 }
 
 .causal-graph-container .react-flow__edge-text {
-    fill: var(--text-3);
-    font-size: 9.5px;
+    fill: var(--text-2);
+    font-size: 10px;
+}
+
+.causal-graph-container .causal-edge.critical .react-flow__edge-text {
+    fill: var(--edge-critical);
+    font-weight: 600;
 }
 
 .causal-graph-container .react-flow__edge-textbg {
     fill: var(--surface-1);
+    fill-opacity: 0.92;
+}
+
+/* React Flow's own controls — the only zoom affordance now that the wheel is
+   left to the pane it sits in. */
+.causal-graph-container .react-flow__controls {
+    box-shadow: none;
+    gap: 2px;
+    display: flex;
+    flex-direction: column;
+}
+
+.causal-graph-container .react-flow__controls-button {
+    width: 22px;
+    height: 22px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    border-radius: 5px;
+    fill: var(--text-2);
+}
+
+.causal-graph-container .react-flow__controls-button:hover {
+    background: var(--surface-3);
+    fill: var(--text-1);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1719,7 +1918,9 @@ html[data-theme="light"] .token-badge {
 
 .effect-chart {
     display: grid;
-    grid-template-columns: minmax(56px, 22%) 1fr auto;
+    /* The refuter name is the subject of its row; at minmax(56px, 22%) it
+       truncated to "placebo treat…", "random comm…", "data subset re…". */
+    grid-template-columns: minmax(92px, 30%) 1fr auto;
     align-items: center;
     column-gap: 8px;
     margin: 10px 0 2px;
@@ -1886,13 +2087,15 @@ html[data-theme="light"] .token-badge {
     color: var(--text-3);
 }
 
+/* Wraps to two lines rather than ellipsising: "placebo treatment" and
+   "data subset" are not interchangeable, and the truncated forms hid which
+   refuter actually failed. */
 .refute-name {
     font-size: 11px;
+    line-height: 1.3;
     color: var(--text-2);
     text-align: right;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: break-word;
 }
 
 /* Comfortably past the 24px hit-target minimum. */
@@ -1973,13 +2176,14 @@ html[data-theme="light"] .token-badge {
     100% { transform: scale(1); }
 }
 
+/* Scoped to the pane, not the viewport: the sheet only owns the pane, and
+   dimming the whole app for a component detail was never right. Light dim
+   only — the DAG above must stay legible, since hovering an `affected` chip
+   highlights a node out there. */
 .drawer-backdrop {
-    position: fixed;
+    position: absolute;
     inset: 0;
     z-index: 40;
-    /* Light dim only: this is a side panel, not a true modal, and the DAG
-       behind it must stay legible — hovering an `affected` chip highlights a
-       node out there. */
     background: rgba(0, 0, 0, 0.22);
     animation: fade-in var(--t-med) var(--ease-out);
 }
@@ -1989,24 +2193,34 @@ html[data-theme="light"] .token-badge {
     to   { opacity: 1; }
 }
 
+/* A sheet at the bottom of the pane, sized to its content.
+   As a full-height right panel it was 420px over a 397px graph — 99% coverage,
+   so clicking a node to read about it hid the node you clicked. */
 .step-drawer {
-    position: fixed;
-    top: 0;
+    position: absolute;
+    left: 0;
     right: 0;
     bottom: 0;
     z-index: 41;
-    width: min(420px, 92vw);
-    padding: 18px 20px;
-    overflow-y: auto;
+    max-height: 62%;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 18px 16px;
     background: var(--surface-1);
-    border-left: 1px solid var(--border);
-    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35);
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
     animation: drawer-in var(--t-med) var(--ease-out);
 }
 
+.drawer-scroll {
+    overflow-y: auto;
+    min-height: 0;
+}
+
 @keyframes drawer-in {
-    from { transform: translateX(100%); }
-    to   { transform: translateX(0); }
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
 }
 
 .drawer-head {
@@ -2059,12 +2273,27 @@ html[data-theme="light"] .token-badge {
 
 .drawer-status.done    { color: var(--ok); }
 .drawer-status.failed  { color: var(--err); }
-.drawer-status.active  { color: var(--cyan); }
+.drawer-status.active  { color: var(--cyan-text); }
 .drawer-status.invalidated,
 .drawer-status.replanned { color: var(--warn); }
 
 .drawer-verdict.success { color: var(--ok); }
 .drawer-verdict.failure { color: var(--err); }
+
+.causal-head {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--surface-0);
+    z-index: 20;
+}
 
 .drawer-empty {
     font-size: 12.5px;
@@ -2135,11 +2364,8 @@ html[data-theme="light"] .token-badge {
     border-color: var(--cyan);
 }
 
-@media (max-width: 640px) {
-    .step-drawer {
-        width: 100vw;
-    }
-}
+/* The sheet spans its pane, so it needs no viewport-width override — 100vw
+   here would push it past the pane it lives in. */
 
 
 /* ── UI Redesign & Modernization ────────────────────────────────────────── */
@@ -2152,13 +2378,25 @@ html[data-theme="light"] .token-badge {
 }
 
 .app-container.has-right-pane {
-    grid-template-columns: auto 1fr 450px;
+    grid-template-columns: auto 1fr var(--right-pane-width, 450px);
+}
+
+.app-container.is-resizing {
+    transition: none !important;
 }
 
 @media (max-width: 1200px) {
     .app-container.has-right-pane {
-        grid-template-columns: auto 1fr 350px;
+        grid-template-columns: auto 1fr var(--right-pane-width, 350px);
     }
+}
+
+/* Overlaid, the pane is out of flow — so the grid must stop reserving a track
+   for it. Without this the chat column still lost the pane's full width and
+   went to 0 on a phone, which is the whole bug the overlay exists to fix.
+   Specificity is deliberate: it has to beat both rules above. */
+.app-container.has-right-pane.pane-overlay {
+    grid-template-columns: auto 1fr;
 }
 
 /* Sidebar Settings */
@@ -2201,23 +2439,34 @@ html[data-theme="light"] .token-badge {
     display: flex;
     flex-direction: column;
     position: relative;
-    overflow-y: auto;
+    overflow: hidden;
 }
-.close-pane-btn {
+
+/* Below ~1100px the pane stops taking width from the chat and lays over it
+   instead. Side by side, the chat column was measured at 306px at 1024px wide
+   and 0px at 390px — the answer had nowhere to go. */
+.pane-overlay .causal-pane {
     position: absolute;
-    top: 12px;
-    right: 12px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text-1);
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    cursor: pointer;
-    z-index: 10;
-    display: grid;
-    place-items: center;
+    inset: 0 0 0 auto;
+    width: min(var(--right-pane-width, 450px), 100%);
+    z-index: 30;
+    box-shadow: -18px 0 48px rgba(0, 0, 0, 0.35);
 }
+
+@media (max-width: 700px) {
+    .pane-overlay .causal-pane {
+        width: 100%;
+    }
+}
+
+.pane-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 29;
+    background: rgba(0, 0, 0, 0.42);
+    animation: backdrop-in var(--t-fast) ease;
+}
+
 .causal-pane .causal-panel {
     border: none;
     background: transparent;
@@ -2225,14 +2474,73 @@ html[data-theme="light"] .token-badge {
     flex: 1;
     display: flex;
     flex-direction: column;
-    padding-top: 12px;
+    padding: 0;
+    min-height: 0;
+    margin-top: 0;
+    overflow: hidden;
+}
+
+/* The header does not scroll. The close control used to be absolutely
+   positioned inside the scroll container, so it sat at y=-97 the moment you
+   reached anything worth reading in a 1982px-tall panel. */
+.causal-pane .causal-head {
+    position: relative;
+    flex: 0 0 auto;
+    /* Room for the pinned export + close controls. They are positioned rather
+       than laid out because the badges wrap in a narrow pane and would push
+       them onto a second row. Both stay outside .causal-panel-scroll, which is
+       the point: the close button used to scroll away with the content. */
+    padding: 13px 132px 13px 16px;
+    margin-bottom: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+    flex-wrap: wrap;
+}
+
+.causal-head-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.causal-panel-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.close-pane-btn {
+    position: absolute;
+    top: 13px;
+    right: 16px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    line-height: 1;
+    transition: background var(--t-fast) ease, color var(--t-fast) ease, border-color var(--t-fast) ease;
+}
+.close-pane-btn:hover {
+    background: var(--surface-3);
+    color: var(--text-1);
+    border-color: var(--cyan);
 }
 .causal-pane .graph-container {
-    flex: 1;
-    min-height: 400px;
+    flex: 0 0 auto;
 }
 .pane-timeline {
-    padding: 10px 20px;
+    padding: 4px 20px 14px;
 }
 
 /* Causal Summary Box */
@@ -2249,23 +2557,50 @@ html[data-theme="light"] .token-badge {
 .causal-summary-header {
     font-size: 13px;
     font-weight: 600;
-    color: var(--cyan);
+    color: var(--cyan-text);
 }
+/* Sits after the answer now, and says what is behind it rather than asking for
+   a click to find out. */
 .view-details-btn {
-    align-self: flex-start;
-    background: var(--surface-3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    margin-top: 12px;
+    background: var(--surface-2);
     border: 1px solid var(--glass-border);
     color: var(--text-1);
-    padding: 6px 12px;
+    padding: 8px 12px;
     border-radius: var(--radius-sm);
     cursor: pointer;
-    font-size: 12px;
+    font-size: 12.5px;
     font-weight: 500;
-    transition: background var(--t-fast);
+    text-align: left;
+    transition: background var(--t-fast), border-color var(--t-fast);
 }
 .view-details-btn:hover {
-    background: var(--cyan);
-    color: #fff;
+    background: var(--surface-3);
+    border-color: var(--cyan);
+}
+.vdb-mark {
+    color: var(--cyan-text);
+    font-size: 13px;
+}
+.vdb-text {
+    flex: 0 0 auto;
+}
+.vdb-summary {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+.vdb-arrow {
+    margin-left: auto;
+    color: var(--text-3);
 }
 
 /* Empty State Cards */
@@ -2321,8 +2656,11 @@ html[data-theme="light"] .token-badge {
     height: 100%;
 }
 
+/* The panel fills the pane; .causal-panel-scroll is what scrolls inside it.
+   min-content here would let the panel outgrow the pane again and take the
+   fixed header with it. */
 .causal-pane .causal-panel {
-    min-height: min-content;
+    min-height: 0;
 }
 
 
@@ -2352,7 +2690,7 @@ html[data-theme="light"] .token-badge {
 
 .active-step-label {
     display: inline-block;
-    color: var(--cyan);
+    color: var(--cyan-text);
     font-weight: 500;
     animation: fade-in-slide 0.3s ease-out forwards;
 }
@@ -2385,6 +2723,325 @@ html[data-theme="light"] .token-badge {
 
 .stop-btn:active {
     transform: scale(0.95);
+}
+
+.pane-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -3px;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    z-index: 20;
+}
+.pane-resizer:hover, .is-resizing .pane-resizer {
+    background: var(--border);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Plan view + replan narrative + run provenance.
+   All of this data was already reaching the browser and rendering nowhere:
+   causal_plan was typed `unknown[]`, and the replan events were dropped inside
+   the agent before transport. Together they are the record of intent.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.plan-card {
+    margin: 0 20px 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+}
+
+.plan-card>summary {
+    cursor: pointer;
+    font-size: 11.5px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.plan-version {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-3);
+}
+
+.plan-rationale {
+    margin: 8px 0 4px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-2);
+}
+
+.plan-steps {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.plan-step {
+    border-left: 2px solid var(--border);
+    padding-left: 9px;
+}
+
+.plan-step.done { border-left-color: var(--ok); }
+.plan-step.failed { border-left-color: var(--err); }
+.plan-step.running { border-left-color: var(--cyan); }
+.plan-step.invalidated { border-left-color: var(--warn); }
+
+.plan-step-head {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 3px 0;
+}
+
+.plan-step-toggle {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 0;
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.plan-step-toggle.static {
+    cursor: default;
+}
+
+.plan-caret {
+    flex: 0 0 9px;
+    font-size: 9px;
+    color: var(--text-3);
+}
+
+.plan-objective {
+    font-size: 12px;
+    color: var(--text-1);
+    overflow-wrap: anywhere;
+}
+
+.plan-status {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.plan-status.done { color: var(--ok); }
+.plan-status.failed { color: var(--err); }
+.plan-status.running { color: var(--cyan-text); }
+.plan-status.invalidated { color: var(--warn); }
+
+.plan-attempt {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--warn);
+}
+
+.plan-detail,
+.replan-detail {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin: 4px 0 6px 15px;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.plan-detail dt,
+.replan-detail dt {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+    padding-top: 1px;
+}
+
+.plan-detail dd,
+.replan-detail dd {
+    margin: 0;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+}
+
+.plan-subhead {
+    margin: 12px 0 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.replan-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.replan-event {
+    padding: 8px 10px;
+    border: 1px solid rgba(251, 191, 36, 0.28);
+    border-radius: var(--radius-sm);
+    background: rgba(251, 191, 36, 0.06);
+}
+
+.replan-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.replan-badge {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--warn);
+}
+
+.replan-versions {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-3);
+}
+
+.replan-body {
+    margin: 5px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text-2);
+}
+
+.replan-body strong {
+    font-family: var(--font-mono);
+    color: var(--text-1);
+    font-weight: 600;
+}
+
+.replan-detail {
+    margin-left: 0;
+}
+
+/* Provenance: the id that joins this answer to its log line and trace. */
+.run-id-strip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-1);
+    font-size: 10px;
+}
+
+.run-id-label {
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-3);
+}
+
+.run-id-strip code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.export-run-btn {
+    position: absolute;
+    top: 13px;
+    right: 52px;
+    height: 28px;
+    padding: 0 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-2);
+    font-size: 10.5px;
+    cursor: pointer;
+    transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.export-run-btn:hover:not(:disabled) {
+    color: var(--text-1);
+    border-color: var(--cyan);
+}
+
+.export-run-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.ledger-truncated {
+    margin: 8px 0 0;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--warn);
+}
+
+.drawer-edge-from {
+    font-weight: 600;
+    color: var(--text-1);
+}
+
+/* Causal node citation.
+   A real button on the baseline. As a <sup> it was keyboard-unreachable, and
+   raising a multi-word label above the baseline broke the line rhythm of every
+   paragraph that carried one. */
+.node-citation {
+    display: inline;
+    font: inherit;
+    font-size: 0.86em;
+    font-weight: 500;
+    color: var(--cyan-text);
+    background: none;
+    border: none;
+    border-bottom: 1px dotted currentColor;
+    padding: 0 1px;
+    margin: 0 1px;
+    cursor: pointer;
+    /* Inline so it wraps with the sentence rather than forcing an orphan. */
+    white-space: normal;
+    transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+
+.node-citation::before {
+    content: "⚯\00a0";
+    font-size: 0.9em;
+}
+
+.node-citation:hover,
+.node-citation:focus-visible {
+    color: var(--text-1);
+    background: color-mix(in srgb, var(--cyan) 16%, transparent);
+    border-radius: 3px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2573,6 +3230,15 @@ html[data-theme="light"] .token-badge {
     margin: 12px 0 0;
     font-size: 12.5px;
     color: var(--err);
+}
+
+/* Secondary guidance under the resend control — quieter than the lede, and
+   not an error, so it must not read as one. */
+.access-hint {
+    margin: 12px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-3);
 }
 
 .access-privacy {

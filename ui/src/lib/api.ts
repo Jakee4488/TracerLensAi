@@ -11,6 +11,8 @@ export interface PromptBody {
   model_name: string;
   chat_id: string;
   attachments?: string[];
+  /** Correlation id for this turn; echoed back on the report. */
+  run_id: string;
 }
 
 export interface ProgressFrame {

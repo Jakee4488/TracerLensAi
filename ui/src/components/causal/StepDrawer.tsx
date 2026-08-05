@@ -4,9 +4,15 @@
 // ChangeRecord already carries expected/observed/verdict/affected per step, so
 // nothing new is computed server-side — this surfaces state that was being
 // collected and thrown away.
+//
+// Rendered as a sheet anchored to the bottom of the pane rather than a
+// full-height panel: at 420px over a 397px graph the old layout covered 99% of
+// the diagram, so clicking a node to learn about it hid the node.
 
-import { useEffect, useRef } from "react";
-import type { ChangeRecord, GraphNode } from "../../types";
+import { useRef } from "react";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
+import { KIND_LABEL, normalizeKind } from "../../lib/graph";
+import type { ChangeRecord, GraphEdge, GraphNode } from "../../types";
 
 export interface DrawerTarget {
   /** Component id (a DAG node) or step id, depending on what was clicked. */
@@ -19,14 +25,21 @@ interface Props {
   target: DrawerTarget;
   ledger: ChangeRecord[];
   nodes: GraphNode[];
+  /** Incoming links, so the drawer can show why this component is caused. */
+  edges?: GraphEdge[];
   onClose: () => void;
   /** Highlights a component in the DAG while its chip is hovered. */
   onHighlight: (componentId: string | null) => void;
 }
 
-export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Props) {
+export function StepDrawer({ target, ledger, nodes, edges = [], onClose, onHighlight }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, onClose);
+
   const labelById = new Map(nodes.map((n) => [n.id, n.label]));
+  const incoming = target.componentId
+    ? edges.filter((e) => e.target === target.componentId && e.rationale)
+    : [];
 
   const records = ledger.filter((r) =>
     target.componentId ? r.component_id === target.componentId : r.step_id === target.stepId,
@@ -34,15 +47,6 @@ export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Prop
   const node = target.componentId
     ? nodes.find((n) => n.id === target.componentId)
     : undefined;
-
-  useEffect(() => {
-    panelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   return (
     <>
@@ -65,60 +69,91 @@ export function StepDrawer({ target, ledger, nodes, onClose, onHighlight }: Prop
         {node && (
           <div className="drawer-meta">
             <span className={"drawer-status " + node.status}>{node.status}</span>
-            <span className="drawer-kind">{node.kind}</span>
+            <span className="drawer-kind">{KIND_LABEL[normalizeKind(node.kind)]}</span>
           </div>
         )}
 
-        {records.length === 0 ? (
-          <p className="drawer-empty">
-            {node
-              ? "This component was never executed, so the change ledger has no entry for it."
-              : "No ledger entry for this step."}
-          </p>
-        ) : (
-          records.map((record) => (
-            <div className="drawer-record" key={`${record.seq}-${record.step_id}`}>
-              <div className="drawer-record-head">
-                <span className="drawer-step-id">{record.step_id}</span>
-                <span className={"drawer-verdict " + record.verdict}>{record.verdict}</span>
-              </div>
-
-              {record.expected && (
-                <div className="drawer-field">
-                  <span className="drawer-label">expected</span>
-                  <p>{record.expected}</p>
-                </div>
-              )}
-              {record.observed && (
-                <div className="drawer-field">
-                  <span className="drawer-label">observed</span>
-                  <p>{record.observed}</p>
-                </div>
-              )}
-
-              {(record.affected || []).length > 0 && (
-                <div className="drawer-field">
-                  <span className="drawer-label">invalidated downstream</span>
-                  <div className="drawer-chips">
-                    {record.affected.map((id) => (
-                      <button
-                        type="button"
-                        className="affected-chip"
-                        key={id}
-                        onMouseEnter={() => onHighlight(id)}
-                        onMouseLeave={() => onHighlight(null)}
-                        onFocus={() => onHighlight(id)}
-                        onBlur={() => onHighlight(null)}
-                      >
-                        {labelById.get(id) || id}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+        <div className="drawer-scroll">
+          {/* The decomposer's own justification, previously discarded in
+              to_ui_graph(). Shown before the ledger because it explains why
+              the component is in the graph at all. */}
+          {node?.description && (
+            <div className="drawer-field">
+              <span className="drawer-label">why this component</span>
+              <p>{node.description}</p>
             </div>
-          ))
-        )}
+          )}
+
+          {incoming.length > 0 && (
+            <div className="drawer-field">
+              <span className="drawer-label">why it is caused</span>
+              {incoming.map((edge) => (
+                <p key={`${edge.source}->${edge.target}`}>
+                  <span className="drawer-edge-from">
+                    {labelById.get(edge.source) || edge.source} {edge.relation}
+                  </span>
+                  {" — "}
+                  {edge.rationale}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {records.length === 0 ? (
+            // The ledger records verifications, not executions, and it is
+            // sparse by design — so this is the common branch. It used to read
+            // "this component was never executed", directly contradicting the
+            // `done` badge sitting above it.
+            <p className="drawer-empty">
+              {node
+                ? "No verification was recorded for this component during the run — the change ledger only holds entries for steps the executor checked."
+                : "No ledger entry for this step."}
+            </p>
+          ) : (
+            records.map((record) => (
+              <div className="drawer-record" key={`${record.seq}-${record.step_id}`}>
+                <div className="drawer-record-head">
+                  <span className="drawer-step-id">{record.step_id}</span>
+                  <span className={"drawer-verdict " + record.verdict}>{record.verdict}</span>
+                </div>
+
+                {record.expected && (
+                  <div className="drawer-field">
+                    <span className="drawer-label">expected</span>
+                    <p>{record.expected}</p>
+                  </div>
+                )}
+                {record.observed && (
+                  <div className="drawer-field">
+                    <span className="drawer-label">observed</span>
+                    <p>{record.observed}</p>
+                  </div>
+                )}
+
+                {(record.affected || []).length > 0 && (
+                  <div className="drawer-field">
+                    <span className="drawer-label">invalidated downstream</span>
+                    <div className="drawer-chips">
+                      {record.affected.map((id) => (
+                        <button
+                          type="button"
+                          className="affected-chip"
+                          key={id}
+                          onMouseEnter={() => onHighlight(id)}
+                          onMouseLeave={() => onHighlight(null)}
+                          onFocus={() => onHighlight(id)}
+                          onBlur={() => onHighlight(null)}
+                        >
+                          {labelById.get(id) || id}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </>
   );

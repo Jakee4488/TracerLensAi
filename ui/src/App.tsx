@@ -9,11 +9,12 @@ import { CausalPanel } from "./components/causal/CausalPanel";
 import { useAccess } from "./hooks/useAccess";
 import { useAttachments } from "./hooks/useAttachments";
 import { useHistory } from "./hooks/useHistory";
+import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useRunProgress } from "./hooks/useRunProgress";
 import { AccessError, analyzePrompt, fetchConversation } from "./lib/api";
 import { hasCausalContent } from "./components/causal/CausalPanel";
 import { finalizeStages } from "./lib/stages";
-import { generateSessionId, nextMessageKey } from "./lib/ids";
+import { generateRunId, generateSessionId, nextMessageKey } from "./lib/ids";
 import { applyTheme, currentTheme, type Theme } from "./lib/theme";
 import type { ChatMessage, Report } from "./types";
 
@@ -25,16 +26,24 @@ function greetingMessage(): ChatMessage {
   return { key: nextMessageKey("greeting"), role: "greeting", content: GREETING };
 }
 
+/** Below this the sidebar is off by default; it can still be toggled open. */
 const NARROW_VIEWPORT_QUERY = "(max-width: 900px)";
-function isNarrowViewport(): boolean {
-  return window.matchMedia(NARROW_VIEWPORT_QUERY).matches;
-}
+/** Below this the causal pane stops taking width from the chat and overlays it. */
+const PANE_OVERLAY_QUERY = "(max-width: 1100px)";
+
+const SIDEBAR_WIDTH = 268;
+/** The chat column never gets squeezed past this; the pane yields first. */
+const CHAT_MIN_WIDTH = 420;
+const PANE_MIN_WIDTH = 300;
+const PANE_MAX_WIDTH = 800;
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([greetingMessage()]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(isNarrowViewport);
+  const isNarrow = useMediaQuery(NARROW_VIEWPORT_QUERY);
+  const paneOverlays = useMediaQuery(PANE_OVERLAY_QUERY);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(isNarrow);
   const [theme, setTheme] = useState<Theme>(currentTheme);
   const [tokenTally, setTokenTally] = useState(0);
   const [model, setModel] = useState("gemini-2.5-flash");
@@ -43,6 +52,8 @@ export default function App() {
   const [showExtension, setShowExtension] = useState(false);
 
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [rightPaneWidth, setRightPaneWidth] = useState(450);
+  const [isResizing, setIsResizing] = useState(false);
 
   const isSendingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -77,6 +88,33 @@ export default function App() {
       abortControllerRef.current = null;
     }
   }, []);
+
+  // Auto-collapse when the viewport crosses the breakpoint, in both
+  // directions. `isNarrow` only changes on a crossing, so this never fights a
+  // deliberate toggle within one size class.
+  useEffect(() => setSidebarCollapsed(isNarrow), [isNarrow]);
+
+  const startResizing = useCallback(() => setIsResizing(true), []);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMouseMove = (e: MouseEvent) => {
+      // Clamp against what the chat column can spare, not just the window
+      // edge — dragging used to be able to starve it down to nothing.
+      const occupied = sidebarCollapsed ? 0 : SIDEBAR_WIDTH;
+      const available = window.innerWidth - occupied - CHAT_MIN_WIDTH;
+      const ceiling = Math.max(PANE_MIN_WIDTH, Math.min(PANE_MAX_WIDTH, available));
+      setRightPaneWidth(Math.max(PANE_MIN_WIDTH, Math.min(window.innerWidth - e.clientX, ceiling)));
+    };
+    const onMouseUp = () => setIsResizing(false);
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    return () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isResizing, sidebarCollapsed]);
 
   const send = useCallback(async (overrideText?: string) => {
     const text = (typeof overrideText === "string" ? overrideText : input).trim();
@@ -113,6 +151,9 @@ export default function App() {
           model_name: model,
           chat_id: chatIdRef.current,
           attachments: ready.map((a) => a.id as string),
+          // Minted client-side so this turn is identifiable even if the
+          // response never arrives; the proxy validates and echoes it back.
+          run_id: generateRunId(),
         },
         { 
           signal: abortController.signal,
@@ -205,11 +246,24 @@ export default function App() {
   const currentReport = selectedMessageId === "live" ? liveReport : selectedMsg?.report;
   
   // Right pane condition
-  const showRightPane = (selectedMessageId === "live" && causal) || 
-    (selectedMsg && (selectedMsg.stages?.length || (selectedMsg.report && hasCausalContent(selectedMsg.report))));
+  const showRightPane = Boolean(
+    (selectedMessageId === "live" && causal) || 
+    (selectedMsg && (
+      (selectedMsg.stages && selectedMsg.stages.length > 0) || 
+      (selectedMsg.report && hasCausalContent(selectedMsg.report))
+    ))
+  );
+
+  const closePane = useCallback(() => setSelectedMessageId(null), []);
 
   return (
-    <div className={`app-container ${showRightPane ? "has-right-pane" : ""}`}>
+    <div
+      className={
+        `app-container ${showRightPane ? "has-right-pane" : ""} ${isResizing ? "is-resizing" : ""}` +
+        (showRightPane && paneOverlays ? " pane-overlay" : "")
+      }
+      style={showRightPane ? { "--right-pane-width": `${rightPaneWidth}px` } as React.CSSProperties : undefined}
+    >
       <Sidebar
         collapsed={sidebarCollapsed}
         signedIn={approved}
@@ -267,14 +321,22 @@ export default function App() {
       </main>
 
       {showRightPane && (
-        <aside className="causal-pane">
-          <button className="close-pane-btn" onClick={() => setSelectedMessageId(null)}>×</button>
-          <CausalPanel
-            report={currentReport!}
-            stages={selectedMessageId === "live" ? run.stages : selectedMsg?.stages}
-            liveGraph={selectedMessageId === "live" ? run.graph : undefined}
-          />
-        </aside>
+        <>
+          {/* Overlaid, the pane sits above the chat, so it needs a scrim to
+              dismiss — otherwise on a phone there is no way back. */}
+          {paneOverlays && <div className="pane-scrim" onClick={closePane} />}
+          <aside className="causal-pane" aria-label="Causal reasoning details">
+            {/* Dragging is a pointer affordance; at overlay widths the pane is
+                full-bleed and there is nothing to drag against. */}
+            {!paneOverlays && <div className="pane-resizer" onMouseDown={startResizing} />}
+            <CausalPanel
+              report={currentReport!}
+              stages={selectedMessageId === "live" ? run.stages : selectedMsg?.stages}
+              liveGraph={selectedMessageId === "live" ? run.graph : undefined}
+              onClose={closePane}
+            />
+          </aside>
+        </>
       )}
 
       <AccessGate

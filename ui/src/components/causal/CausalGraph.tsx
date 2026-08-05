@@ -1,5 +1,6 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  Controls,
   Handle,
   Position,
   ReactFlow,
@@ -8,6 +9,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  KIND_LABEL,
   buildEdges,
   graphHeight,
   layoutNodes,
@@ -17,11 +19,23 @@ import {
 } from "../../lib/graph";
 import type { CausalGraph as CausalGraphType } from "../../types";
 
-const LEGEND: [string, string][] = [
-  ["done", "done"],
-  ["pending", "pending"],
+/** Node status. Order matches the lifecycle, so the key reads as a sequence. */
+const STATUS_LEGEND: [string, string][] = [
+  ["pending", "queued"],
+  ["active", "running"],
+  ["done", "verified"],
   ["failed", "failed"],
+];
+
+/**
+ * Link bands, generated from the same three classes `buildEdges` applies.
+ * The previous key documented a dotted-grey "low confidence" edge the renderer
+ * never produced, and called critical edges orange when they were violet.
+ */
+const EDGE_LEGEND: [string, string][] = [
   ["critical", "critical path"],
+  ["firm", "supported"],
+  ["soft", "weakly supported"],
 ];
 
 /**
@@ -36,15 +50,17 @@ const CausalNodeView = memo(function CausalNodeView({ data }: NodeProps) {
   return (
     <div
       className={
-        `dag-node ${status}` +
+        `dag-node ${status} kind-${kind}` +
         (onCritical ? " critical" : "") +
         (highlighted ? " highlighted" : "")
       }
       style={{ ["--hop" as string]: hop }}
       data-status={status}
-      title={`${label} · ${kind} · ${status} — click for details`}
     >
       <Handle type="target" position={Position.Top} isConnectable={false} />
+      {/* Role is the durable semantic — a confounder is a different object from
+          a mediator — so it is rendered, not hidden in a title attribute. */}
+      <span className="dag-node-kind">{KIND_LABEL[kind]}</span>
       <span className="dag-node-label">{label}</span>
       <Handle type="source" position={Position.Bottom} isConnectable={false} />
     </div>
@@ -70,8 +86,6 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
   graphRef.current = graph;
 
   // Synchronous, so the container is correctly sized on the very first paint.
-  // Deriving height from state instead would let fitView run against a stale
-  // height and zoom the diagram down to an unreadable size.
   // `key` is the only dependency by design: it is the topology fingerprint, and
   // depending on `graph` instead would re-run layout on every status frame —
   // exactly the jump this is here to prevent.
@@ -101,17 +115,40 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
   const edges = useMemo(() => buildEdges(graph), [graph]);
   const height = useMemo(() => graphHeight(base), [base]);
 
+  // React Flow warns — and computes a useless first fitView — when it mounts
+  // into a box with no width. In the side pane that is the first frame every
+  // time, so hold the canvas until the container has actually been laid out.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState(false);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const check = () => setMeasured(el.clientWidth > 0 && el.clientHeight > 0);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const rendered = useMemo(
     () =>
-      nodes.map((node) => ({
-        ...node,
-        // Selectable so React Flow gives the node pointer events at all: it
-        // sets pointer-events:none inline unless something needs them, and an
-        // onClick inside the custom node is invisible to that decision.
-        selectable: true,
-        focusable: true,
-        data: { ...node.data, highlighted: highlightedId === node.id },
-      })),
+      nodes.map((node) => {
+        const data = node.data as unknown as CausalNodeData;
+        return {
+          ...node,
+          // Selectable so React Flow gives the node pointer events at all: it
+          // sets pointer-events:none inline unless something needs them, and an
+          // onClick inside the custom node is invisible to that decision.
+          selectable: true,
+          focusable: true,
+          ariaLabel: `${data.label}. ${KIND_LABEL[data.kind]}, ${data.status}.` +
+            (data.onCritical ? " On the critical path." : ""),
+          data: {
+            ...node.data,
+            highlighted: highlightedId === node.id || highlightedId === data.label,
+          },
+        };
+      }),
     [nodes, highlightedId],
   );
 
@@ -119,36 +156,74 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
   // without a click handler. Don't advertise an affordance that isn't there.
   const interactive = !!onOpenNode;
 
+  // React Flow gives focused nodes no activation key of their own, so Enter and
+  // Space are handled here against whichever node currently holds focus.
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (!onOpenNode || (event.key !== "Enter" && event.key !== " ")) return;
+      const active = (event.target as HTMLElement).closest<HTMLElement>(".react-flow__node");
+      const id = active?.dataset.id;
+      if (!id) return;
+      event.preventDefault();
+      const node = nodes.find((n) => n.id === id);
+      if (node) onOpenNode(node.id, (node.data as unknown as CausalNodeData).label);
+    },
+    [nodes, onOpenNode],
+  );
+
   return (
     <div className="graph-card">
       <div
+        ref={boxRef}
         className={"causal-graph-container" + (interactive ? " interactive" : "")}
         style={{ height }}
+        onKeyDown={onKeyDown}
       >
-        <ReactFlow
-          nodes={rendered}
-          edges={edges}
-          nodeTypes={NODE_TYPES}
-          fitView
-          fitViewOptions={{ padding: 0.12 }}
-          onNodeClick={(_, node) =>
-            onOpenNode?.(node.id, (node.data as CausalNodeData).label)
-          }
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable
-          nodesFocusable
-          panOnScroll={false}
-          zoomOnScroll={false}
-          preventScrolling={false}
-          minZoom={0.2}
-          maxZoom={1.6}
-        />
+        {measured && (
+          <ReactFlow
+            nodes={rendered}
+            edges={edges}
+            nodeTypes={NODE_TYPES}
+            fitView
+            fitViewOptions={{ padding: 0.14 }}
+            onNodeClick={(_, node) =>
+              onOpenNode?.(node.id, (node.data as CausalNodeData).label)
+            }
+            nodesDraggable={false}
+            nodesConnectable={false}
+            elementsSelectable
+            nodesFocusable
+            // Edges carry no action and no accessible name; as tab stops they
+            // were seven dead keystrokes ahead of the first real one.
+            edgesFocusable={false}
+            // Wheel stays page scroll — the canvas sits inside a scrolling
+            // pane, so hijacking it would trap the reader. Zoom is explicit,
+            // via the controls below.
+            panOnScroll={false}
+            zoomOnScroll={false}
+            preventScrolling={false}
+            minZoom={0.15}
+            maxZoom={1.8}
+            proOptions={{ hideAttribution: false }}
+          >
+            <Controls showInteractive={false} position="bottom-right" />
+          </ReactFlow>
+        )}
       </div>
+
       <div className="graph-legend">
-        {LEGEND.map(([cls, label]) => (
+        <span className="legend-group-label">nodes</span>
+        {STATUS_LEGEND.map(([cls, label]) => (
           <span key={cls}>
             <i className={"lg-dot " + cls} />
+            {label}
+          </span>
+        ))}
+        <span className="legend-divider" aria-hidden="true">|</span>
+        <span className="legend-group-label">links</span>
+        {EDGE_LEGEND.map(([cls, label]) => (
+          <span key={cls}>
+            <i className={"lg-line " + cls} />
             {label}
           </span>
         ))}

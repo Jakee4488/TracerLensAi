@@ -32,9 +32,25 @@ export const EMPTY_ACCESS: AccessState = {
   extension_status: "none",
 };
 
+// sessionStorage, not localStorage: the session token dies when the browser
+// closes, which pairs with the 24h server-side TTL so neither a closed browser
+// nor one left open for days leaves a usable token behind. It is also
+// per-tab-group, so signing in on a shared machine doesn't leak into a window
+// someone else opens later.
+//
+// Migration note: an existing localStorage token is read once and moved over,
+// so the change doesn't sign out everyone who was already in.
 function read(key: string): string | null {
   try {
-    return localStorage.getItem(key);
+    const current = sessionStorage.getItem(key);
+    if (current !== null) return current;
+    const legacy = localStorage.getItem(key);
+    if (legacy !== null) {
+      sessionStorage.setItem(key, legacy);
+      localStorage.removeItem(key);
+      return legacy;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -42,8 +58,13 @@ function read(key: string): string | null {
 
 function write(key: string, value: string | null): void {
   try {
-    if (value === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, value);
+    if (value === null) {
+      sessionStorage.removeItem(key);
+      // Clear any pre-migration copy too, so "log out" really is a log out.
+      localStorage.removeItem(key);
+    } else {
+      sessionStorage.setItem(key, value);
+    }
   } catch {
     // Storage blocked; the session simply won't survive this page.
   }

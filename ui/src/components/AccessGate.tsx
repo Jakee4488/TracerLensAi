@@ -18,11 +18,15 @@ interface Props {
 
 const CONTACT = "jacobbinu4488code@gmail.com";
 
+/** Mirrors RESEND_COOLDOWN_S in proxy/access.py. */
+const RESEND_COOLDOWN_S = 30;
+
 export function AccessGate({ access, showExtension = false, onCloseExtension }: Props) {
   const { state, busy, error } = access;
   const [email, setEmail] = useState(state.email || "");
   const [reason, setReason] = useState("");
   const [dismissed, setDismissed] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const atLimit = state.status === "limit_reached";
@@ -32,6 +36,27 @@ export function AccessGate({ access, showExtension = false, onCloseExtension }: 
 
   // A new mode is new information, so an earlier dismissal shouldn't hide it.
   useEffect(() => setDismissed(false), [mode]);
+
+  // Arriving at "check your inbox" means a link was just sent, so the cooldown
+  // starts here rather than on the first click — otherwise the button looks
+  // available and answers 429.
+  useEffect(() => {
+    if (mode === "link_sent") setResendIn(RESEND_COOLDOWN_S);
+  }, [mode]);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = window.setTimeout(() => setResendIn((s) => s - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [resendIn]);
+
+  const resend = async () => {
+    if (!state.email) return;
+    await access.submitEmail(state.email);
+    // Restart the wait even on failure: the server counts from its own last
+    // successful send, and hammering it produces 429s rather than email.
+    setResendIn(RESEND_COOLDOWN_S);
+  };
 
   const close = () => {
     setDismissed(true);
@@ -113,11 +138,30 @@ export function AccessGate({ access, showExtension = false, onCloseExtension }: 
             <h2 className="access-title" id="access-title">Check your inbox</h2>
             <p className="access-lede">
               A sign-in link is on its way to <strong>{state.email}</strong>. It works once and
-              expires in 15 minutes.
+              expires in 15 minutes. Signing in keeps you in for a day, or until you close
+              your browser.
             </p>
-            <button className="access-secondary" onClick={() => access.logOut()}>
-              Use a different address
-            </button>
+            <div className="access-actions">
+              <button
+                className="access-primary"
+                id="access-resend"
+                onClick={() => void resend()}
+                disabled={busy || resendIn > 0}
+              >
+                {busy
+                  ? "Sending…"
+                  : resendIn > 0
+                    ? `Send another link (${resendIn}s)`
+                    : "Send another link"}
+              </button>
+              <button className="access-secondary" onClick={() => access.logOut()}>
+                Use a different address
+              </button>
+            </div>
+            <p className="access-hint">
+              Not arrived? Check spam — a new link replaces the previous one.
+            </p>
+            {error && <p className="access-error">{error}</p>}
           </div>
         )}
 

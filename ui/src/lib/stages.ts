@@ -16,6 +16,7 @@ export interface ProgressFrame {
   stage?: string | null;
   message?: string | null;
   step?: string | null;
+  steps?: string[];
   elapsed_ms?: number;
   index?: number;
   total?: number;
@@ -91,6 +92,10 @@ export function applyProgress(prev: Stage[], frame: ProgressFrame): Stage[] {
   const line = frame.step ?? frame.message;
   if (line && (stage.steps.length === 0 || stage.steps[stage.steps.length - 1] !== line)) {
     stage.steps.push(line);
+  }
+  
+  if (frame.steps && frame.steps.length > 0) {
+    stage.steps.push(...frame.steps);
   }
 
   if (typeof frame.index === "number" && typeof frame.total === "number") {

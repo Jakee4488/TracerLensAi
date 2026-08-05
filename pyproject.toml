@@ -16,7 +16,14 @@ dependencies = [
     "google-auth>=2.29.0",
     "google-agents-cli>=0.1.0",
     "google-adk[gcp]>=2.0.0",
-    "a2a-sdk[http-server]>=0.3.22",
+    # <0.4: pinned below a2a-sdk's 1.x line, which moved/removed
+    # a2a.server.apps.A2AFastAPIApplication (src/app_utils/a2a.py's import) and
+    # broke the deployed container at startup with ModuleNotFoundError. uv.lock
+    # already resolves to a working 0.3.26, but `agents-cli deploy` packages the
+    # agent bundle with its own fresh dependency resolve rather than the
+    # project lockfile, so the loose >=0.3.22 floated straight onto 1.1.2 the
+    # first time that resolve ran after the breaking release shipped.
+    "a2a-sdk[http-server]>=0.3.22,<0.4",
     "google-cloud-logging",
     "python-dotenv",
     "firebase-admin>=6.5.0",

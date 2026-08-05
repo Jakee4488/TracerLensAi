@@ -1,0 +1,249 @@
+# =============================================================================
+# deploy-staging.yml — every PR gets its own preview URL
+#
+# Purpose: see a change running on a real URL, against the real access gate,
+# before it goes anywhere near https://tracerlensai.com.
+#
+# Triggers:
+#   * pull_request opened / synchronize / reopened against main
+#       → deploy tracerlensai-app-staging-pr-<N>, one service per PR, so two
+#         open PRs never overwrite each other's preview.
+#   * pull_request closed (merged or abandoned)
+#       → delete that PR's service, so previews don't accumulate and bill
+#         forever. This is the whole reason previews are keyed on PR number
+#         rather than branch name: closing a PR is an unambiguous signal that
+#         its preview is finished, and a branch push is not.
+#   * workflow_dispatch
+#       → ad-hoc preview of any branch, named from `service_suffix`.
+#
+# Stages: deploy_to_gcp.sh --only proxy. Never `hosting` (firebase.json has a
+# single unnamed site rewriting to the production service, so deploying it
+# republishes the live domain) and never `agent` (agents-cli updates the one
+# shared Vertex AI Agent Engine in place). Changes under src/ are therefore
+# NOT exercised by a preview — they are only tested for real once merged.
+#
+# Config comes from the `staging` GitHub Environment, including a signing
+# secret distinct from production's: sharing one would make a session minted
+# on an unreviewed preview valid on the live site.
+# =============================================================================
+name: "Staging — Deploy PR to preview URL"
+
+on:
+  # All four PR actions share one `types:` array — a second `pull_request:`
+  # key would be a duplicate YAML mapping key, not a second trigger.
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      service_suffix:
+        description: 'Suffix for the Cloud Run service (lets two previews coexist)'
+        required: false
+        default: 'staging'
+        type: string
+
+# Keyed per PR: pushes to the same PR supersede each other, while different
+# PRs deploy in parallel to their own services.
+concurrency:
+  group: deploy-staging-${{ github.event.pull_request.number || inputs.service_suffix || 'manual' }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: 'icarus-agent-26'
+  REGION: 'europe-west2'
+
+jobs:
+  deploy-staging:
+    if: github.event.action != 'closed'
+    name: "Deploy preview"
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.preview.outputs.url }}
+
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      deployments: 'write'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A pull_request event checks out an ephemeral merge commit by
+          # default. Deploy what is actually on the PR branch, so the preview
+          # matches what a reviewer is reading.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Derive service name
+        id: names
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SUFFIX="staging-pr-${{ github.event.pull_request.number }}"
+          else
+            # Cloud Run names: lowercase alphanumerics and dashes, <=63 chars.
+            SUFFIX=$(echo "${{ inputs.service_suffix }}" \
+              | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/-*$//')
+            SUFFIX=${SUFFIX:-staging}
+          fi
+          echo "service=tracerlensai-app-${SUFFIX}" >> "$GITHUB_OUTPUT"
+
+      - name: Google Auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ vars.GCP_SERVICE_ACCOUNT }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Create .env for deploy_to_gcp.sh
+        run: |
+          echo "GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" > .env
+          echo "GOOGLE_CLOUD_REGION=${{ env.REGION }}" >> .env
+
+      - name: Look up existing preview URL
+        id: existing
+        # APP_URL has to be known before the deploy: proxy/main.py resolves it
+        # in its startup handler and the revision refuses to boot without one.
+        # A PR's first deploy comes back empty and uses a placeholder below.
+        run: |
+          URL=$(gcloud run services describe "${{ steps.names.outputs.service }}" \
+            --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" \
+            --format='value(status.url)' 2>/dev/null || true)
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          if [ -n "$URL" ]; then
+            echo "Existing preview: $URL"
+          else
+            echo "First deploy of this preview service."
+          fi
+
+      - name: Deploy proxy to preview service
+        env:
+          DEPLOY_SERVICE_NAME: ${{ steps.names.outputs.service }}
+          ACCESS_SIGNING_SECRET: ${{ secrets.ACCESS_SIGNING_SECRET }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ACCESS_NOTIFY_EMAIL: ${{ vars.ACCESS_NOTIFY_EMAIL }}
+          ACCESS_FROM_EMAIL: ${{ vars.ACCESS_FROM_EMAIL }}
+          # Set to tracerlensai-staging on the staging Environment, so preview
+          # approvals never mutate production's access records.
+          FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+          # Placeholder only on a first deploy; corrected below. Deliberately
+          # not a localhost URL, which the startup guard rejects outright.
+          APP_URL: ${{ steps.existing.outputs.url || 'https://preview-url-pending.invalid' }}
+        run: |
+          chmod +x deploy_to_gcp.sh
+          ./deploy_to_gcp.sh --only proxy
+
+      - name: Resolve preview URL and correct APP_URL
+        id: preview
+        # Every emailed sign-in link is built from APP_URL, so the placeholder
+        # has to be replaced before anyone tries to sign in to the preview.
+        run: |
+          URL=$(gcloud run services describe "${{ steps.names.outputs.service }}" \
+            --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" \
+            --format='value(status.url)')
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          if [ "$URL" != "${{ steps.existing.outputs.url }}" ]; then
+            echo "Setting APP_URL=${URL}"
+            gcloud run services update "${{ steps.names.outputs.service }}" \
+              --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" \
+              --update-env-vars "APP_URL=${URL}" --quiet
+          fi
+
+      - name: Smoke test
+        # Catches the deploy that reports success over a crash-looping
+        # revision — including the APP_URL startup guard firing, which is
+        # precisely the class of mistake a preview tier exists to surface.
+        run: |
+          URL="${{ steps.preview.outputs.url }}"
+          for i in $(seq 1 10); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${URL}/health" || true)
+            [ "$CODE" = "200" ] && { echo "healthy"; break; }
+            echo "attempt $i: /health -> ${CODE:-no response}"; sleep 6
+          done
+          [ "$CODE" = "200" ] || { echo "::error title=Preview unhealthy::${URL}/health returned ${CODE}"; exit 1; }
+          # The access gate must be on: an unauthenticated run has to be refused.
+          GATE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST "${URL}/analyze-prompt" \
+            -H 'Content-Type: application/json' -d '{"prompt":"ping","chat_id":"smoke"}' || true)
+          echo "unauthenticated /analyze-prompt -> ${GATE}"
+          case "$GATE" in
+            401|403) echo "gate enforced";;
+            *) echo "::error title=Gate not enforced::expected 401/403, got ${GATE}"; exit 1;;
+          esac
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Preview deployment"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| PR | ${{ github.event.pull_request.html_url || 'manual dispatch' }} |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Service | \`${{ steps.names.outputs.service }}\` |"
+            echo "| URL | ${{ steps.preview.outputs.url }} |"
+            echo ""
+            echo "Live site untouched — this ran \`--only proxy\`, so neither Firebase"
+            echo "Hosting nor the shared Agent Engine was redeployed. Changes under"
+            echo "\`src/\` are not exercised by this preview."
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              echo ""
+              echo "This preview is deleted automatically when the PR closes."
+            else
+              echo ""
+              echo "### Tear down when finished"
+              echo '```bash'
+              echo "gcloud run services delete ${{ steps.names.outputs.service }} \\"
+              echo "  --region ${{ env.REGION }} --project ${{ env.PROJECT_ID }} --quiet"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  teardown-staging:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    name: "Tear down preview for PR #${{ github.event.pull_request.number }}"
+    runs-on: ubuntu-latest
+    # Declared for a consistent Environments audit trail. Note this job reads
+    # no staging-scoped secret — only the repo-level WIF vars — so if
+    # protection rules (e.g. required reviewers) are ever added to `staging`,
+    # they would gate cleanup too and leave previews running until approved.
+    environment:
+      name: staging
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Google Auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
+          service_account: '${{ vars.GCP_SERVICE_ACCOUNT }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Delete preview service
+        # Tolerates a missing service: a PR closed without ever deploying (or
+        # one already cleaned up by hand) must not fail the run.
+        run: |
+          SERVICE="tracerlensai-app-staging-pr-${{ github.event.pull_request.number }}"
+          gcloud run services delete "$SERVICE" \
+            --region "${{ env.REGION }}" --project "${{ env.PROJECT_ID }}" --quiet \
+            || echo "Service $SERVICE did not exist or was already deleted."
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Preview torn down"
+            echo ""
+            echo "Service \`tracerlensai-app-staging-pr-${{ github.event.pull_request.number }}\` deleted."
+          } >> "$GITHUB_STEP_SUMMARY"
