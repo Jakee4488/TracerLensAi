@@ -22,6 +22,7 @@ from typing import Optional
 import httpx
 import google.auth
 import google.auth.transport.requests
+from google.cloud import firestore as gcf
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -102,11 +103,16 @@ async def admin_auth_verify(body: OtpVerify):
         ref.delete()
         raise HTTPException(status_code=401, detail="Invalid or expired code")
 
-    attempts = int(challenge.get("attempts", 0)) + 1
+    # Increment-then-read, not read-increment-write: parallel verifies would
+    # otherwise all read attempts=0 and all write 1, so OTP_MAX_ATTEMPTS would
+    # cap nothing and the six-digit space could be brute-forced concurrently.
+    # Increment is applied atomically, so each caller reads back a count that
+    # already includes every attempt racing it.
+    ref.update({"attempts": gcf.Increment(1)})
+    attempts = int((ref.get().to_dict() or {}).get("attempts", 0))
     if attempts > OTP_MAX_ATTEMPTS:
         ref.delete()
         raise HTTPException(status_code=429, detail="Too many attempts — start again")
-    ref.update({"attempts": attempts})
 
     if not hmac.compare_digest(_hash_code(body.code or ""), str(challenge.get("code_hash"))):
         raise HTTPException(status_code=401, detail="Invalid or expired code")
@@ -590,7 +596,7 @@ function render(){
   document.getElementById('alerts').innerHTML=(data.alerts||[]).map(a=>
     '<div class="alert"><b>'+(a.kind==='notify_failed'?'Notification failed':'Waiting over 24h')+
     '</b> — '+esc(a.email)+'<br><span class="muted">'+esc(a.detail)+'</span>'+
-    (a.kind==='notify_failed'?' <button class="sm" onclick="retry()">Retry send</button>':'')+
+    (a.kind==='notify_failed'?' <button class="sm" data-act="retry">Retry send</button>':'')+
     '</div>').join('');
   document.getElementById('panel').innerHTML=
     tab==='requests'?requestsView():tab==='users'?usersView():activityView();
@@ -602,8 +608,8 @@ function requestsView(){
     '<th>Notified</th><th class="right">Decision</th></tr>'+data.pending.map(u=>
     '<tr><td>'+esc(u.email)+'</td><td class="muted">'+ago(u.requested_at)+'</td>'+
     '<td>'+pill(u.notify_state==='sent'?'ok':'fail',u.notify_state||'—')+'</td>'+
-    '<td class="right"><button class="sm ok" onclick="approve(\''+esc(u.email)+'\')">Approve</button> '+
-    '<button class="sm no" onclick="deny(\''+esc(u.email)+'\')">Deny</button></td></tr>').join('')+
+    '<td class="right"><button class="sm ok" data-act="approve" data-email="'+esc(u.email)+'">Approve</button> '+
+    '<button class="sm no" data-act="deny" data-email="'+esc(u.email)+'">Deny</button></td></tr>').join('')+
     '</table></div>' : '<p class="muted">Nothing waiting.</p>';
 
   html+='<h3 style="margin:22px 0 12px;font-size:15px">Extension requests</h3>';
@@ -611,7 +617,7 @@ function requestsView(){
     '<div style="border-top:1px solid var(--bd);padding:12px 0"><div class="row">'+
     '<strong>'+esc(u.email)+'</strong><span class="muted">'+num(u.tokens_used)+' / '+
     num(u.token_limit)+' tokens</span>'+
-    '<button class="sm ok" onclick="grant(\''+esc(u.email)+'\')">Grant +200,000</button></div>'+
+    '<button class="sm ok" data-act="grant" data-email="'+esc(u.email)+'">Grant +200,000</button></div>'+
     (u.extension_message?'<div class="msg">'+esc(u.extension_message)+'</div>':'')+
     '</div>').join('') : '<p class="muted">Nothing waiting.</p>';
   return html;
@@ -630,7 +636,7 @@ function usersView(){
       '<td>'+(u.runs_failed?'<span class="pill fail">'+u.runs_failed+' · '+u.failure_rate+'%</span>':'<span class="muted">0</span>')+'</td>'+
       '<td class="muted">'+(u.avg_latency_ms?(u.avg_latency_ms/1000).toFixed(1)+'s':'—')+'</td>'+
       '<td class="muted">'+ago(u.last_run_at)+'</td>'+
-      '<td class="right"><button class="sm no" onclick="del(\''+esc(u.email)+'\')">Delete data</button></td></tr>';
+      '<td class="right"><button class="sm no" data-act="del" data-email="'+esc(u.email)+'">Delete data</button></td></tr>';
     }).join('')+'</table></div>';
 }
 
@@ -651,6 +657,20 @@ function activityView(){
 }
 
 function pill(cls,text){return '<span class="pill '+esc(cls)+'">'+esc(text)+'</span>';}
+
+// Row actions are delegated rather than inline onclick handlers. An email is
+// attacker-chosen text that reaches this page before anyone approves it, and
+// inside a double-quoted attribute the parser entity-decodes esc()'s &#39;
+// back to a quote *before* the JS is parsed — so interpolating one into
+// onclick="fn('...')" is injectable no matter how it was escaped. dataset
+// hands back the decoded value with no JS parsing step at all.
+const ACTIONS={approve,deny,grant,del,retry};
+document.addEventListener('click',e=>{
+  const btn=e.target.closest('button[data-act]');
+  if(!btn)return;
+  const fn=ACTIONS[btn.dataset.act];
+  if(fn)fn(btn.dataset.email||'');
+});
 
 document.getElementById('pw').addEventListener('keydown',e=>{if(e.key==='Enter')startAuth();});
 document.getElementById('code').addEventListener('keydown',e=>{if(e.key==='Enter')verifyAuth();});

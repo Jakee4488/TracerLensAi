@@ -661,3 +661,31 @@ def test_app_url_ignores_the_host_header(client: TestClient, fake_store, no_emai
     link = [m for m in no_email if "sign-in" in m["subject"].lower()][-1]["text"]
     assert "https://tracerlensai.com/?auth=" in link
     assert "evil.example.com" not in link
+
+
+# ── Address validation ───────────────────────────────────────────────────────
+
+def test_normalize_email_rejects_markup_and_quote_characters():
+    """These addresses are rendered in the admin dashboard before anyone vets
+    them, so the characters that buy an attacker markup are not accepted."""
+    for bad in ["a'b@example.com", 'a"b@example.com', "a(b@example.com",
+                "a)b@example.com", "a<b@example.com", "a>b@example.com",
+                "a;b@example.com", "a,b@example.com", "a\\b@example.com"]:
+        assert access.normalize_email(bad) is None, bad
+
+    # Ordinary addresses still normalise as before.
+    assert access.normalize_email("  Visitor@Example.COM ") == "visitor@example.com"
+    assert access.normalize_email("first.last+tag@sub.example.co.uk") is not None
+
+
+def test_email_pattern_is_anchored_at_both_ends():
+    """`$` also matches just *before* a trailing newline, so the pattern is
+    applied with fullmatch rather than match.
+
+    normalize_email strips before it validates, so this asserts against the
+    pattern directly — the point is that the anchor itself is sound, not that
+    the current caller happens to sanitise first.
+    """
+    assert access._EMAIL_RE.fullmatch("victim@example.com\n") is None
+    # Documents the hazard the anchor change closes.
+    assert access._EMAIL_RE.match("victim@example.com\n") is not None

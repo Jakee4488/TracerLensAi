@@ -1046,11 +1046,25 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
     steps_sent = 0
     last_stage = None
 
-    def _fail(kind: str):
-        """Record a failed turn. Tokens already burned still count."""
-        _record_turn(user, req, ok=False, started=started, error_kind=kind,
+    recorded = False
+
+    def _record(ok: bool, error_kind: Optional[str] = None):
+        """Record this turn exactly once, whatever way the stream ends.
+
+        Every exit path routes through here so a turn can never be billed
+        twice, and — more importantly — can never escape being billed at all.
+        """
+        nonlocal recorded
+        if recorded:
+            return
+        recorded = True
+        _record_turn(user, req, ok=ok, started=started, error_kind=error_kind,
                      tokens_in=prompt_token_count, tokens_out=candidates_token_count,
                      tokens_total=total_token_count)
+
+    def _fail(kind: str):
+        """Record a failed turn. Tokens already burned still count."""
+        _record(ok=False, error_kind=kind)
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1164,6 +1178,16 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                             yield _sse("graph", delta["causal_graph"])
                 finally:
                     pump.cancel()
+    except (GeneratorExit, asyncio.CancelledError):
+        # The client went away — the UI's Stop button aborts the fetch, which
+        # closes this generator and raises GeneratorExit at the suspended
+        # yield. Both of these derive from BaseException, so the `except
+        # Exception` below never sees them and the accounting after this block
+        # never runs. Tokens the upstream already burned still have to count,
+        # or Stop is an unlimited-quota bypass. Re-raise: a generator must not
+        # swallow its own teardown.
+        _record(ok=False, error_kind="aborted")
+        raise
     except Exception as e:
         traceback.print_exc()
         _fail("proxy_exception")
@@ -1241,9 +1265,7 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
         # persist to Firestore and replay through history without extra work.
         _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names,
                               _causal_payload(report), run_id)
-        _record_turn(user, req, ok=True, started=started,
-                     tokens_in=prompt_token_count, tokens_out=candidates_token_count,
-                     tokens_total=total_token_count)
+        _record(ok=True)
     except Exception as e:
         traceback.print_exc()
         _fail("assembly_failed")

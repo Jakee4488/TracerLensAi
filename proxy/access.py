@@ -288,7 +288,14 @@ def unsign(token: Optional[str], purpose: str) -> Optional[dict]:
 # Deliberately permissive: the only address that matters is one the visitor can
 # actually receive mail at, and the login link proves that far better than any
 # regex can. This just rejects obvious junk before it reaches the mail provider.
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+#
+# The excluded punctuation is defence in depth, not correctness: an unapproved
+# address is stored and rendered in the admin dashboard before anyone vets it,
+# so quotes, brackets, parens and semicolons buy an attacker markup/script
+# characters in a page an admin will open. RFC 5321 permits them in a quoted
+# local part; no real mailbox needs them, and the injection surface is not
+# worth the compatibility.
+_EMAIL_RE = re.compile(r"^[^@\s\"'()<>;,\\]+@[^@\s.]+(\.[^@\s.]+)+$")
 MAX_EMAIL_LEN = 254
 
 
@@ -297,7 +304,9 @@ def normalize_email(raw: Optional[str]) -> Optional[str]:
     if not isinstance(raw, str):
         return None
     email = raw.strip().lower()
-    if not email or len(email) > MAX_EMAIL_LEN or not _EMAIL_RE.match(email):
+    # fullmatch, not match: "$" also matches just before a trailing newline, so
+    # .match would accept "victim@example.com\n".
+    if not email or len(email) > MAX_EMAIL_LEN or not _EMAIL_RE.fullmatch(email):
         return None
     return email
 
@@ -480,14 +489,46 @@ def issue_login_nonce(email: str) -> Optional[str]:
 
 
 def consume_login_nonce(email: str, nonce: str) -> bool:
-    """Burn the nonce, so a forwarded or leaked link works exactly once."""
-    record = get_record(email, cached=False)
-    if not record or not record.get("login_nonce"):
-        return False
-    if not hmac.compare_digest(str(record["login_nonce"]), str(nonce)):
-        return False
-    update_record(email, {"login_nonce": None})
-    return True
+    """Burn the nonce, so a forwarded or leaked link works exactly once.
+
+    Read-compare-write is not enough to deliver that "exactly once": two
+    requests carrying the same leaked link can both read a live nonce before
+    either clears it, and both would be handed a full-length session. The
+    compare and the clear have to be a single atomic step, so on real
+    Firestore this runs in a transaction and only one caller can observe the
+    nonce still set. memstore has no transaction support and no concurrency to
+    protect against either (single process, offline dev only), so it keeps the
+    straight-line path.
+    """
+    def _matches(record: Optional[dict]) -> bool:
+        return bool(record
+                    and record.get("login_nonce")
+                    and hmac.compare_digest(str(record["login_nonce"]), str(nonce)))
+
+    db = get_db()
+    ref = db.collection(ACCESS_COLLECTION).document(email_key(email))
+    begin_transaction = getattr(db, "transaction", None)
+
+    if begin_transaction is None:  # ACCESS_STORE=memory
+        snapshot = ref.get()
+        if not _matches(snapshot.to_dict() if snapshot.exists else None):
+            return False
+        ref.update({"login_nonce": None})
+        invalidate(email)
+        return True
+
+    @gcf.transactional
+    def _consume(txn) -> bool:
+        snapshot = ref.get(transaction=txn)
+        if not _matches(snapshot.to_dict() if snapshot.exists else None):
+            return False
+        txn.update(ref, {"login_nonce": None})
+        return True
+
+    consumed = _consume(begin_transaction())
+    if consumed:
+        invalidate(email)
+    return consumed
 
 
 def delete_user(email: str) -> bool:
