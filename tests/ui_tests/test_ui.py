@@ -17,7 +17,10 @@ def test_page_loads(page: Page, server, console_errors):
     page.goto(server)
     assert "TracerLensAi" in page.title()
     expect(page.locator("#messages-area")).to_be_visible()
-    expect(page.locator(".msg.ai .bubble").first).to_contain_text("Causal Agent")
+    # The greeting is the empty state, not a transcript bubble: an untouched
+    # chat has no messages in it, so rendering one as a .msg would put a turn
+    # in the log that nobody took.
+    expect(page.locator(".empty-state-greeting")).to_contain_text("Causal Agent")
     expect(page.locator("#sidebar")).to_be_visible()
     expect(page.locator("#send-btn")).to_be_visible()
     page.wait_for_timeout(1500)  # let deferred scripts settle before checking console
@@ -61,14 +64,21 @@ def test_causal_toggle_renders_graph_and_steps(page: Page, server):
 
 def test_previous_graph_survives_new_message(page: Page, server):
     # Regression test for the old innerHTML+= re-parse bug that wiped
-    # previously rendered diagrams on every append.
+    # previously rendered diagrams on every append. Diagrams no longer stack
+    # inline — one shared pane shows the selected run — so the property that
+    # still has to hold is that going *back* to the earlier answer renders its
+    # graph again rather than an empty pane.
     page.goto(server)
     page.check("#causal-toggle")
     send_prompt(page, "First causal question")
-    expect(page.locator(".causal-graph-container")).to_have_count(1, timeout=15000)
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3, timeout=15000)
     send_prompt(page, "Second causal question")
-    expect(page.locator(".causal-graph-container")).to_have_count(2, timeout=15000)
-    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(6)
+    # Both answers have landed, and the pane follows the newest.
+    expect(page.locator(".view-details-btn")).to_have_count(2, timeout=25000)
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3)
+    # The first answer's derivation is still intact and reachable.
+    page.locator(".view-details-btn").first.click()
+    expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3)
 
 
 def test_upload_flow(page: Page, server, sample_txt):
@@ -116,7 +126,10 @@ def test_new_chat_clears(page: Page, server):
     send_prompt(page, "Some message")
     expect(page.locator("#token-tally-badge")).to_have_text("10 tokens used")
     page.click("#new-chat-btn")
-    expect(page.locator(".msg")).to_have_count(1)  # greeting only
+    # Back to the empty state: the greeting is not a transcript entry, so a
+    # cleared chat holds no .msg at all.
+    expect(page.locator(".msg")).to_have_count(0)
+    expect(page.locator(".empty-state")).to_be_visible()
     expect(page.locator("#token-tally-badge")).to_have_text("0 tokens used")
 
 
@@ -150,9 +163,10 @@ def test_timeline_replaces_dots_in_causal_mode(page: Page, server):
     page.goto(server)
     page.check("#causal-toggle")
     send_prompt(page, "Why does it rain?")
-    # The nine-stage pipeline is shown instead of the three-dot indicator.
+    # The pipeline (lib/stages.ts STAGE_ORDER) is shown in the pane instead of
+    # the three-dot indicator.
     expect(page.locator(".workflow-timeline")).to_be_visible()
-    expect(page.locator(".stage-row")).to_have_count(9)
+    expect(page.locator(".stage-row")).to_have_count(8)
     expect(page.locator(".typing")).to_have_count(0)
 
 
@@ -166,19 +180,22 @@ def test_timeline_stages_advance_during_run(page: Page, server):
     expect(page.locator(".stage-row.done").first).to_be_visible()
 
 
-def test_timeline_collapses_to_summary_when_done(page: Page, server):
+def test_timeline_settles_when_the_run_lands(page: Page, server):
+    """The pane keeps the finished pipeline rather than collapsing it.
+
+    Covers finalizeStages(): nothing may still read as in-flight once the run
+    is over, or a settled answer looks like it is still working.
+    """
     page.goto(server)
     page.check("#causal-toggle")
     send_prompt(page, "Why does it rain?")
-    summary = page.locator(".timeline-summary")
-    expect(summary).to_be_visible(timeout=20000)
-    expect(summary).to_contain_text("stages")
-    # Collapsed by default so replayed history isn't dominated by it...
-    expect(page.locator(".stage-row")).to_have_count(0)
-    summary.click()
-    # ...and expandable, showing only the stages that actually ran.
-    expect(page.locator(".stage-row")).not_to_have_count(0)
-    expect(page.locator(".stage-row.skipped")).to_have_count(0)
+    expect(page.locator(".export-run-btn")).to_be_enabled(timeout=25000)
+    expect(page.locator(".workflow-timeline")).to_be_visible()
+    expect(page.locator(".stage-row")).to_have_count(8)
+    # active -> done and pending -> skipped, so neither state survives the run.
+    expect(page.locator(".stage-row.active")).to_have_count(0)
+    expect(page.locator(".stage-row.pending")).to_have_count(0)
+    expect(page.locator(".stage-row.done")).not_to_have_count(0)
 
 
 def test_graph_renders_before_final_answer(page: Page, server):
@@ -187,8 +204,8 @@ def test_graph_renders_before_final_answer(page: Page, server):
     page.check("#causal-toggle")
     send_prompt(page, "Why does it rain?")
     expect(page.locator(".causal-graph-container .react-flow__node")).to_have_count(3, timeout=15000)
-    # Still streaming: the finished panel's summary strip has not appeared yet.
-    expect(page.locator(".timeline-summary")).to_have_count(0)
+    # Still streaming: the report has not landed, so export stays disabled.
+    expect(page.locator(".export-run-btn")).to_be_disabled()
 
 
 def test_non_causal_mode_keeps_typing_dots(page: Page, server):
@@ -206,7 +223,12 @@ def test_timeline_readable_with_reduced_motion(page: Page, server):
         page.goto(server)
         page.check("#causal-toggle")
         send_prompt(page, "Why does it rain?")
-        expect(page.locator(".stage-row")).to_have_count(9)
+        expect(page.locator(".stage-row")).to_have_count(8)
+        # Trace lines live under a collapsed row; only rows that recorded
+        # something render as a button, so this also picks one that has steps.
+        head = page.locator(".stage-row button.stage-head").first
+        expect(head).to_be_visible(timeout=15000)
+        head.click()
         step = page.locator(".stage-steps li").first
         expect(step).to_be_visible(timeout=15000)
         opacity = step.evaluate("el => getComputedStyle(el).opacity")
@@ -227,8 +249,9 @@ def test_dag_nodes_animate_through_statuses(page: Page, server):
     expect(page.locator(".dag-node")).to_have_count(3, timeout=15000)
     # Some node reaches `active` mid-run...
     expect(page.locator(".dag-node.active")).not_to_have_count(0)
-    # ...and all of them are done once the run finishes.
-    expect(page.locator(".timeline-summary")).to_be_visible(timeout=20000)
+    # ...and all of them are done once the run finishes. Export enabling is the
+    # panel's "this run has landed" signal (it keys off report.response).
+    expect(page.locator(".export-run-btn")).to_be_enabled(timeout=25000)
     expect(page.locator(".dag-node.done")).to_have_count(3)
 
 
@@ -296,7 +319,7 @@ def test_node_click_opens_drawer(page: Page, server):
     page.check("#causal-toggle")
     send_prompt(page, "Why does it rain?")
     # Drill-down lives on the finished panel — mid-run the ledger is partial.
-    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    expect(page.locator(".export-run-btn")).to_be_enabled(timeout=25000)
     page.locator(".dag-node", has_text="Analysis").click()
     drawer = page.locator(".step-drawer")
     expect(drawer).to_be_visible()
@@ -312,7 +335,7 @@ def test_drawer_affected_chips_highlight_the_dag(page: Page, server):
     page.check("#causal-toggle")
     send_prompt(page, "Why does it rain?")
     # Drill-down lives on the finished panel — mid-run the ledger is partial.
-    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    expect(page.locator(".export-run-btn")).to_be_enabled(timeout=25000)
     page.locator(".dag-node", has_text="Analysis").click()
     chip = page.locator(".affected-chip")
     expect(chip).to_have_count(1)          # the failed step invalidated `outcome`
@@ -326,9 +349,10 @@ def test_drawer_empty_state_for_unexecuted_component(page: Page, server):
     page.check("#causal-toggle")
     send_prompt(page, "Why does it rain?")
     # Drill-down lives on the finished panel — mid-run the ledger is partial.
-    expect(page.locator(".timeline-summary")).to_be_visible(timeout=25000)
+    expect(page.locator(".export-run-btn")).to_be_enabled(timeout=25000)
     page.locator(".dag-node", has_text="Outcome").click()
-    expect(page.locator(".drawer-empty")).to_contain_text("never executed")
+    # A component the executor never checked reads as unverified, not as passed.
+    expect(page.locator(".drawer-empty")).to_contain_text("No verification was recorded")
 
 
 # ── Traceability & explainability ─────────────────────────────────────────────

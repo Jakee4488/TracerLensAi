@@ -7,7 +7,6 @@
 # the revision takes all the traffic. Use deploy_to_gcp.sh, which builds each
 # image against the service that expects it. src/fast_api_app.py refuses to
 # boot if it finds the proxy's env, so a wrong deploy fails instead of landing.
-
 # Stage 1: Build dependencies
 FROM python:3.12-slim as builder
 
