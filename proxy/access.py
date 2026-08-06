@@ -830,9 +830,17 @@ async def send_email(to: str, subject: str, text: str, html: Optional[str] = Non
     enough to route mail through a personal mailbox without touching the
     Resend settings that a deployment may still carry.
 
-    With neither configured the message is printed instead — that is what lets
-    mock mode, CI, and the E2E suite exercise the whole approval flow without a
-    single secret configured.
+    With neither configured the message is printed. Whether that *counts* as
+    delivered is the difference between a dev box and a deployment, so it is an
+    explicit choice rather than a guess: ACCESS_MAIL_TRANSPORT=console says
+    "printing is the transport here", which is what lets mock mode, CI, and the
+    E2E suite exercise the whole approval flow without a single credential.
+
+    Left unset, an unconfigured mailer is reported as the failure it is. That
+    asymmetry is deliberate — the access gate is entirely email-driven, so a
+    deployment whose mail silently no-ops does not degrade, it locks every
+    visitor out while reporting success. Better a loud 502 on the first
+    sign-in than a site that looks healthy and admits nobody.
     """
     if not to:
         # getenv(name, default) only falls back when a variable is *absent*, so
@@ -853,9 +861,17 @@ async def send_email(to: str, subject: str, text: str, html: Optional[str] = Non
 
     api_key = os.getenv("RESEND_API_KEY")
     if not api_key:
+        console = os.getenv("ACCESS_MAIL_TRANSPORT", "").strip().lower() == "console"
         rule = "-" * 46
-        log(f"\n{rule}\nEMAIL (not sent, no SMTP_* or RESEND_API_KEY configured)\n"
+        label = ("EMAIL (console transport — printed, not sent)" if console
+                 else "EMAIL (not sent, no SMTP_* or RESEND_API_KEY configured)")
+        log(f"\n{rule}\n{label}\n"
             f"To: {to}\nSubject: {subject}\n\n{text}\n{rule}\n")
+        if console:
+            # The log *is* the inbox in this mode: the E2E suite reads its
+            # sign-in links straight back out of this output, so reporting a
+            # send here is accurate rather than a stub.
+            return True, ""
         return False, "no mail transport configured"
     payload = {"from": from_email(), "to": [to], "subject": subject, "text": text}
     if html:
