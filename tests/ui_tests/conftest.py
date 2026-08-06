@@ -73,9 +73,9 @@ def ui_bundle():
 def server(ui_bundle, tmp_path_factory):  # noqa: ARG001 — ordering dependency
     """Boot the proxy in mock mode and wait for /health.
 
-    Output is captured rather than discarded: with RESEND_API_KEY unset the
-    notifier prints each message instead of sending it, so the log is this
-    suite's inbox — which is how the sign-in-link test gets a real link.
+    Output is captured rather than discarded: the console mail transport prints
+    each message instead of sending it, so the log is this suite's inbox —
+    which is how the sign-in-link test gets a real link.
     """
     env = {k: v for k, v in os.environ.items() if k != "AGENT_ENGINE_ENDPOINT"}
     # No cloud, no mail: access records live in memory and every email is
@@ -84,7 +84,14 @@ def server(ui_bundle, tmp_path_factory):  # noqa: ARG001 — ordering dependency
     env["ACCESS_SIGNING_SECRET"] = ACCESS_SECRET
     env["ADMIN_TOKEN"] = ADMIN_PASSWORD
     env["APP_URL"] = BASE_URL
-    env.pop("RESEND_API_KEY", None)
+    env["ACCESS_MAIL_TRANSPORT"] = "console"
+    # Every real transport is cleared, not just Resend. send_email() checks
+    # SMTP first and uses it whenever all four values are present, so inheriting
+    # a developer's SMTP_* from their shell would quietly aim this suite at a
+    # live mailbox — mailing a stranger at E2E_EMAIL on every run, and failing
+    # the tests that expect to read the link back out of the log.
+    for name in ("RESEND_API_KEY", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD"):
+        env.pop(name, None)
 
     log_path = tmp_path_factory.mktemp("proxy") / "server.log"
     log = log_path.open("w", encoding="utf-8")
@@ -128,8 +135,8 @@ _server_log: list = []
 def wait_for_email(server):  # noqa: ARG001 — the log only exists once it's running
     """Search the server's printed output — this suite's inbox.
 
-    With RESEND_API_KEY unset the notifier prints each message rather than
-    sending it, so tests can pick real approve/sign-in links out of the log
+    Under ACCESS_MAIL_TRANSPORT=console the notifier prints each message rather
+    than sending it, so tests can pick real approve/sign-in links out of the log
     instead of forging their own.
     """
     import re

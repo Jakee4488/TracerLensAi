@@ -81,6 +81,10 @@ NOTIFY_MAX_ATTEMPTS = 5
 RESEND_COOLDOWN_S = 30
 
 _RECORD_CACHE_TTL_S = 30.0
+# Only a trigger for sweeping expired entries, not a hard ceiling: everything
+# past the TTL is dead weight anyway, so the cache settles at roughly the number
+# of addresses actually active within a 30-second window.
+_RECORD_CACHE_MAX = 512
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -288,7 +292,14 @@ def unsign(token: Optional[str], purpose: str) -> Optional[dict]:
 # Deliberately permissive: the only address that matters is one the visitor can
 # actually receive mail at, and the login link proves that far better than any
 # regex can. This just rejects obvious junk before it reaches the mail provider.
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+#
+# The excluded punctuation is defence in depth, not correctness: an unapproved
+# address is stored and rendered in the admin dashboard before anyone vets it,
+# so quotes, brackets, parens and semicolons buy an attacker markup/script
+# characters in a page an admin will open. RFC 5321 permits them in a quoted
+# local part; no real mailbox needs them, and the injection surface is not
+# worth the compatibility.
+_EMAIL_RE = re.compile(r"^[^@\s\"'()<>;,\\]+@[^@\s.]+(\.[^@\s.]+)+$")
 MAX_EMAIL_LEN = 254
 
 
@@ -297,7 +308,9 @@ def normalize_email(raw: Optional[str]) -> Optional[str]:
     if not isinstance(raw, str):
         return None
     email = raw.strip().lower()
-    if not email or len(email) > MAX_EMAIL_LEN or not _EMAIL_RE.match(email):
+    # fullmatch, not match: "$" also matches just before a trailing newline, so
+    # .match would accept "victim@example.com\n".
+    if not email or len(email) > MAX_EMAIL_LEN or not _EMAIL_RE.fullmatch(email):
         return None
     return email
 
@@ -323,6 +336,13 @@ _record_cache: dict = {}
 
 
 def _cache_put(key: str, record: Optional[dict]) -> None:
+    # Evict on write. invalidate() only ever removed the one key it was given,
+    # so entries for addresses that never came back sat here for the life of
+    # the process and the cache grew with every distinct visitor.
+    if len(_record_cache) > _RECORD_CACHE_MAX:
+        cutoff = time.monotonic() - _RECORD_CACHE_TTL_S
+        for stale in [k for k, (at, _) in _record_cache.items() if at < cutoff]:
+            _record_cache.pop(stale, None)
     _record_cache[key] = (time.monotonic(), record)
 
 
@@ -480,14 +500,46 @@ def issue_login_nonce(email: str) -> Optional[str]:
 
 
 def consume_login_nonce(email: str, nonce: str) -> bool:
-    """Burn the nonce, so a forwarded or leaked link works exactly once."""
-    record = get_record(email, cached=False)
-    if not record or not record.get("login_nonce"):
-        return False
-    if not hmac.compare_digest(str(record["login_nonce"]), str(nonce)):
-        return False
-    update_record(email, {"login_nonce": None})
-    return True
+    """Burn the nonce, so a forwarded or leaked link works exactly once.
+
+    Read-compare-write is not enough to deliver that "exactly once": two
+    requests carrying the same leaked link can both read a live nonce before
+    either clears it, and both would be handed a full-length session. The
+    compare and the clear have to be a single atomic step, so on real
+    Firestore this runs in a transaction and only one caller can observe the
+    nonce still set. memstore has no transaction support and no concurrency to
+    protect against either (single process, offline dev only), so it keeps the
+    straight-line path.
+    """
+    def _matches(record: Optional[dict]) -> bool:
+        return bool(record
+                    and record.get("login_nonce")
+                    and hmac.compare_digest(str(record["login_nonce"]), str(nonce)))
+
+    db = get_db()
+    ref = db.collection(ACCESS_COLLECTION).document(email_key(email))
+    begin_transaction = getattr(db, "transaction", None)
+
+    if begin_transaction is None:  # ACCESS_STORE=memory
+        snapshot = ref.get()
+        if not _matches(snapshot.to_dict() if snapshot.exists else None):
+            return False
+        ref.update({"login_nonce": None})
+        invalidate(email)
+        return True
+
+    @gcf.transactional
+    def _consume(txn) -> bool:
+        snapshot = ref.get(transaction=txn)
+        if not _matches(snapshot.to_dict() if snapshot.exists else None):
+            return False
+        txn.update(ref, {"login_nonce": None})
+        return True
+
+    consumed = _consume(begin_transaction())
+    if consumed:
+        invalidate(email)
+    return consumed
 
 
 def delete_user(email: str) -> bool:
@@ -778,9 +830,17 @@ async def send_email(to: str, subject: str, text: str, html: Optional[str] = Non
     enough to route mail through a personal mailbox without touching the
     Resend settings that a deployment may still carry.
 
-    With neither configured the message is printed instead — that is what lets
-    mock mode, CI, and the E2E suite exercise the whole approval flow without a
-    single secret configured.
+    With neither configured the message is printed. Whether that *counts* as
+    delivered is the difference between a dev box and a deployment, so it is an
+    explicit choice rather than a guess: ACCESS_MAIL_TRANSPORT=console says
+    "printing is the transport here", which is what lets mock mode, CI, and the
+    E2E suite exercise the whole approval flow without a single credential.
+
+    Left unset, an unconfigured mailer is reported as the failure it is. That
+    asymmetry is deliberate — the access gate is entirely email-driven, so a
+    deployment whose mail silently no-ops does not degrade, it locks every
+    visitor out while reporting success. Better a loud 502 on the first
+    sign-in than a site that looks healthy and admits nobody.
     """
     if not to:
         # getenv(name, default) only falls back when a variable is *absent*, so
@@ -801,9 +861,17 @@ async def send_email(to: str, subject: str, text: str, html: Optional[str] = Non
 
     api_key = os.getenv("RESEND_API_KEY")
     if not api_key:
+        console = os.getenv("ACCESS_MAIL_TRANSPORT", "").strip().lower() == "console"
         rule = "-" * 46
-        log(f"\n{rule}\nEMAIL (not sent, no SMTP_* or RESEND_API_KEY configured)\n"
+        label = ("EMAIL (console transport — printed, not sent)" if console
+                 else "EMAIL (not sent, no SMTP_* or RESEND_API_KEY configured)")
+        log(f"\n{rule}\n{label}\n"
             f"To: {to}\nSubject: {subject}\n\n{text}\n{rule}\n")
+        if console:
+            # The log *is* the inbox in this mode: the E2E suite reads its
+            # sign-in links straight back out of this output, so reporting a
+            # send here is accurate rather than a stub.
+            return True, ""
         return False, "no mail transport configured"
     payload = {"from": from_email(), "to": [to], "subject": subject, "text": text}
     if html:
@@ -973,6 +1041,10 @@ async def retry_failed_notifications(limit: int = 20) -> int:
                 int(record.get("tokens_used", 0)), int(record.get("token_limit", 0)))
         else:
             continue
-        if get_record(email, cached=False).get("notify_state") == "sent":
+        # get_record returns None for a record deleted while this batch ran
+        # (a user exercising "Delete my data" mid-retry). Without the guard the
+        # AttributeError 500s the endpoint and skips every remaining record.
+        refreshed = get_record(email, cached=False) or {}
+        if refreshed.get("notify_state") == "sent":
             recovered += 1
     return recovered

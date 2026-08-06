@@ -265,13 +265,13 @@ then `agents-cli eval grade`.
 
 ### 6a. Prerequisites (one-time)
 
-Because the agents use ADK **instruction providers** (callables) and the project
-ships `requirements.txt` rather than a `uv` layout, two compatibility pieces exist:
+Because the agents use ADK **instruction providers** (callables), two
+compatibility pieces exist:
 
 - [`pyproject.toml`](../pyproject.toml) — mirrors `requirements.txt` and adds an
   `eval` extra, so `agents-cli eval` (which runs `uv sync --dev --extra eval`)
   can resolve the environment. `requirements.txt` stays the source of truth for
-  Docker/prod.
+  Docker/prod, and `uv.lock` is committed with `uv lock --check` enforced in CI.
 - [`src/_eval_compat.py`](../src/_eval_compat.py) — a behavior-preserving shim
   (hooked from [`src/agent.py`](../src/agent.py)) that lets the Vertex eval SDK
   serialise the causal agents' **callable** instructions instead of crashing on
@@ -311,8 +311,9 @@ agents-cli eval compare artifacts/grade_results/results_<old>.json \
 Open the `results_<ts>.html` in a browser for per-case rubric verdicts and judge
 rationales — that's the input to every fix decision.
 
-> `artifacts/` is run output (traces + reports); it is not source and is a good
-> candidate for `.gitignore`.
+> `artifacts/` is run output (traces + reports), not source — but it is
+> **currently tracked in git**. Either add it to `.gitignore` or accept that
+> every eval run dirties the working tree.
 
 ---
 
@@ -351,10 +352,11 @@ independently.
 ## 8. The `pytest` layer (deterministic, offline)
 
 The eval layer proves the *answers* are good; the `pytest` suite proves the
-*machinery* is correct — with **no network and no LLM**, so it's fast and
-runs on every push. It's the CI gate
-([`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs
-`pytest tests/ --ignore=tests/ui_tests`).
+*machinery* is correct — with **no network and no LLM**, so it's fast and runs on
+every push. [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs three
+things: `uv lock --check` (the lockfile must agree with `pyproject.toml` —
+added after a drifted lock broke production), `pytest tests/ --ignore=tests/ui_tests`,
+and the UI's `npm ci && lint && typecheck && build`.
 
 | Test file | Layer | What it guards |
 |---|---|---|
@@ -366,9 +368,13 @@ runs on every push. It's the CI gate
 | [`test_causal_discovery.py`](../tests/test_causal_discovery.py) | DAG discovery | Data-driven DAG correction: a correct DAG is left untouched; a reversed edge / omitted confounder is corrected; untestable/no-data guards; never-raises. `importorskip("causallearn")`. |
 | [`test_causal_benchmark.py`](../tests/test_causal_benchmark.py) | Ground truth | Synthetic SCMs with known ATEs (confounders, mediator/collider traps, unobserved confounder → IV) across seeds. `importorskip("dowhy")`. |
 | [`test_causal_complexity.py`](../tests/test_causal_complexity.py) | Budgeting | Complexity tiering → budget sizing from query text. |
-| [`test_main.py`](../tests/test_main.py) | Proxy | The Cloud Run proxy (FastAPI `TestClient`) with a **fake Firestore** — routing, history, uploads. |
+| [`test_causal_prompts.py`](../tests/test_causal_prompts.py) | Prompts | Instruction providers render against real and empty state, and emit `[Node: <label>]` in the form the UI's citation linkifier expects. |
+| [`test_main.py`](../tests/test_main.py) | Proxy | The Cloud Run proxy (FastAPI `TestClient`) against `proxy/memstore.py` — routing, history, uploads, and token accounting including the aborted-stream path. |
 | [`test_main_causal.py`](../tests/test_main_causal.py) | Proxy transport | The causal transport: marker detection and `state_delta` streaming through the proxy. |
-| [`tests/ui_tests/test_ui.py`](../tests/ui_tests/test_ui.py) | UI (E2E) | **Playwright** browser tests against the mock-mode proxy. **Excluded from CI** (needs a live stack); run locally. |
+| [`test_access.py`](../tests/test_access.py) | Access gate | Login branches, single-use links, revocation, address validation, quota accounting, extensions, erasure, retention. |
+| [`test_admin.py`](../tests/test_admin.py) | Admin | OTP two-factor, per-endpoint session enforcement, one-click link tampering, dashboard injection, the retention sweep. |
+| [`test_app_entrypoint.py`](../tests/test_app_entrypoint.py) | Packaging | The production ASGI entrypoint imports and serves — added after a deploy failed on an import that no test exercised. |
+| [`tests/ui_tests/`](../tests/ui_tests/) | UI (E2E) | **Playwright** browser tests against the mock-mode proxy. **Not run by CI** — they need a built bundle (`npm run build`) and a browser. Run locally. |
 
 ```bash
 # Backend suite (what CI runs) — fast, offline

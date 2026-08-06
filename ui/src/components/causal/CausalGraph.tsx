@@ -11,6 +11,7 @@ import "@xyflow/react/dist/style.css";
 import {
   KIND_LABEL,
   buildEdges,
+  edgeAppearanceKey,
   graphHeight,
   layoutNodes,
   topologyKey,
@@ -112,7 +113,13 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
     });
   }, [graph]);
 
-  const edges = useMemo(() => buildEdges(graph), [graph]);
+  // Same reasoning as the layout memo above: `graph` is a fresh object on every
+  // status frame, so depending on it rebuilt the whole edge array dozens of
+  // times per run. The key covers everything buildEdges reads — endpoints,
+  // confidence, and the critical path — and nothing it doesn't.
+  const edgeKey = edgeAppearanceKey(graph);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const edges = useMemo(() => buildEdges(graphRef.current), [edgeKey]);
   const height = useMemo(() => graphHeight(base), [base]);
 
   // React Flow warns — and computes a useless first fitView — when it mounts
@@ -134,6 +141,7 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
     () =>
       nodes.map((node) => {
         const data = node.data as unknown as CausalNodeData;
+        const highlighted = highlightedId === node.id || highlightedId === data.label;
         return {
           ...node,
           // Selectable so React Flow gives the node pointer events at all: it
@@ -143,10 +151,11 @@ export function CausalGraph({ graph, onOpenNode, highlightedId }: Props) {
           focusable: true,
           ariaLabel: `${data.label}. ${KIND_LABEL[data.kind]}, ${data.status}.` +
             (data.onCritical ? " On the critical path." : ""),
-          data: {
-            ...node.data,
-            highlighted: highlightedId === node.id || highlightedId === data.label,
-          },
+          // Reuse the existing data object when the highlight hasn't changed.
+          // CausalNodeView is memo'd on shallow prop equality, so handing it a
+          // freshly-built `data` on every frame defeated that memo completely —
+          // every node re-rendered on every status update regardless.
+          data: data.highlighted === highlighted ? node.data : { ...node.data, highlighted },
         };
       }),
     [nodes, highlightedId],

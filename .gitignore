@@ -74,6 +74,9 @@ docker-compose.override.yml
 test_vertex.py
 
 logs/
+# Container log captures (`docker compose logs > ...`). One of these was
+# committed once; it carried internal endpoint ids and 40KB of health checks.
+*_logs.txt
 
 data/
 app.db

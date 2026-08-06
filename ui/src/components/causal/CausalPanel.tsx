@@ -184,11 +184,6 @@ export function CausalPanel({ report, stages, liveGraph, onClose }: Props) {
 }
 
 /** Whether a report has anything causal worth showing a panel for. */
-export function hasCausalContent(report: Report): boolean {
-  return (
-    (report.causal_reasoning_steps || []).length > 0 ||
-    !!report.causal_graph?.nodes?.length ||
-    !!report.causal_estimand ||
-    !!report.causal_web_retrieval
-  );
-}
+// Moved to ../../lib/causal so callers can ask the question without importing
+// this module (and with it ReactFlow + dagre). Re-exported for convenience.
+export { hasCausalContent } from "../../lib/causal";

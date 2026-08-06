@@ -286,7 +286,11 @@ def test_analyze_prompt_authenticated_passes_user_key_to_engine(
 
 # ── Agent session isolation ──────────────────────────────────────────────────
 
-ANON_A = "11111111-2222-4333-8444-555555555555"
+# The shape the browser actually sends: "anon-" + hex, minted by getAnonId in
+# ui/src/lib/ids.ts. This used to be a bare UUID, which no client has ever sent —
+# so the fallback tested below looked covered while collapsing every real
+# signed-out caller onto one shared agent session id.
+ANON_A = "anon-1111222233334444555566a6"
 
 def test_distinct_users_get_distinct_agent_sessions(client: TestClient, fake_store,
                                                     approved, fake_engine):
@@ -315,7 +319,12 @@ def test_session_wins_over_anon_id_header(client: TestClient, fake_store, approv
     client.post("/analyze-prompt", json={"prompt": "Why rain?", "chat_id": "c1"}, headers=headers)
     assert fake_engine["payload"]["input"]["user_id"] == USER_KEY
 
-@pytest.mark.parametrize("bad", ["", "../../etc/passwd", "not-a-uuid", "x" * 500])
+@pytest.mark.parametrize("bad", [
+    "", "../../etc/passwd", "not-a-uuid", "x" * 500,
+    # A bare UUID is what the pattern used to accept and no client ever sends.
+    "11111111-2222-4333-8444-555555555555",
+    "anon-nothex!!", "anon-",
+])
 def test_malformed_anon_id_falls_back_to_unknown(bad):
     """The sessionless fallback is unreachable via the gate, but must stay safe.
 
@@ -324,7 +333,7 @@ def test_malformed_anon_id_falls_back_to_unknown(bad):
     """
     assert proxy_main._agent_user_id(None, bad) == "anon:unknown"
 
-def test_anon_id_fallback_keeps_valid_uuids_distinct():
+def test_anon_id_fallback_keeps_real_client_ids_distinct():
     assert proxy_main._agent_user_id(None, ANON_A) == f"anon:{ANON_A}"
 
 def test_missing_chat_id_gets_throwaway_session(client: TestClient, fake_store,
@@ -507,7 +516,9 @@ def test_attachment_ownership_enforced(client: TestClient, fake_store, approved)
 
 def test_expired_upload_is_unreachable(client: TestClient, fake_store, approved, monkeypatch):
     """Attachments ride the same 24h clock as the chats they belong to."""
-    monkeypatch.setenv("CHAT_RETENTION_HOURS", "0")
+    # Negative rather than 0, so expiry is decisively in the past rather than
+    # exactly "now" — see the note in test_admin.py's sweep test.
+    monkeypatch.setenv("CHAT_RETENTION_HOURS", "-1")
     upload = client.post("/upload", files={"file": ("notes.txt", b"hello", "text/plain")},
                          headers=approved)
     file_id = upload.json()["file_id"]
@@ -597,3 +608,77 @@ def test_analyze_prompt_real_engine_includes_file_context(client: TestClient, fa
     assert "--- Attached file: notes.txt ---" in message
     assert "the sky is blue" in message
     assert message.index("Attached file") < message.index("Summarise the file")
+
+
+# ── Abort accounting ─────────────────────────────────────────────────────────
+
+def test_aborting_a_stream_still_charges_the_tokens_already_burned(
+        monkeypatch, fake_store):
+    """Hitting Stop must not be a free ride.
+
+    A client disconnect closes the SSE generator, raising GeneratorExit at the
+    suspended yield. GeneratorExit derives from BaseException, so the streaming
+    loop's `except Exception` never saw it and every statement after the loop —
+    including the usage write — was skipped. That made the UI's Stop button an
+    unlimited-quota bypass: abort at 99%, get billed zero, repeat.
+    """
+    import asyncio
+    import time as _time
+
+    approve_email()
+
+    events = [json.dumps({
+        "author": "CausalDecomposer",
+        "usage_metadata": {"total_token_count": 42,
+                           "prompt_token_count": 30,
+                           "candidates_token_count": 12},
+    })]
+
+    class DummyStreamResponse:
+        status_code = 200
+
+        async def aread(self):
+            return b""
+
+        async def aiter_lines(self):
+            for line in events:
+                yield line
+            # Upstream stays open; the client is the one that gives up.
+            await asyncio.sleep(3600)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def stream(self, *args, **kwargs):
+            return DummyStreamResponse()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(httpx, "AsyncClient", DummyAsyncClient)
+
+    async def drive():
+        stream = proxy_main._agent_stream(
+            proxy_main.PromptRequest(prompt="Hello"),
+            {"email": TEST_EMAIL}, [], "https://example.com/x:streamQuery",
+            {}, {}, _time.monotonic(), "run-abort")
+        # Pull the first progress frame, then hang up mid-run.
+        await stream.__anext__()
+        await stream.aclose()
+
+    asyncio.run(drive())
+
+    assert proxy_access.get_record(TEST_EMAIL, cached=False)["tokens_used"] == 42
+    runs = [d for p, d in fake_store.docs.items() if p[0] == proxy_access.RUNS_COLLECTION]
+    assert [r["error_kind"] for r in runs] == ["aborted"]
+    assert runs[0]["tokens_total"] == 42

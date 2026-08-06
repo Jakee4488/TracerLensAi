@@ -1,18 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { AccessGate } from "./components/AccessGate";
 import { ChatHeader } from "./components/ChatHeader";
 import { Composer } from "./components/Composer";
 import { DropOverlay } from "./components/DropOverlay";
 import { MessageList } from "./components/MessageList";
 import { Sidebar } from "./components/Sidebar";
-import { CausalPanel } from "./components/causal/CausalPanel";
+// Lazy: this pane pulls ReactFlow and dagre, and it only renders once a run has
+// causal output to show. Loading it eagerly put both libraries in the chunk that
+// blocks first paint, for every visitor including those who never open it.
+const CausalPanel = lazy(() =>
+  import("./components/causal/CausalPanel").then((m) => ({ default: m.CausalPanel })),
+);
 import { useAccess } from "./hooks/useAccess";
 import { useAttachments } from "./hooks/useAttachments";
 import { useHistory } from "./hooks/useHistory";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { useRunProgress } from "./hooks/useRunProgress";
 import { AccessError, analyzePrompt, fetchConversation } from "./lib/api";
-import { hasCausalContent } from "./components/causal/CausalPanel";
+import { hasCausalContent } from "./lib/causal";
 import { finalizeStages } from "./lib/stages";
 import { generateRunId, generateSessionId, nextMessageKey } from "./lib/ids";
 import { applyTheme, currentTheme, type Theme } from "./lib/theme";
@@ -329,12 +334,14 @@ export default function App() {
             {/* Dragging is a pointer affordance; at overlay widths the pane is
                 full-bleed and there is nothing to drag against. */}
             {!paneOverlays && <div className="pane-resizer" onMouseDown={startResizing} />}
-            <CausalPanel
-              report={currentReport!}
-              stages={selectedMessageId === "live" ? run.stages : selectedMsg?.stages}
-              liveGraph={selectedMessageId === "live" ? run.graph : undefined}
-              onClose={closePane}
-            />
+            <Suspense fallback={<div className="causal-pane-loading" aria-busy="true" />}>
+              <CausalPanel
+                report={currentReport!}
+                stages={selectedMessageId === "live" ? run.stages : selectedMsg?.stages}
+                liveGraph={selectedMessageId === "live" ? run.graph : undefined}
+                onClose={closePane}
+              />
+            </Suspense>
           </aside>
         </>
       )}

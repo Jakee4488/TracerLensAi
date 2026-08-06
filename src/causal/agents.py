@@ -60,8 +60,9 @@ class CausalWebIngestor(BaseAgent):
         trace.append(summarize_web_line(web))
         delta = {
             sk.KEY_WEB_DATASET: csv_text,
-            sk.KEY_WEB_EVIDENCE: web.evidence,
-            sk.KEY_WEB_SOURCES: web.sources,
+            # evidence and sources ride inside KEY_WEB_RETRIEVAL, which is what
+            # the prompts and the UI actually read; writing them out separately
+            # only duplicated the payload on every web-mode turn.
             sk.KEY_WEB_RETRIEVAL: web.model_dump(mode="json"),
             sk.KEY_STEPS: trace,
         }

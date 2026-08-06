@@ -8,7 +8,6 @@ UI transport. No LLM calls happen here.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 
 from google.genai import types
@@ -16,11 +15,10 @@ from google.genai import types
 from src.causal import state_keys as sk
 from src.causal.complexity import is_effect_query
 from src.causal.graph_engine import CausalTaskGraph
-from src.causal.ledger import append_replan_event, append_to_state, next_seq
+from src.causal.ledger import append_replan_event
 from src.causal.models import (
     CausalDecomposition,
     CausalStatus,
-    ChangeRecord,
     ExecutionPlan,
     ReplanRequest,
     ReplanResult,
@@ -69,10 +67,15 @@ def _ensure_graph_built(callback_context) -> None:
     max_steps = int(budgets.get("max_steps", sk.DEFAULT_MAX_STEPS))
     plan = graph.derive_plan(max_steps)
 
-    steps_trace = [
-        summarize_decomposition_line(len(graph.model.components), len(graph.model.edges)),
-        summarize_pathway_line(plan.rationale),
-    ]
+    # Append, never replace. The router has already written its [budget] line
+    # and the web ingestor its [web] line, and the proxy streams trace lines by
+    # diffing against a high-water mark — so overwriting the list here made the
+    # new entries land at an index it had already sent, and the [graph]/[plan]
+    # lines never reached the live timeline.
+    steps_trace = list(state.get(sk.KEY_STEPS) or [])
+    steps_trace.append(
+        summarize_decomposition_line(len(graph.model.components), len(graph.model.edges)))
+    steps_trace.append(summarize_pathway_line(plan.rationale))
     for note in graph.model.repair_notes:
         steps_trace.append(f"[graph] repair: {note}")
 
@@ -207,28 +210,10 @@ def splice_replan(callback_context) -> Optional[types.Content]:
     return None
 
 
-def record_replan_denied(state, request: ReplanRequest, reason: str) -> None:
-    """Ledger note when a replan could not be granted (budget spent)."""
-    record = ChangeRecord(
-        seq=next_seq(state.get(sk.KEY_LEDGER)),
-        step_id=request.failed_step.id,
-        component_id=request.failed_step.component_id,
-        expected="replan",
-        observed=reason,
-        verdict="deviation",
-        plan_version=0,
-        # Was omitted here while the controller's records carried it, so
-        # denials were the only untimestamped entries in the ledger.
-        ts=datetime.now(timezone.utc).isoformat(),
-    )
-    append_to_state(state, record)
-
-
 def mark_complete(callback_context) -> None:
     state = callback_context.state
     status_raw = state.get(sk.KEY_STATUS)
     if status_raw:
-        from .models import CausalStatus, parse_model
         status = parse_model(CausalStatus, status_raw)
         if status:
             status.phase = "complete"

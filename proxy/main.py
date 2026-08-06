@@ -74,7 +74,13 @@ if CORS_ORIGINS:
 # so the access record and the conversation history describe the same person no
 # matter how many times they sign in.
 
-_ANON_ID_RE = re.compile(r"[0-9a-f-]{36}")
+# Matches what the client actually mints: "anon-" + hex (ui/src/lib/ids.ts
+# getAnonId, currently 24 chars). The previous bare-UUID pattern matched nothing
+# the UI has ever sent, so the fallback below silently collapsed every
+# signed-out caller onto one shared id — the exact leak its docstring says it
+# exists to prevent. The length is a range so tuning the client's entropy
+# cannot quietly reintroduce that.
+_ANON_ID_RE = re.compile(r"anon-[0-9a-f]{16,64}")
 
 
 def _agent_user_id(user: Optional[dict], anon_id: Optional[str]) -> str:
@@ -450,8 +456,22 @@ def _upload_dir() -> Optional[str]:
     return path
 
 
+def _sweep_uploads() -> None:
+    """Drop expired uploads from the process-local index.
+
+    Entries used to be evicted only when someone read an already-expired id, so
+    an upload nobody referenced again stayed resident for the life of the
+    instance — a slow leak bounded only by MAX_UPLOAD_BYTES x how long the
+    revision lives.
+    """
+    for file_id in [k for k, v in _uploads.items() if _expired_upload(v)]:
+        _uploads.pop(file_id, None)
+
+
 def _put_upload(record: dict) -> str:
     file_id = uuid.uuid4().hex
+    # Cheap: runs once per upload, over a dict holding at most a day of them.
+    _sweep_uploads()
     _uploads[file_id] = record
     directory = _upload_dir()
     if directory:
@@ -597,6 +617,12 @@ SSE_PING_INTERVAL_S = 15.0
 # field survives Agent Engine serialization: AdkApp.stream_query dumps events
 # via model_dump_json(exclude_none=True) and `author` is a non-None str.
 STAGE_BY_AUTHOR = {
+    # The root router is *instantiated* as "TracerLensAi_Agent" (the historical
+    # root name, kept so the A2A agent card and traces stay stable), so that —
+    # not the class name — is what arrives as `author`. Keyed on the class name
+    # alone, the route stage never fired outside the mock stream, which
+    # hardcodes it and so hid the gap from the E2E tests.
+    "TracerLensAi_Agent": "route",
     "CausalRouterAgent": "route",
     "CausalWebSearch": "web",
     "CausalWebIngestor": "web",
@@ -971,10 +997,7 @@ async def analyze_prompt(
 
     # Use Application Default Credentials (ADC) for Vertex AI auth
     try:
-        credentials, project = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        credentials.refresh(google.auth.transport.requests.Request())
+        credentials = await _agent_credentials()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to obtain ADC credentials: {e}")
 
@@ -1017,6 +1040,57 @@ async def analyze_prompt(
         media_type="text/event-stream", headers=SSE_HEADERS)
 
 
+# ── Agent credentials ────────────────────────────────────────────────────────
+#
+# ADC used to be resolved and refreshed on every /analyze-prompt. Both calls are
+# synchronous: google.auth.default() walks the filesystem or metadata server and
+# .refresh() is a blocking HTTPS round trip. Inside an `async def`, on a
+# single-worker container serving up to 80 concurrent requests, each one froze
+# the whole event loop — every other in-flight SSE stream included — to re-mint
+# a token that stays valid for an hour.
+
+_CREDENTIALS = None
+_CREDENTIALS_LOCK = asyncio.Lock()
+# Refresh a little early rather than racing the boundary mid-request.
+_CREDENTIALS_SKEW_S = 300
+
+
+async def _agent_credentials():
+    """ADC for the Agent Engine call, resolved once and refreshed on expiry.
+
+    The lock keeps a burst of concurrent turns from refreshing N times over;
+    the refresh itself runs in a worker thread so the loop keeps serving.
+    """
+    global _CREDENTIALS
+
+    def _fresh_enough(creds) -> bool:
+        if creds is None or not getattr(creds, "token", None):
+            return False
+        expiry = getattr(creds, "expiry", None)
+        if expiry is None:
+            # Nothing to measure against — some credential types never set one.
+            return True
+        # google-auth stores expiry as a naive UTC datetime.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        return (expiry - now).total_seconds() > _CREDENTIALS_SKEW_S
+
+    if _fresh_enough(_CREDENTIALS):
+        return _CREDENTIALS
+
+    async with _CREDENTIALS_LOCK:
+        if _fresh_enough(_CREDENTIALS):  # another task won the race
+            return _CREDENTIALS
+        creds = _CREDENTIALS
+        if creds is None:
+            creds, _ = await asyncio.to_thread(
+                google.auth.default,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        await asyncio.to_thread(
+            creds.refresh, google.auth.transport.requests.Request())
+        _CREDENTIALS = creds
+        return _CREDENTIALS
+
+
 async def _pump_lines(resp, queue: asyncio.Queue):
     """Feed upstream NDJSON lines into a queue.
 
@@ -1043,14 +1117,28 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
     total_token_count = 0
     prompt_token_count = 0
     candidates_token_count = 0
-    steps_sent = 0
+    sent_steps: list = []
     last_stage = None
+
+    recorded = False
+
+    def _record(ok: bool, error_kind: Optional[str] = None):
+        """Record this turn exactly once, whatever way the stream ends.
+
+        Every exit path routes through here so a turn can never be billed
+        twice, and — more importantly — can never escape being billed at all.
+        """
+        nonlocal recorded
+        if recorded:
+            return
+        recorded = True
+        _record_turn(user, req, ok=ok, started=started, error_kind=error_kind,
+                     tokens_in=prompt_token_count, tokens_out=candidates_token_count,
+                     tokens_total=total_token_count)
 
     def _fail(kind: str):
         """Record a failed turn. Tokens already burned still count."""
-        _record_turn(user, req, ok=False, started=started, error_kind=kind,
-                     tokens_in=prompt_token_count, tokens_out=candidates_token_count,
-                     tokens_total=total_token_count)
+        _record(ok=False, error_kind=kind)
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -1141,11 +1229,19 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                         # ── Forward this event as progress ──────────────────
                         stage = _resolve_stage(event.get("author"), delta)
                         all_steps = causal_state.get("causal_steps") or []
-                        # causal_steps is rewritten wholesale each write, so the
-                        # newly appended lines are whatever is past the high
-                        # water mark (the router resets it to [] on turn start).
-                        new_steps = all_steps[steps_sent:]
-                        steps_sent = len(all_steps)
+                        # Normally the agent only appends, so the unsent lines
+                        # are the tail past what we have already forwarded.
+                        # Compare content rather than trusting the length: a
+                        # writer that replaced the list instead of extending it
+                        # would leave its new lines at indices already counted
+                        # as sent, and they would never reach the timeline at
+                        # all. On divergence, resend — a repeated line is a far
+                        # better failure than a missing one.
+                        if all_steps[:len(sent_steps)] == sent_steps:
+                            new_steps = all_steps[len(sent_steps):]
+                        else:
+                            new_steps = all_steps
+                        sent_steps = list(all_steps)
                         status = causal_state.get("causal_status")
                         phase = status.get("phase") if isinstance(status, dict) else None
 
@@ -1164,6 +1260,16 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
                             yield _sse("graph", delta["causal_graph"])
                 finally:
                     pump.cancel()
+    except (GeneratorExit, asyncio.CancelledError):
+        # The client went away — the UI's Stop button aborts the fetch, which
+        # closes this generator and raises GeneratorExit at the suspended
+        # yield. Both of these derive from BaseException, so the `except
+        # Exception` below never sees them and the accounting after this block
+        # never runs. Tokens the upstream already burned still have to count,
+        # or Stop is an unlimited-quota bypass. Re-raise: a generator must not
+        # swallow its own teardown.
+        _record(ok=False, error_kind="aborted")
+        raise
     except Exception as e:
         traceback.print_exc()
         _fail("proxy_exception")
@@ -1201,7 +1307,12 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
         # the ledger honest when a long run pushes entries past LEDGER_CAP.
         causal_replan_events = causal_state.get("causal_replan_events")
         causal_ledger_dropped = causal_state.get("causal_ledger_dropped")
-        if req.causal_reasoning and not causal_state:
+        # Not `not causal_state`: the router opens every causal turn by
+        # resetting ~28 causal_* keys to None, and those land in causal_state
+        # as real entries — so the dict is non-empty from the first event and
+        # this branch could never be taken. Test for a key that actually
+        # carries a value instead.
+        if req.causal_reasoning and not any(v is not None for v in causal_state.values()):
             # Fallback transport (agent ran with CAUSAL_TEXT_FALLBACK=1).
             payload_json, response_text = _extract_causal_fallback(response_text)
             if payload_json:
@@ -1241,9 +1352,7 @@ async def _agent_stream(req: "PromptRequest", user: Optional[dict],
         # persist to Firestore and replay through history without extra work.
         _persist_if_signed_in(user, req, response_text, total_token_count, attachment_names,
                               _causal_payload(report), run_id)
-        _record_turn(user, req, ok=True, started=started,
-                     tokens_in=prompt_token_count, tokens_out=candidates_token_count,
-                     tokens_total=total_token_count)
+        _record(ok=True)
     except Exception as e:
         traceback.print_exc()
         _fail("assembly_failed")

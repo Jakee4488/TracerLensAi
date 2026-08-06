@@ -1,73 +1,143 @@
-# Local Development with Vertex AI Agent
+# Local Development with a Real Vertex AI Agent
 
-This guide outlines the steps required to run the TracerLensAi stack locally (UI + Agent Backend) while authenticating securely with Google Cloud Vertex AI via Application Default Credentials (ADC).
+Running the full stack locally — the ADK agent **and** the proxy — against real
+Vertex AI, authenticated with Application Default Credentials.
 
-## 1. Configure GCP Authentication (ADC)
-Since we are using Vertex AI instead of the consumer Gemini API, you need to ensure your local environment is authenticated with Google Cloud.
+If you only need to work on the UI or the proxy, don't do this. Use the offline
+mock path instead:
 
-Run the following command in your WSL/Linux terminal and follow the browser prompts:
+```bash
+MODE=mock docker compose up --build     # http://localhost:8080
+```
+
+That needs no GCP credentials and costs nothing. The rest of this document is for
+when you specifically need the real agent in the loop.
+
+---
+
+## 1. Authenticate (ADC)
+
 ```bash
 gcloud auth application-default login
 ```
-*This generates a credential file locally, typically located at `~/.config/gcloud/application_default_credentials.json`.*
 
-## 2. Environment Setup (`.env`)
-Ensure your `.env` file at the root of the project contains the following variables to force the Google GenAI SDK to use Vertex AI:
+This writes a credential file — `~/.config/gcloud/application_default_credentials.json`
+on macOS/Linux, `%APPDATA%\gcloud\` on Windows. The compose files mount it into
+the container.
+
+## 2. Configure `.env`
 
 ```env
 GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_CLOUD_REGION=europe-west2
 GOOGLE_GENAI_USE_VERTEXAI=true
 ```
-*(Remove or comment out `GEMINI_API_KEY` to avoid conflicts).*
 
-## 3. Run the Backend Agent (Docker Compose)
-We use Docker Compose to run the FastAPI backend on port `8080`. 
+> [!IMPORTANT]
+> Use **`europe-west2`**, not `us-central1`. The project's global Gemini quota is
+> exhausted while the regional endpoint is healthy, and `src/agent.py` rewrites
+> `GOOGLE_CLOUD_LOCATION=global` to this region on import. `docker-compose.dev.yml`
+> forces it too. A stale `us-central1` will fail in confusing ways.
 
-The `docker-compose.dev.yml` file is specifically configured for local Vertex AI development:
-- It maps your local ADC credential file into the container (`/tmp/adc.json`).
-- It runs as `root` to avoid host-level permission errors when reading the credentials.
-- It sets `PYTHONPATH` to ensure Python finds the dependencies installed by the non-root builder user.
-- It maps the `./src` directory for instant hot-reloading.
+Remove or comment out `GEMINI_API_KEY` to avoid conflicts.
 
-Run the backend:
+## 3. Run the agent
+
+`docker-compose.dev.yml` runs the agent on **8080** with hot-reload: it mounts
+`./src`, maps your ADC file in, runs as root to avoid host permission errors on
+the credential file, and sets `PYTHONPATH` so Python finds the builder-user's
+dependencies.
+
 ```bash
-docker compose -f docker-compose.dev.yml up --build
+docker compose -f docker-compose.dev.yml up tracerlensai-app --build
 ```
-*(Keep this terminal open).*
 
-## 4. Run the Proxy / UI Frontend
-The proxy server serves the frontend UI and routes API calls to the backend. Because we are testing locally, we need to manually point the proxy to our running Docker container.
+Naming the service matters — a bare `up` also starts the file's own `proxy`
+service on 8081, which is not what you want if you intend to run the proxy
+yourself in step 4.
 
-Open a **new terminal tab** and run:
+Keep this terminal open.
+
+## 4. Run the proxy against it
+
+The proxy serves the UI and forwards chat to the agent. **Build the UI first** —
+it serves `ui/dist`, not source, and returns 503 without it.
 
 ```bash
-# Point the proxy to the local backend's streaming endpoint
-export AGENT_ENGINE_ENDPOINT="http://127.0.0.1:8080/api/stream_reasoning_engine"
+cd ui && npm ci && npm run build && cd ..
 
-# Start the proxy server
+export AGENT_ENGINE_ENDPOINT="http://127.0.0.1:8080/api/stream_reasoning_engine"
+export ACCESS_STORE=memory          # no Firestore credentials needed
+export ADMIN_TOKEN=local-admin      # else /admin returns 503
+export APP_URL=http://localhost:8001 # else the app refuses to boot
+
 uvicorn proxy.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-## 5. Access the Application
-With both the Backend (Docker) and the Frontend (Uvicorn Proxy) running, you can now access the full application in your browser:
+Every one of those variables is required. The access gate reads a record on
+every request, so without `ACCESS_STORE=memory` the proxy needs real Firestore
+credentials just to open the chat.
 
-**[http://localhost:8001/static/index.html](http://localhost:8001/static/index.html)**
-
-### Troubleshooting Notes
-- **Empty Response / `b''`**: If the backend crashes mid-stream (e.g., SessionNotFoundError), the UI will show an empty response. Check the Docker compose logs.
-- **Port 8001 in use**: If you get `[Errno 98] Address already in use`, find the zombie process using `fuser -k 8001/tcp`.
-- **404 Not Found**: Ensure `AGENT_ENGINE_ENDPOINT` exactly matches the `/api/stream_reasoning_engine` path with no trailing colons.
-
-## 6. Exercising the Causal Reasoning Pathway
-
-With both processes running, flip the **Causal Reasoning** toggle in the header and send a prompt, or hit the proxy directly:
+Alternatively, skip this step and use the compose file's own `proxy` service on
+**8081**, which is already configured:
 
 ```bash
-curl -s localhost:8001/analyze-prompt \
-  -H 'content-type: application/json' \
-  -d '{"prompt": "If I raise prices 10%, what happens to revenue given elastic demand? Compute scenarios.", "causal_reasoning": true}' \
-  | python -m json.tool
+docker compose -f docker-compose.dev.yml up proxy --build
 ```
 
-Expect `causal_reasoning_steps` (the plan/replan trace), `causal_graph` (`nodes`/`edges`/`critical_path`, rendered as a Mermaid diagram in the UI), `causal_status`, and a `response` containing only the synthesizer's final answer. Without `AGENT_ENGINE_ENDPOINT` set, the proxy's mock path returns a canned 3-node graph so the UI panel is developable offline.
+## 5. Open it
+
+**<http://localhost:8001>** (or 8081 for the compose proxy).
+
+Sign in with any email — in `ACCESS_STORE=memory` mode the record is created
+locally and `docker/local-entrypoint.sh` seeds a local admin.
+
+### Troubleshooting
+
+- **Empty response / `b''`** — the agent crashed mid-stream (often
+  `SessionNotFoundError`). Check the agent's compose logs.
+- **503 on page load** — `ui/dist` is missing. Run `npm run build` in `ui/`.
+- **403 on `/analyze-prompt`** — you aren't signed in. The gate rejects
+  sessionless callers.
+- **App won't start** — `APP_URL` is unset, or set to a localhost value without
+  `ALLOW_LOCALHOST_APP_URL`.
+- **404 from the agent** — `AGENT_ENGINE_ENDPOINT` must match
+  `/api/stream_reasoning_engine` exactly, with no trailing colon.
+- **Port in use** — `fuser -k 8001/tcp` on Linux/WSL;
+  `Get-NetTCPConnection -LocalPort 8001` then `Stop-Process` on Windows.
+
+---
+
+## 6. Exercising the causal pathway
+
+Flip the **Causal** toggle in the sidebar and send a prompt, or drive the
+endpoint directly. Note it streams **Server-Sent Events**, not JSON, and requires
+a session token:
+
+```bash
+TOKEN=...   # from the browser's stored session after signing in
+
+curl -N localhost:8001/analyze-prompt \
+  -H "content-type: application/json" \
+  -H "authorization: Bearer $TOKEN" \
+  -d '{"prompt": "If I raise prices 10%, what happens to revenue given elastic demand?", "causal_reasoning": true}'
+```
+
+You'll see `progress` frames as the pipeline advances, `graph` frames as the DAG
+fills in, and a final `done` frame carrying `causal_reasoning_steps`,
+`causal_graph`, `causal_status`, `causal_estimand`, and a `response` holding only
+the synthesizer's answer. The frame contract is specified in the
+[Developer Guide](developer_guide.md#the-sse-contract).
+
+To exercise estimation with real numbers, attach
+[`tests/fixtures/sales.csv`](../tests/fixtures/sales.csv) — 150 rows from a known
+structural model whose true ATE is **−3.00**, so you can check the estimate
+against a real answer.
+
+---
+
+## See Also
+
+- [Developer Guide](developer_guide.md) — architecture and the SSE contract
+- [Causal Reasoning](causal_reasoning.md) — what the pipeline actually does
+- [Access Control](access_control.md) — why the gate needs those env vars
