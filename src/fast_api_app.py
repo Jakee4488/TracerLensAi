@@ -37,6 +37,72 @@ from src.app_utils.telemetry import (
 from src.app_utils.typing import Feedback
 
 load_dotenv()
+
+
+class WrongServiceDeployment(RuntimeError):
+    """This agent image is running on the service that should host the site."""
+
+
+# Set only on the proxy service (see proxy/access.py): the signing key for the
+# access gate and the admin dashboard password. Neither has any meaning to this
+# agent, so finding one here means this container was deployed over the site.
+_PROXY_ONLY_ENV = ("ACCESS_SIGNING_SECRET", "ADMIN_TOKEN")
+
+
+def _refuse_if_deployed_over_the_site() -> None:
+    """Fail this revision at boot rather than silently replacing the website.
+
+    Two images are built from this repo: Dockerfile.proxy runs proxy.main and
+    is the public site (it is also the only one that bakes in ui/dist), while
+    the root Dockerfile runs this module and is the agent. A bare
+    `gcloud run deploy --source .` builds the *root* Dockerfile, so it happily
+    ships the agent to whichever service it is pointed at.
+
+    That is not a hypothetical: it took tracerlensai.com down after the image
+    landed on the site's service. Nothing caught it, because this app answers
+    /health perfectly well — the startup probe passed, the revision took 100%
+    of traffic, and the site's own routes simply 404'd from then on.
+
+    Raising here turns that silent swap into a failed revision: Cloud Run keeps
+    serving the previous one, and the deploy reports the error instead of the
+    visitors discovering it. Deploy through deploy_to_gcp.sh, which builds each
+    image against the service that expects it.
+
+    Only enforced on a managed runtime. Locally these variables are ordinary
+    things to have in a shell or .env while working on the proxy, and refusing
+    to boot there would punish the wrong situation entirely.
+    """
+    # Cloud Run / Functions / App Engine set these themselves, so this needs no
+    # configuration of its own — a variable you must remember to set cannot be
+    # what catches the variable you forgot. Duplicated from proxy/access.py's
+    # is_managed_runtime() rather than imported: proxy/ is not copied into this
+    # image, so importing from it would fail exactly where this must work.
+    managed = bool(
+        os.getenv("K_SERVICE") or os.getenv("GAE_ENV") or os.getenv("FUNCTION_TARGET")
+    )
+    if not managed or os.getenv("ALLOW_AGENT_ON_PROXY_SERVICE"):
+        return
+
+    found = [name for name in _PROXY_ONLY_ENV if os.getenv(name)]
+    if not found:
+        return
+
+    raise WrongServiceDeployment(
+        f"Refusing to start: {', '.join(found)} is set, which belongs to the "
+        f"proxy service that serves the public site — this is the agent image "
+        f"(src.fast_api_app), built from the root Dockerfile. Deploying it here "
+        f"replaces the website with an API that has none of its routes. Build "
+        f"the site from Dockerfile.proxy (deploy_to_gcp.sh does this), and note "
+        f"that a bare `gcloud run deploy --source .` will always build the root "
+        f"Dockerfile. To override deliberately, set "
+        f"ALLOW_AGENT_ON_PROXY_SERVICE=1."
+    )
+
+
+# Before anything expensive: this is a configuration mistake, and it should cost
+# a failed import rather than a resolved credential and a built agent.
+_refuse_if_deployed_over_the_site()
+
 setup_telemetry()
 # Must run before get_fast_api_app to set the tracer provider resource.
 setup_agent_engine_telemetry()
