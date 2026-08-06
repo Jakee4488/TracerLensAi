@@ -40,7 +40,9 @@ load_dotenv()
 setup_telemetry()
 # Must run before get_fast_api_app to set the tracer provider resource.
 setup_agent_engine_telemetry()
-_, project_id = google.auth.default()
+# Called for its side effect: fail fast at import if ADC cannot be resolved,
+# rather than on the first request. The returned values are unused.
+google.auth.default()
 logging_client = google_cloud_logging.Client()
 logger = logging_client.logger(__name__)
 allow_origins = (

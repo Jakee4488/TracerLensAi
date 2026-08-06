@@ -112,12 +112,16 @@ def score_query_complexity(query: str) -> int:
 
 
 def tier_for_query(query: str) -> str:
-    """Complexity tier name for a query."""
+    """Complexity tier name for a query.
+
+    The loop always returns: _TIER_THRESHOLDS ends at 0 and the score is never
+    negative, so the lowest tier is a total fallback rather than a default.
+    """
     score = score_query_complexity(query)
     for threshold, tier in _TIER_THRESHOLDS:
         if score >= threshold:
             return tier
-    return "simple"
+    raise AssertionError("_TIER_THRESHOLDS must end at threshold 0")
 
 
 def budgets_for_query(query: str) -> dict:

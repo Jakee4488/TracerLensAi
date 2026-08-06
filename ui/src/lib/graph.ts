@@ -76,6 +76,22 @@ export function topologyKey(graph: CausalGraph): string {
   return `${nodes}::${edges}`;
 }
 
+/**
+ * Fingerprint of everything `buildEdges` actually reads.
+ *
+ * Deliberately wider than `topologyKey`: an edge's appearance also depends on
+ * its confidence band and on the critical path, and neither is part of the
+ * topology. Memoising edges on `topologyKey` alone would leave an edge frozen
+ * when only its confidence moved.
+ */
+export function edgeAppearanceKey(graph: CausalGraph): string {
+  const edges = (graph.edges || [])
+    .map((edge) => `${edge.source}->${edge.target}@${edge.confidence}`)
+    .sort()
+    .join("|");
+  return `${edges}::${(graph.critical_path || []).join(">")}`;
+}
+
 export function layoutNodes(graph: CausalGraph): CausalNode[] {
   const g = new dagre.graphlib.Graph();
   g.setGraph({ rankdir: "TB", ranksep: RANKSEP, nodesep: NODESEP, marginx: 24, marginy: 24 });

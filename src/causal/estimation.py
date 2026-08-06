@@ -243,7 +243,9 @@ def _extract_identification(estimand: CausalEstimand, identified) -> Identificat
     else:
         estimand_type = "none"
 
-    identifiable = estimand_type != "none" or bool(backdoor)
+    # "none" is only reachable when backdoor was falsy — the first branch would
+    # have fired otherwise — so the type alone settles it.
+    identifiable = estimand_type != "none"
 
     expr = ""
     try:

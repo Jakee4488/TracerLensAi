@@ -10,7 +10,6 @@ import os
 from typing import Iterator
 
 from google.adk.agents import Agent
-from google.adk.tools import google_search
 from google.adk.code_executors import BuiltInCodeExecutor
 from google.adk.apps import App
 from vertexai.agent_engines.templates.adk import AdkApp

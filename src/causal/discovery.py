@@ -54,13 +54,24 @@ def reconcile_graph(estimand: CausalEstimand, df) -> Optional[GraphReconciliatio
         # that are NOT observed columns are preserved untouched (only observed
         # variables are testable).
         _gml, _nodes, prior_edges = build_causal_graph(estimand)
-        prior_edges = [(s, t) for s, t in prior_edges]
 
         # Testable = numeric observed columns (union of estimand vars and data
         # columns, so an omitted-but-measured confounder can be discovered).
         numeric = df.apply(pd.to_numeric, errors="coerce")
         numeric = numeric.dropna(axis=1, how="all")
-        testable = [c for c in numeric.columns][:_MAX_VARS]
+
+        # Fill the cap with the variables the estimand actually asks about
+        # before falling back to column order. The cap used to be purely
+        # positional, so on a wide dataset the outcome could sit past the
+        # twelfth column and be excluded from discovery altogether — the run
+        # would then report a confident "corrected" verdict derived only from
+        # nuisance variables, having never tested the edge under question.
+        # Column names and variable ids share a namespace: both are slugified.
+        observed = list(numeric.columns)
+        preferred = [c for c in ([estimand.treatment, estimand.outcome]
+                                 + [v.id for v in estimand.variables])
+                     if c in observed]
+        testable = list(dict.fromkeys(preferred + observed))[:_MAX_VARS]
         note_bits: list[str] = []
         if numeric.shape[1] > _MAX_VARS:
             note_bits.append(f"capped to {_MAX_VARS} of {numeric.shape[1]} columns")

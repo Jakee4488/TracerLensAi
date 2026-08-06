@@ -1,6 +1,37 @@
 import DOMPurify from "dompurify";
-import hljs from "highlight.js";
 import { marked } from "marked";
+
+// hljs core plus an explicit language set, rather than the default entry point.
+// That entry registers ~190 grammars (roughly 900KB raw) and every one of them
+// shipped in the main chunk to highlight the handful of languages this agent
+// actually emits. Auto-detection now only considers what is registered here, so
+// add a language when the model starts producing it.
+import hljs from "highlight.js/lib/core";
+import bash from "highlight.js/lib/languages/bash";
+import c from "highlight.js/lib/languages/c";
+import cpp from "highlight.js/lib/languages/cpp";
+import css from "highlight.js/lib/languages/css";
+import go from "highlight.js/lib/languages/go";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import r from "highlight.js/lib/languages/r";
+import rust from "highlight.js/lib/languages/rust";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
+
+// Python and R lead deliberately: the code executor runs Python, and causal
+// analysis answers quote R far more often than this stack otherwise would.
+for (const [name, language] of Object.entries({
+  python, r, sql, json, yaml, bash, javascript, typescript,
+  markdown, xml, css, java, go, rust, c, cpp,
+})) {
+  hljs.registerLanguage(name, language);
+}
 
 // `breaks` stays off deliberately. Models hard-wrap prose at ~80 columns, and
 // with breaks:true every one of those newlines became a <br> — the answer was
@@ -28,6 +59,12 @@ function linkCitations(root: HTMLElement): void {
       for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
         if (VERBATIM.has(el.tagName)) return NodeFilter.FILTER_REJECT;
       }
+      // Reset first: CITATION_RE is /g, and .test() on a global regex resumes
+      // from lastIndex and leaves it advanced. Across sibling text nodes that
+      // made the filter skip roughly every other citation-bearing paragraph —
+      // those citations rendered as literal "[Node: X]" text and could not be
+      // clicked to highlight the graph.
+      CITATION_RE.lastIndex = 0;
       return CITATION_RE.test(node.nodeValue ?? "")
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;

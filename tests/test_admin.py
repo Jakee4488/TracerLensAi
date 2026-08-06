@@ -366,7 +366,11 @@ def test_admin_session_cannot_be_replayed_as_a_one_click_link(client: TestClient
 def test_sweep_deletes_expired_chats_but_keeps_the_access_record(
         client: TestClient, fake_store, no_email, admin_headers, monkeypatch):
     """The 24h promise, enforced. Quota data has to survive it."""
-    monkeypatch.setenv("CHAT_RETENTION_HOURS", "0")
+    # Negative, not 0. _expired requires age > 0 strictly, so a retention of 0
+    # puts expires_at at exactly "now" and whether the sweep sees it as expired
+    # comes down to how many microseconds pass before it runs — this test
+    # failed intermittently on fast machines. An hour in the past is decisive.
+    monkeypatch.setenv("CHAT_RETENTION_HOURS", "-1")
     approve_email()
     client.post("/analyze-prompt", json={"prompt": "Hi", "chat_id": "c1"},
                 headers=session_headers())

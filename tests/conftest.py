@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 import proxy.access as proxy_access
 import proxy.main as proxy_main
+from proxy import memstore
 from proxy.main import app
 
 
@@ -39,125 +40,22 @@ def _clean_access_state(monkeypatch):
     for name in ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD"):
         monkeypatch.delenv(name, raising=False)
     proxy_access._record_cache.clear()
+    # The proxy caches ADC across requests (re-minting a 1h token per turn used
+    # to block the event loop). It is a module global, so without this a stub
+    # credential from one test would still be serving the next one.
+    proxy_main._CREDENTIALS = None
     yield
     proxy_access._record_cache.clear()
+    proxy_main._CREDENTIALS = None
 
 
-# ── Fake Firestore ───────────────────────────────────────────────────────────
-# A flat dict standing in for Firestore's document tree. Shared by every suite,
-# so it has to cover what the access/admin code needs (deletes, ordered scans)
-# as well as the history paths it was originally written for.
-
-class FakeSnapshot:
-    def __init__(self, doc_id, data):
-        self.id = doc_id
-        self._data = data
-
-    @property
-    def exists(self):
-        return self._data is not None
-
-    def to_dict(self):
-        return self._data
-
-
-class FakeStore:
-    """Flat dict of path-tuple → doc dict, mimicking Firestore's tree."""
-    def __init__(self):
-        self.docs = {}
-        self._counter = 0
-
-    def next_id(self):
-        self._counter += 1
-        return f"auto-{self._counter:04d}"
-
-
-class FakeDocRef:
-    def __init__(self, store, path):
-        self.store = store
-        self.path = path
-
-    def collection(self, name):
-        return FakeCollection(self.store, self.path + (name,))
-
-    def get(self):
-        return FakeSnapshot(self.path[-1], self.store.docs.get(self.path))
-
-    def set(self, data, merge=False):
-        if merge and self.path in self.store.docs:
-            self.store.docs[self.path].update(data)
-        else:
-            self.store.docs[self.path] = dict(data)
-
-    def update(self, data):
-        doc = self.store.docs[self.path]
-        for key, value in data.items():
-            if type(value).__name__ == "Increment":
-                doc[key] = doc.get(key, 0) + value.value
-            else:
-                doc[key] = value
-
-    def delete(self):
-        self.store.docs.pop(self.path, None)
-
-
-class FakeCollection:
-    def __init__(self, store, path):
-        self.store = store
-        self.path = path
-        self._order_field = None
-        self._descending = False
-        self._limit = None
-        self._start_after = None
-
-    def document(self, doc_id):
-        return FakeDocRef(self.store, self.path + (doc_id,))
-
-    def add(self, data):
-        doc_id = self.store.next_id()
-        self.store.docs[self.path + (doc_id,)] = dict(data)
-
-    def order_by(self, field, direction=None):
-        self._order_field = field
-        self._descending = direction is not None and "DESC" in str(direction).upper()
-        return self
-
-    def limit(self, n):
-        self._limit = n
-        return self
-
-    def start_after(self, cursor):
-        # Real Firestore takes a snapshot or a field-value dict; the proxy uses
-        # the dict form keyed on the ordered field.
-        self._start_after = cursor
-        return self
-
-    def stream(self):
-        depth = len(self.path) + 1
-        items = [
-            (p[-1], d) for p, d in self.store.docs.items()
-            if len(p) == depth and p[:-1] == self.path
-        ]
-        if self._order_field:
-            items.sort(key=lambda kv: kv[1].get(self._order_field), reverse=self._descending)
-        if self._start_after is not None and self._order_field:
-            after = self._start_after[self._order_field]
-            items = [
-                (doc_id, data) for doc_id, data in items
-                if (data.get(self._order_field) < after if self._descending
-                    else data.get(self._order_field) > after)
-            ]
-        if self._limit is not None:
-            items = items[:self._limit]
-        return [FakeSnapshot(doc_id, data) for doc_id, data in items]
-
-
-class FakeDb:
-    def __init__(self, store):
-        self.store = store
-
-    def collection(self, name):
-        return FakeCollection(self.store, (name,))
+# ── Fake Firestore ───────────────────────────────────────────────
+# The suite used to carry its own copy of this, class for class. The two had
+# already drifted — the copy raised KeyError where memstore uses setdefault, and
+# TypeError-sorted None where memstore filters — so the tests were asserting
+# against semantics the shipped ACCESS_STORE=memory path does not have, and
+# proxy/memstore.py itself had no coverage at all. Using the real thing fixes
+# both halves of that.
 
 
 @pytest.fixture
@@ -168,9 +66,9 @@ def fake_store(monkeypatch):
     for the access records, while proxy/main.py holds an imported reference it
     uses for conversation history.
     """
-    store = FakeStore()
-    monkeypatch.setattr(proxy_access, "get_db", lambda: FakeDb(store))
-    monkeypatch.setattr(proxy_main, "get_db", lambda: FakeDb(store))
+    store = memstore.MemoryDb()
+    monkeypatch.setattr(proxy_access, "get_db", lambda: store)
+    monkeypatch.setattr(proxy_main, "get_db", lambda: store)
     monkeypatch.setattr(proxy_access, "get_firebase_app", lambda: None)
     return store
 

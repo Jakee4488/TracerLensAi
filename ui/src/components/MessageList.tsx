@@ -1,12 +1,15 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { enhanceMarkdown, renderMarkdown } from "../lib/markdown";
-import { hasCausalContent } from "./causal/CausalPanel";
+import { hasCausalContent } from "../lib/causal";
 import type { Stage } from "../lib/stages";
 import type { CausalGraph as CausalGraphType, ChatMessage, Report } from "../types";
 
 function Markdown({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null);
-  const html = renderMarkdown(text);
+  // marked + DOMPurify on every render was costing a full re-parse of every
+  // message in the transcript on every progress frame — of which a causal run
+  // emits dozens. The output depends only on the text.
+  const html = useMemo(() => renderMarkdown(text), [text]);
   // Citation buttons are built here, over the mounted DOM, so re-run whenever
   // the rendered HTML changes.
   useEffect(() => enhanceMarkdown(ref.current), [html]);
@@ -47,7 +50,12 @@ function causalSummary(report: Report): string[] {
   return bits;
 }
 
-function AiMessage({ message, onSelect }: { message: ChatMessage; onSelect?: (msg: ChatMessage) => void }) {
+// Memoised: MessageList re-renders on every progress frame (its `stages` prop
+// is a fresh array each time), and without this every settled message in the
+// transcript re-rendered along with it.
+const AiMessage = memo(function AiMessage(
+  { message, onSelect }: { message: ChatMessage; onSelect?: (msg: ChatMessage) => void },
+) {
   const report = message.report;
   const hasCausal = report && hasCausalContent(report);
   const summary = hasCausal ? causalSummary(report) : [];
@@ -70,9 +78,9 @@ function AiMessage({ message, onSelect }: { message: ChatMessage; onSelect?: (ms
       </div>
     </div>
   );
-}
+});
 
-function UserMessage({ message }: { message: ChatMessage }) {
+const UserMessage = memo(function UserMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="msg user">
       <div className="bubble">
@@ -85,7 +93,7 @@ function UserMessage({ message }: { message: ChatMessage }) {
       </div>
     </div>
   );
-}
+});
 
 function PendingBubble({
   causal,
@@ -132,13 +140,26 @@ interface Props {
 export function MessageList({ messages, isSending, causal, stages, liveGraph: _liveGraph, onSelectMessage, onPromptClick }: Props) {
   const areaRef = useRef<HTMLDivElement>(null);
 
+  // Only follow the tail if the reader is already at it. `stages` changes on
+  // every progress frame, so an unconditional scroll-to-bottom yanked anyone
+  // who scrolled up to re-read an earlier answer straight back down, within a
+  // fraction of a second, for the whole run.
+  const pinnedToBottom = useRef(true);
+
+  const onScroll = () => {
+    const area = areaRef.current;
+    if (!area) return;
+    const slack = area.scrollHeight - area.scrollTop - area.clientHeight;
+    pinnedToBottom.current = slack < 80;
+  };
+
   useLayoutEffect(() => {
     const area = areaRef.current;
-    if (area) area.scrollTop = area.scrollHeight;
+    if (area && pinnedToBottom.current) area.scrollTop = area.scrollHeight;
   }, [messages, isSending, stages]);
 
   return (
-    <div className="messages" id="messages-area" ref={areaRef}>
+    <div className="messages" id="messages-area" ref={areaRef} onScroll={onScroll}>
       <div className="messages-inner" id="messages-inner">
         {messages.length === 1 && messages[0].role === "greeting" && (
           <div className="empty-state">

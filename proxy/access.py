@@ -81,6 +81,10 @@ NOTIFY_MAX_ATTEMPTS = 5
 RESEND_COOLDOWN_S = 30
 
 _RECORD_CACHE_TTL_S = 30.0
+# Only a trigger for sweeping expired entries, not a hard ceiling: everything
+# past the TTL is dead weight anyway, so the cache settles at roughly the number
+# of addresses actually active within a 30-second window.
+_RECORD_CACHE_MAX = 512
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -332,6 +336,13 @@ _record_cache: dict = {}
 
 
 def _cache_put(key: str, record: Optional[dict]) -> None:
+    # Evict on write. invalidate() only ever removed the one key it was given,
+    # so entries for addresses that never came back sat here for the life of
+    # the process and the cache grew with every distinct visitor.
+    if len(_record_cache) > _RECORD_CACHE_MAX:
+        cutoff = time.monotonic() - _RECORD_CACHE_TTL_S
+        for stale in [k for k, (at, _) in _record_cache.items() if at < cutoff]:
+            _record_cache.pop(stale, None)
     _record_cache[key] = (time.monotonic(), record)
 
 
@@ -1014,6 +1025,10 @@ async def retry_failed_notifications(limit: int = 20) -> int:
                 int(record.get("tokens_used", 0)), int(record.get("token_limit", 0)))
         else:
             continue
-        if get_record(email, cached=False).get("notify_state") == "sent":
+        # get_record returns None for a record deleted while this batch ran
+        # (a user exercising "Delete my data" mid-retry). Without the guard the
+        # AttributeError 500s the endpoint and skips every remaining record.
+        refreshed = get_record(email, cached=False) or {}
+        if refreshed.get("notify_state") == "sent":
             recovered += 1
     return recovered

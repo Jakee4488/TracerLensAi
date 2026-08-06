@@ -2442,6 +2442,13 @@ button.stage-head:hover .stage-label {
     overflow: hidden;
 }
 
+/* Placeholder while the lazily-loaded panel chunk arrives. It only has to hold
+   the pane open so the layout doesn't collapse and snap back; the fetch is a
+   local chunk and is normally over within a frame or two. */
+.causal-pane-loading {
+    flex: 1;
+}
+
 /* Below ~1100px the pane stops taking width from the chat and lays over it
    instead. Side by side, the chat column was measured at 306px at 1024px wide
    and 0px at 390px — the answer had nowhere to go. */

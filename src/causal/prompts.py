@@ -303,9 +303,8 @@ def synthesizer_instruction(ctx) -> str:
             if s.result_summary or s.status != "pending"
         )
 
+    # Phases not listed here (synthesizing, complete) need no extra steer.
     outcome_note = {
-        "synthesizing": "",
-        "complete": "",
         "budget_exhausted": (
             "Some analysis could not be fully completed. Present the strongest "
             "answer supported by the results below. If a specific quantity or "
@@ -319,10 +318,6 @@ def synthesizer_instruction(ctx) -> str:
         ),
     }.get(status.phase, "")
 
-    import logging
-    logger = logging.getLogger("causal.prompts")
-    logger.error("SYNTHESIZER RESULTS STRING:\n%s", results)
-    
     grounding = _estimand_grounding(state)
 
     return (
