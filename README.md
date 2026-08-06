@@ -10,6 +10,8 @@
 
 | Feature | Description |
 |---|---|
+
+
 | **Causal Reasoning Pipeline** | A multi-agent ADK pipeline (decompose → identify → execute → replan → synthesize) with deterministic graph engineering in Python. See [Causal Reasoning](docs/causal_reasoning.md). |
 | **Formal Identification (DoWhy)** | For treatment-effect questions, a deterministic DoWhy stage identifies the back-door/IV adjustment set from the variable DAG (0 LLM calls) and, when a dataset is present, estimates the effect, runs refutation tests, and computes counterfactuals — so the numeric answer is grounded in a real adjustment set, not the LLM's guess. |
 | **Data-Driven DAG Correction** | With a dataset available, causal discovery (causal-learn PC + DirectLiNGAM) conservatively corrects the LLM-asserted graph — reversing, dropping, or adding edges only when the data disagrees strongly and directionally — so a wrong edge changes the *answer*, not just an annotation. |
