@@ -1,3 +1,12 @@
+# This builds the AGENT (src.fast_api_app), not the public website.
+#
+# The site is Dockerfile.proxy (proxy.main, and the only image that bakes in
+# ui/dist). `gcloud run deploy --source .` builds THIS file, so aiming it at
+# the site's Cloud Run service replaces tracerlensai.com with an API that has
+# none of the site's routes — it answers /health, so the deploy looks fine and
+# the revision takes all the traffic. Use deploy_to_gcp.sh, which builds each
+# image against the service that expects it. src/fast_api_app.py refuses to
+# boot if it finds the proxy's env, so a wrong deploy fails instead of landing.
 # Stage 1: Build dependencies
 FROM python:3.12-slim as builder
 
