@@ -261,9 +261,9 @@ Both are deliberately loud: each prints a warning on use.
 
 | Suite | Covers |
 |---|---|
-| `tests/test_access.py` (41) | Login branches, single-use and expiring links, purpose confusion, revocation, every gate refusal, usage accounting, run metrics, extensions, erasure, notification retry, the data-minimisation invariant |
-| `tests/test_admin.py` (38) | OTP issue/verify/lockout/expiry, admin session required on every endpoint, one-click link tampering and expiry, dashboard stats, the retention sweep |
-| `tests/ui_tests/test_access_gate.py` (14) | Composer locked, gate undismissable, backend refuses signed-out callers, privacy notice rendered, request → approve → sign-in link → in, link replay, denial, profile menu, extension request, logout, admin 2FA |
+| `tests/test_access.py` (52) | Login branches, single-use and expiring links, purpose confusion, revocation, every gate refusal, address validation, usage accounting, run metrics, extensions, erasure, notification retry, the data-minimisation invariant |
+| `tests/test_admin.py` (36) | OTP issue/verify/lockout/expiry, admin session required on every endpoint, one-click link tampering and expiry, dashboard stats and injection, the retention sweep |
+| `tests/ui_tests/test_access_gate.py` (13) | Composer locked, gate undismissable, backend refuses signed-out callers, privacy notice rendered, request → approve → sign-in link → in, link replay, denial, profile menu, extension request, logout, admin 2FA |
 
 The E2E suite runs with the gate **on**. Disabling a security feature to keep
 tests green would make the suite lie about what ships; instead the server runs

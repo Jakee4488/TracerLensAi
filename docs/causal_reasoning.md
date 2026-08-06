@@ -1,6 +1,6 @@
 # Causal Reasoning Pipeline
 
-The causal-reasoning pipeline is TracerLensAi's core capability. When the UI's **Causal** toggle is on, the agent doesn't just answer — it builds a **causal graph** of the problem, **formally identifies** any treatment effect with DoWhy (and estimates it from data when a dataset is present), derives a **plan** along the critical path, **executes** it step-by-step with code, **propagates the impact** of any failure through the graph, **replans only the affected subgraph**, and finally **synthesizes** a grounded answer. Everything except the five LLM roles is deterministic Python.
+The causal-reasoning pipeline is TracerLensAi's core capability. When the UI's **Causal** toggle is on, the agent doesn't just answer — it builds a **causal graph** of the problem, **formally identifies** any treatment effect with DoWhy (and estimates it from data when a dataset is present), derives a **plan** along the critical path, **executes** it step-by-step with code, **propagates the impact** of any failure through the graph, **replans only the affected subgraph**, and finally **synthesizes** a grounded answer. Everything except the six LLM roles is deterministic Python.
 
 This document is the deep-dive. For where the files live, see the [Repository Structure Guide](repository_structure.md); for the surrounding architecture, see the [Developer Guide](developer_guide.md).
 
@@ -8,7 +8,7 @@ This document is the deep-dive. For where the files live, see the [Repository St
 
 ## 1. Design Principles
 
-1. **Determinism where it counts.** Routing, graph construction/repair, impact propagation, plan derivation, verdict parsing, replan splicing, and **statistical identification/estimation (DoWhy)** are pure Python (`networkx` + pydantic + `dowhy`). LLMs are used only for the five things they're good at: decomposing, naming the estimand variables, executing a step, replanning a subgraph, and writing the final answer.
+1. **Determinism where it counts.** Routing, graph construction/repair, impact propagation, plan derivation, verdict parsing, replan splicing, and **statistical identification/estimation (DoWhy)** are pure Python (`networkx` + pydantic + `dowhy`). LLMs are used only for the six things they're good at: searching the web, decomposing, naming the estimand variables, executing a step, replanning a subgraph, and writing the final answer.
 2. **Bounded cost.** The LLM budget per turn is `1 (decompose) + [≤1 (estimand spec — effect queries only)] + ≤max_steps (execute) + ≤max_replans (replan) + 1 (synthesize)`. The estimand-spec stage is skip-gated (§5), and DoWhy identification/estimation add **0** LLM calls. Budgets are sized per query by complexity and clamped by env ceilings. The loop has a hard structural ceiling (`LOOP_MAX_ITERATIONS=16`).
 3. **Vertex tool isolation.** Vertex rejects mixing built-in tools (code execution) with function declarations, so **no `FunctionTool`s** are used. Each `LlmAgent` carries at most one of `{code_executor, output_schema, tools}`; all deterministic work lives in callbacks and custom `BaseAgent`s. This invariant is enforced by `tests/test_causal_agents.py`.
 4. **One write, two purposes.** Every deterministic step writes to ADK session state via `actions.state_delta`. That single write is simultaneously the **persistence** record and the **UI transport** the proxy reads — no separate reporting channel.
@@ -227,9 +227,16 @@ All pipeline state lives under `causal_*` session keys ([`src/causal/state_keys.
 | `causal_counterfactual` | `CounterfactualResult` (do-contrast outcomes + delta) or null | ✅ → `causal_counterfactual` |
 | `causal_graph_reconcile` | `GraphReconciliation` (verdict, edits, latent confounders) or null | ✅ → `causal_graph_reconcile` |
 | `causal_web_retrieval` | `WebRetrieval` (mode dataset/evidence/none, row count, sources) or null | ✅ → `causal_web_retrieval` |
-| `causal_plan`, `causal_ledger`, `causal_current_step`, `causal_budgets`, `causal_estimand_spec_raw`, `causal_web_requested`, `causal_web_dataset`, `causal_web_evidence`, … | pipeline internals | internal |
+| `causal_plan` | `ExecutionPlan` — backs the step counter and `PlanView` | ✅ → `causal_plan` |
+| `causal_ledger` | `list[ChangeRecord]` — backs the click-through drawer | ✅ → `causal_ledger` |
+| `causal_ledger_dropped` | count of entries lost past `LEDGER_CAP`, so the drawer stays honest | ✅ → `causal_ledger_dropped` |
+| `causal_replan_events` | why the plan changed | ✅ → `causal_replan_events` |
+| `causal_run_id` | correlation id from the `[[run:<id>]]` marker | internal (observability) |
+| `causal_current_step`, `causal_budgets`, `causal_estimand_spec_raw`, `causal_web_requested`, `causal_web_dataset`, `causal_web_search_raw`, … | pipeline internals | internal |
 
-The proxy collects every `causal_*` key it sees in each event's `actions.state_delta` and returns the UI-facing fields. Because the marker and the `causal_` prefix are the only knowledge shared between the two backends, the proxy duplicates just those two constants (it does not ship `src/`).
+The proxy collects every `causal_*` key it sees in each event's `actions.state_delta` and forwards the UI-facing fields. Three things are shared between the two backends and nothing else: the **markers** (`[[causal:on]]`, `[[web:on]]`, `[[run:<id>]]`), the **`causal_` prefix**, and the **agent names** in the proxy's `STAGE_BY_AUTHOR` map. The proxy does not ship `src/`.
+
+**Streaming.** State deltas do not reach the browser as one payload at the end. The proxy converts them into Server-Sent Events as the run proceeds — `progress` frames carrying the stage and any new trace lines, `graph` frames when the DAG changes, and a final `done` frame with the whole report. The contract is specified in the [Developer Guide](developer_guide.md#the-sse-contract).
 
 **Transport fallback.** If a proxy can't read state deltas, running the agent with `CAUSAL_TEXT_FALLBACK=1` makes `CausalFallbackEmitter` emit the results as a fenced ` ```causal-json ` block; the proxy's `_extract_causal_fallback` parses it and strips it from the visible answer. This path is silent (zero LLM calls) by default.
 
@@ -237,9 +244,20 @@ The proxy collects every `causal_*` key it sees in each event's `actions.state_d
 
 ## 8. Rendering in the UI
 
-[`proxy/static/causal-agent.js`](../proxy/static/causal-agent.js) turns the payload into the **Causal reasoning** panel: a phase badge, a **Formal identification card**, the step trace (tagged `[ok]`/`[FAIL]`/etc.), and a **Mermaid flowchart** of the graph. Node status maps to colors (pending/active/done/failed/affected), critical-path edges are thickened, and `informs`/`constrains` relations render dashed. Because node ids and labels come from the LLM, they are treated as untrusted and whitelist-sanitized before Mermaid renders (which itself runs with `securityLevel: "strict"`).
+The right-hand pane is React, under [`ui/src/components/causal/`](../ui/src/components/causal/). [`CausalPanel.tsx`](../ui/src/components/causal/CausalPanel.tsx) is the container — a phase badge, the identification card, the step trace (tagged `[ok]`/`[FAIL]`/etc.), the graph, the plan, and the drawer. It is **lazily loaded**: it pulls ReactFlow and dagre, which have no business in the chunk that blocks first paint.
 
-The identification card (`buildEstimandCard`) shows the estimand-type chip (backdoor/iv/frontdoor, amber when not identifiable), `treatment → outcome`, the adjustment-set pills, and — when a dataset produced numbers — the effect ± CI, method, n, pass/fail refutation badges (p-value in the tooltip), and the counterfactual do-contrast. When discovery ran, a **graph-fix badge** sits in the card head: green *data-consistent* / amber *graph corrected (N)* (the edits and any latent confounders in the tooltip) / grey *untestable*. The panel head also shows a **web badge** (*web: N rows* / *N facts* / *no data*, sources in the tooltip) when the web branch ran. Everything renders through `textContent` (never `innerHTML`), so LLM/DoWhy strings stay inert.
+| Component | Renders |
+|---|---|
+| [`CausalGraph.tsx`](../ui/src/components/causal/CausalGraph.tsx) | The DAG, via **ReactFlow** with a **dagre** layout. Node status maps to colours (pending/active/done/failed/affected); critical-path edges are thickened; low-confidence edges render soft. |
+| [`EstimandCard.tsx`](../ui/src/components/causal/EstimandCard.tsx) | Estimand-type chip (backdoor/iv/frontdoor, amber when not identifiable), `treatment → outcome`, adjustment-set pills, the graph-fix badge (green *data-consistent* / amber *graph corrected (N)* / grey *untestable*) and the web badge. |
+| [`EffectChart.tsx`](../ui/src/components/causal/EffectChart.tsx) | Effect ± CI, method, n, and pass/fail refutation rows with p-values. |
+| [`PlanView.tsx`](../ui/src/components/causal/PlanView.tsx) | The execution plan and per-step status. |
+| [`WorkflowTimeline.tsx`](../ui/src/components/causal/WorkflowTimeline.tsx) | Live stage progress with elapsed timers. |
+| [`StepDrawer.tsx`](../ui/src/components/causal/StepDrawer.tsx) | Click-through ledger detail for a step or node. |
+
+Node ids and labels come from the LLM and are treated as untrusted throughout. React escapes text by default, and the one place raw HTML is produced — the Markdown answer — goes through **DOMPurify** in [`ui/src/lib/markdown.ts`](../ui/src/lib/markdown.ts). That module also linkifies `[Node: <label>]` citations in the answer into buttons that highlight the matching DAG node; the transform walks text nodes over the already-sanitized DOM and builds elements with `createElement`, so nothing is spliced back in as markup.
+
+**Layout is memoised on a topology fingerprint**, not on the graph object — a status frame arrives for every node transition and would otherwise re-run dagre and make the graph jump. Edges use a separate key that includes confidence and the critical path, since those change an edge's appearance without changing the topology.
 
 In the proxy's mock mode (no `AGENT_ENGINE_ENDPOINT`), a canned 3-node graph, step trace, identification card, graph-fix reconciliation, and (with the web toggle) a web-dataset payload are returned so the entire causal UI is developable offline.
 

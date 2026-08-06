@@ -2,7 +2,7 @@
 
 🌐 **[Live Application](https://tracerlensai.com/)** · ![Build](https://github.com/Jakee4488/TracerLensAi/actions/workflows/deploy.yml/badge.svg)
 
-**TracerLensAi** is a cloud-native AI chat interface built on the **Gemini Enterprise Agent Platform**. It pairs a general-purpose Gemini assistant with a deterministic **causal-reasoning pipeline** that decomposes a problem into a causal graph, formally identifies any treatment effect with DoWhy (correcting the graph against real data via causal discovery when a dataset is present), plans and executes it step-by-step, propagates the impact of failures through the graph, and replans only the affected subgraph — all rendered live in the UI as a Mermaid diagram. It can pull observational data or evidence from the web to ground that analysis. The stack is a production-grade GCP deployment: an ADK agent on Vertex AI Agent Runtime, a lightweight FastAPI proxy on Cloud Run, an email-gated access system with per-user token quotas, Firestore for history, and Firebase Hosting on a custom domain.
+**TracerLensAi** is a cloud-native AI chat interface built on the **Gemini Enterprise Agent Platform**. It pairs a general-purpose Gemini assistant with a deterministic **causal-reasoning pipeline** that decomposes a problem into a causal graph, formally identifies any treatment effect with DoWhy (correcting the graph against real data via causal discovery when a dataset is present), plans and executes it step-by-step, propagates the impact of failures through the graph, and replans only the affected subgraph — all rendered live in the UI as an interactive ReactFlow DAG. It can pull observational data or evidence from the web to ground that analysis. The stack is a production-grade GCP deployment: an ADK agent on Vertex AI Agent Runtime, a lightweight FastAPI proxy on Cloud Run, an email-gated access system with per-user token quotas, Firestore for history, and Firebase Hosting on a custom domain.
 
 ---
 
@@ -35,38 +35,44 @@
 
 The app is split into two backends: a **proxy gateway** (`proxy/`, on Cloud Run) that the browser talks to, and the **ADK agent** (`src/`, on Vertex AI Agent Runtime) that does the reasoning.
 
-```
-┌─────────────┐   POST /analyze-prompt   ┌──────────────────────┐
-│             │ ────────────────────────▶│ Firebase Hosting     │
+```text
+┌─────────────┐    static assets (CDN)   ┌──────────────────────┐
+│             │ ◀────────────────────────│ Firebase Hosting     │
 │ User        │                          │ (CDN, custom domain) │
-│ Browser     │ ◀────────────────────────│ serves proxy/static  │
-│             │   Markdown + Mermaid       └──────────┬───────────┘
-└─────────────┘                                       │ rewrite / CORS direct
-      ▲  Email access gate (signed session)           ▼
-      │                                   ┌──────────────────────┐
-      │                                   │ FastAPI Proxy        │
-      │   Firestore ◀──── per-user ────── │ (Cloud Run)          │
-      │   history        conversations    │ auth · upload · proxy│
-      │                                   └──────────┬───────────┘
-      │                                              │ reasoning-engine
-      │                                              │ streamQuery (ADC)
-      │                                              ▼
-      │                                   ┌──────────────────────┐
-      │                                   │ Vertex AI Agent Engine│
-      │                                   │ (ADK Agent Runtime)   │
-      │                                   │                       │
-      │                                   │  Router → Causal      │
-      │                                   │  Pipeline (web →      │
-      │                                   │  decompose → DoWhy    │
-      │                                   │  identify/estimate →  │
-      │                                   │  execute → replan →   │
-      │                                   │  synthesize) /        │
-      │                                   │  General Assistant    │
-      │                                   │  + sessions           │
-      └───────────────────────────────── └──────────────────────┘
+│ Browser     │                          │ publishes ui/dist    │
+│             │                          └──────────┬───────────┘
+└─────────────┘                                     │ rewrite
+      │  ▲                                          │ (or CORS direct
+      │  │  Server-Sent Events                      │  to skip the 60s cap)
+      │  │  progress · graph · done                 ▼
+      │  │                                ┌──────────────────────┐
+      │  └────────────────────────────────│ FastAPI Proxy        │
+      └───────────────────────────────────▶ (Cloud Run)          │
+         POST /analyze-prompt             │ access gate · quota  │
+                                          │ history · uploads    │
+         Firestore ◀──── per-user ────────│                      │
+         history         conversations    └──────────┬───────────┘
+                                                     │ reasoning-engine
+                                                     │ streamQuery (ADC)
+                                                     ▼
+                                          ┌───────────────────────┐
+                                          │ Vertex AI Agent Engine │
+                                          │ (ADK Agent Runtime)    │
+                                          │                        │
+                                          │  Router → Causal       │
+                                          │  Pipeline (web →       │
+                                          │  decompose → DoWhy     │
+                                          │  identify/estimate →   │
+                                          │  execute → replan →    │
+                                          │  synthesize) /         │
+                                          │  General Assistant     │
+                                          │  + sessions            │
+                                          └───────────────────────┘
 ```
 
-**Flow:** The browser sends a prompt (with its access-session token and any uploaded attachment ids) to the proxy. The proxy checks the access gate and the caller's token quota, resolves attachments, prepends the `[[causal:on]]` marker when causal mode is on (and `[[web:on]]` when the Web toggle is on too), and streams the request to the Agent Engine with Application Default Credentials. The agent's **root router** dispatches to the **causal pipeline** (when marked) or the **general assistant**. In the pipeline, an optional web-search stage fetches data/evidence, the decomposer builds the graph, a deterministic DoWhy stage identifies (and, with data, estimates) the effect and corrects the DAG against the data, and the executor loop runs the plan. Pipeline progress rides on ADK event `state_delta`s, which the proxy collects into `causal_graph`, `causal_reasoning_steps`, `causal_status`, `causal_estimand`, `causal_effect`, `causal_counterfactual`, `causal_graph_reconcile`, and `causal_web_retrieval`. The proxy sums per-call token usage, persists the exchange to Firestore for signed-in users, and returns JSON. The frontend renders the Markdown answer, highlights code, draws the causal graph with its identification card, and updates the token counter.
+**Flow:** The browser sends a prompt (with its access-session token and any uploaded attachment ids) to the proxy. The proxy checks the access gate and the caller's token quota, resolves attachments, prepends the `[[causal:on]]` marker when causal mode is on (plus `[[web:on]]` for the Web toggle and `[[run:<id>]]` as a correlation id), and streams the request to the Agent Engine with Application Default Credentials. The agent's **root router** dispatches to the **causal pipeline** (when marked) or the **general assistant**. In the pipeline, an optional web-search stage fetches data/evidence, the decomposer builds the graph, a deterministic DoWhy stage identifies (and, with data, estimates) the effect and corrects the DAG against the data, and the executor loop runs the plan.
+
+Pipeline progress rides on ADK event `state_delta`s. The proxy turns those into **Server-Sent Events** — `progress`, `graph`, and a final `done` frame carrying the full report — so the graph and timeline fill in live rather than appearing at the end. The proxy sums per-call token usage, charges it against the caller's quota, and persists the exchange to Firestore. The frontend renders the Markdown answer, highlights code, draws the causal DAG with its identification card, and updates the token counter.
 
 ---
 
@@ -80,9 +86,12 @@ src/                # ADK agent (deployed to Vertex AI Agent Runtime)
   fast_api_app.py   #   agent-side FastAPI server (adk_api, A2A, reasoning-engine)
   causal/           #   the causal-reasoning pipeline engine
   app_utils/        #   shared session/artifact services, A2A, telemetry
-proxy/              # Cloud Run gateway (auth, uploads, history, agent proxy + static file serving)
-  main.py           #   FastAPI proxy
-ui/                 # React + Vite + TypeScript frontend (compiled to proxy/static via Docker)
+proxy/              # Cloud Run gateway
+  main.py           #   FastAPI gateway: SSE chat, history, uploads, static serving
+  access.py         #   email access gate, sessions, token quota, mail
+  admin.py          #   /admin dashboard behind password + emailed OTP
+  memstore.py       #   in-memory Firestore stand-in for offline dev
+ui/                 # React + Vite + TypeScript frontend (compiled to ui/dist)
   src/              #   App.tsx, components/, hooks/, lib/, styles.css
   package.json      #   Node dependencies
   vite.config.ts    #   Build config
@@ -97,58 +106,77 @@ Dockerfile.proxy    # Multi-stage: builds ui/ with Node then packages with proxy
 
 ### Prerequisites
 
-1. **Python 3.12** (and optionally **Docker Desktop** for the containerized dev flow).
-2. **GCP Account** — a project with [Vertex AI APIs enabled](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com).
-3. **Optional Tools** — `gcloud` CLI, `firebase` CLI, `terraform` (only for deploys / infra changes).
+1. **Python 3.12** and **Node 20+** (the UI must be compiled — the proxy serves `ui/dist`, not source).
+2. **Docker Desktop**, for the containerized dev flow.
+3. **GCP Account** — a project with [Vertex AI APIs enabled](https://console.cloud.google.com/apis/library/aiplatform.googleapis.com). Not needed for the offline flow below.
+4. **Optional Tools** — `gcloud` CLI, `firebase` CLI, `terraform` (only for deploys / infra changes).
 
 ### Local Development
 
-1. **Configure environment:**
+1. **Clone and configure:**
+
    ```bash
+   git clone https://github.com/Jakee4488/TracerLensAi.git
+   cd TracerLensAi
    cp .env.example .env
-   # Edit .env — set GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_REGION, GOOGLE_CLOUD_LOCATION
+   # Edit .env — set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_REGION (europe-west2)
    ```
 
-2. **Authenticate for Vertex AI (ADC):**
-   ```bash
-   gcloud auth application-default login
-   ```
+2. **Install dependencies and run the tests:**
 
-3. **Install dependencies and run the tests:**
    ```bash
    pip install -r requirements.txt
    python -m pytest tests/ --ignore=tests/ui_tests -v
    ```
 
-4. **Run the full stack locally with Docker Compose (recommended):**
+3. **Run the full stack offline (no GCP, no spend):**
+
    ```bash
-   # Dockerfile.proxy builds the React UI (npm ci + vite build) and the proxy in one go.
-   # AGENT_ENGINE_ENDPOINT unset → proxy returns a canned response + sample causal graph,
-   # so the whole UI is developable offline.
-   docker compose up --build
+   MODE=mock docker compose up --build
    # open http://localhost:8080
    ```
 
-5. **Run the proxy only (no Docker, no GCP calls):**
+   `Dockerfile.proxy` builds the React UI and the proxy in one go. `MODE=mock`
+   returns a canned response plus a sample causal graph, so the whole UI is
+   developable offline.
+
+   > [!WARNING]
+   > `MODE` defaults to **`real`**. A bare `docker compose up` calls the live
+   > Vertex AI Agent Engine and **costs money**. Pass `MODE=mock` explicitly.
+   >
+   > The compose files also bind-mount `${APPDATA}` for Application Default
+   > Credentials and are Windows-first. On macOS/Linux, replace that line in
+   > `docker-compose.yml` with `~/.config/gcloud`.
+
+4. **Run the proxy only (no Docker):**
+
    ```bash
-   # Build the React app first:
    cd ui && npm ci && npm run build && cd ..
-   uvicorn proxy.main:app --reload --port 8080
-   # open http://localhost:8080
+   ACCESS_STORE=memory ADMIN_TOKEN=local-admin APP_URL=http://localhost:8080 \
+     uvicorn proxy.main:app --reload --port 8080
    ```
 
-6. **Run the full stack locally (proxy + real ADK agent):** see
+   All three variables are required: without `ACCESS_STORE=memory` the access
+   gate wants real Firestore credentials, without `APP_URL` the app refuses to
+   boot, and without `ADMIN_TOKEN` `/admin` returns 503.
+
+5. **Run against a real ADK agent:** see
    [Local Development with Vertex AI Agent](docs/local_development_vertex_agent.md).
 
-7. **Browser E2E tests (Playwright):**
+6. **Browser E2E tests (Playwright):**
+
    ```bash
+   cd ui && npm ci && npm run build && cd ..   # required — the suite serves ui/dist
    pip install -r requirements-dev.txt && playwright install chromium
    python -m pytest tests/ui_tests -v
    ```
 
-> The `docker-compose.dev.yml` file also provides a hot-reload agent container
-> (`tracerlensai-app`), a one-shot `test-runner`, and a Playwright `causal-agent-ui-test`
-> service (see the [Developer Guide](docs/developer_guide.md#6-local-development-environment)).
+   These are not run by CI.
+
+> `docker-compose.dev.yml` provides a hot-reload agent container
+> (`tracerlensai-app`, port 8080), the `proxy` on port 8081, a one-shot
+> `test-runner`, and a Playwright `causal-agent-ui-test` service. See the
+> [Developer Guide](docs/developer_guide.md#8-local-development).
 
 ---
 
@@ -159,10 +187,23 @@ Dockerfile.proxy    # Multi-stage: builds ui/ with Node then packages with proxy
 Authentication is fully keyless via **Workload Identity Federation** (OIDC). The [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) pipeline runs `deploy_to_gcp.sh` on every push to `main`, deploying all three tiers in order:
 
 1. **Agent Engine** — `agents-cli deploy` packages `src/` and updates the Vertex AI Agent Runtime in place.
-2. **Cloud Run proxy** — builds `Dockerfile.proxy` (multi-stage: Node 20 builds the React UI with `vite build`, then Python packages the proxy); deploys the `tracerlensai-proxy` service.
-3. **Firebase Hosting** — publishes the `proxy/static/` output (pre-built React bundle) with the Cloud Run rewrite rule.
+2. **Cloud Run proxy** — builds `Dockerfile.proxy` (multi-stage: Node 20 builds the React UI with `vite build`, then Python packages the proxy); deploys the `tracerlensai-app` service.
+3. **Firebase Hosting** — builds `ui/` and publishes `ui/dist` with the Cloud Run rewrite rule.
 
 A manual `workflow_dispatch` can target a single stage (`agent`, `proxy`, or `hosting`).
+
+### Preview environments
+
+| Workflow | Trigger | Service | Stages |
+|---|---|---|---|
+| [`deploy.yml`](.github/workflows/deploy.yml) | push to `main` | `tracerlensai-app` | agent → proxy → hosting |
+| [`deploy-dev.yml`](.github/workflows/deploy-dev.yml) | push to any other branch | `tracerlensai-app-dev` | proxy only |
+| [`deploy-staging.yml`](.github/workflows/deploy-staging.yml) | pull request | `tracerlensai-app-staging-pr-<N>` | proxy only |
+
+Dev and staging run **`--only proxy`** — `firebase.json` has a single rewrite
+target, so a preview must never touch hosting. The consequence worth knowing:
+**changes under `src/` are not exercised by any preview deploy**; a preview
+always talks to whichever Agent Engine revision is currently live.
 
 ### Manual Fallback Script
 
@@ -175,19 +216,57 @@ If CI/CD is unavailable, run the same script locally (needs `gcloud`, `agents-cl
 ./deploy_to_gcp.sh --only hosting # just Firebase Hosting
 ```
 
-See the [Deployment Guide](docs/deployment_guide.md) and [Advanced Deployment](docs/advanced_deployment.md) for details.
+See the [Deployment Guide](docs/deployment_guide.md) for environments, secrets, WIF, and DNS.
 
 ---
 
 ## 📚 Documentation
 
+Start at the [documentation index](docs/README.md), or jump straight in:
+
 | Document | Description |
 |---|---|
-| [Developer Guide](docs/developer_guide.md) | Architecture deep-dive, full API reference, and function-level docs for every source file |
+| [Developer Guide](docs/developer_guide.md) | Architecture, API reference, the SSE contract between the two backends, local setup |
 | [Repository Structure](docs/repository_structure.md) | Directory-by-directory, file-by-file breakdown |
-| [Causal Reasoning](docs/causal_reasoning.md) | How the causal pipeline retrieves data, decomposes, identifies/estimates (DoWhy + causal discovery), executes, and replans |
-| [Evaluation & Testing](docs/evaluation_and_testing.md) | How both chat pathways are executed under test and scored — the `pytest` suite and the `agents-cli eval` flywheel |
+| [Causal Reasoning](docs/causal_reasoning.md) | How the pipeline retrieves data, decomposes, identifies/estimates (DoWhy + causal discovery), executes, and replans |
+| [Access Control](docs/access_control.md) | The email gate, token quota, 24-hour retention, and the admin dashboard |
+| [Evaluation & Testing](docs/evaluation_and_testing.md) | The `pytest` suite and the `agents-cli eval` flywheel |
 | [Local Development (Vertex AI)](docs/local_development_vertex_agent.md) | Running the full stack locally against a real ADK agent |
-| [Deployment Guide](docs/deployment_guide.md) | Step-by-step deployment methods and infrastructure provisioning |
-| [Advanced Deployment](docs/advanced_deployment.md) | End-to-end multi-tier architecture, WIF, DNS, and rewrites |
-| [Token Calculation](docs/token_calculation.md) | How token usage is measured and how multi-turn / multi-agent runs compound cost |
+| [Deployment Guide](docs/deployment_guide.md) | Deployment methods, environments, secrets, and infrastructure provisioning |
+| [Token Calculation](docs/token_calculation.md) | How token usage is measured and how multi-agent runs compound cost |
+
+---
+
+## 🤝 Contributing
+
+1. Branch from `main`. Pushing to any other branch deploys it to the shared dev URL.
+2. Before opening a PR, run what CI runs:
+
+   ```bash
+   python -m pytest tests/ --ignore=tests/ui_tests -v
+   cd ui && npm run lint && npm run typecheck && npm run build
+   uv lock --check
+   ```
+
+3. Two invariants are easy to break and are enforced by tests:
+   - **Vertex tool isolation** — every `LlmAgent` carries at most one of
+     `{code_executor, output_schema, tools}`. Vertex rejects built-in tools mixed
+     with function declarations.
+   - **The two backends stay separate** — `proxy/` and `src/` share only the
+     message markers, the `causal_` state-key prefix, and the agent names in
+     `STAGE_BY_AUTHOR`.
+
+---
+
+## 📄 License
+
+Licensed under the **[GNU Affero General Public License v3.0](LICENSE)**.
+
+AGPL-3.0 is a strong copyleft licence with a network clause: if you run a
+modified version of this software as a **hosted or network-accessible service**,
+you must offer the complete corresponding source of your modified version to its
+users. That obligation applies to running it over a network, not only to
+distributing binaries — which is the reason this licence was chosen for a project
+that is primarily deployed as a web application.
+
+Copyright (C) 2026 Jakee4488.

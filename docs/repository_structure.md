@@ -1,285 +1,246 @@
 # Repository Structure
 
-This document provides a detailed breakdown of every directory and file in the TracerLensAi codebase.
+Directory by directory, file by file. If you're looking for where something
+lives, this is the map.
 
-For a high-level overview of the project, see the [README](../README.md). For the architecture and API reference, see the [Developer Guide](developer_guide.md).
+The repository holds **two independently deployed backends** plus a frontend:
+
+- **`proxy/`** — the FastAPI gateway on Cloud Run. The only thing the browser talks to.
+- **`src/`** — the ADK agent on Vertex AI Agent Runtime. Never reachable from the browser.
+- **`ui/`** — React + TypeScript + Vite, compiled to `ui/dist` and served by the proxy.
+
+They share a deliberately small contract: the `[[causal:on]]`, `[[web:on]]`, and
+`[[run:<id>]]` message markers, the `causal_` session-state key prefix, and the
+agent names in `STAGE_BY_AUTHOR`. Anything else crossing that boundary is a bug.
 
 ---
 
 ## Top-Level Layout
 
 ```text
-TracerLensAi/
-├── .github/                         # CI/CD pipelines & badges
-├── docs/                            # Documentation (this folder)
-├── proxy/                           # Cloud Run gateway: FastAPI proxy & compiled frontend
-├── ui/                              # React + Vite + TypeScript frontend (source)
-├── src/                             # ADK agent: agent logic, causal engine, agent server
-├── terraform/                       # GCP Infrastructure as Code
-├── tests/                           # Test suite (pytest, Playwright, eval harness)
-├── .env.example                     # Environment variable template
-├── agents-cli-manifest.yaml         # Config for the Gemini Enterprise Agent Platform (agents-cli)
-├── deployment_metadata.json         # Recorded Agent Engine id (kept current by agents-cli)
-├── deploy_to_gcp.sh                 # One-step deployment: Agent Engine → Cloud Run → Firebase Hosting
-├── docker-compose.yml               # Production-style compose: builds and runs proxy + React UI
-├── docker-compose.dev.yml           # Local development environment
-├── Dockerfile                       # Container build for the ADK agent server (src/)
-├── Dockerfile.proxy                 # Multi-stage: Node 20 builds ui/, Python packages proxy/
-├── firebase.json                    # Firebase Hosting configuration + Cloud Run rewrite
-├── .firebaserc                      # Firebase CLI project binding (icarus-agent-26)
-├── requirements.txt                 # Python dependencies (agent + proxy)
-└── requirements-dev.txt             # Dev-only dependencies (Playwright E2E)
+proxy/                  # Cloud Run gateway  (see below)
+src/                    # ADK agent          (see below)
+ui/                     # React frontend     (see below)
+tests/                  # pytest + Playwright + eval harness
+terraform/              # GCP infrastructure as code
+docs/                   # this documentation
+docker/                 # container entrypoints
+.github/                # CI/CD workflows and AI-assistant instructions
 ```
-
-> **Two backends, one repo.** `src/` is the **ADK agent** deployed to Vertex AI
-> Agent Runtime; `proxy/` is the **Cloud Run gateway** the browser talks to.
-> They ship as separate container images (`Dockerfile` vs `Dockerfile.proxy`)
-> and the proxy image deliberately does **not** bundle `src/` — the small amount
-> of shared knowledge (the `[[causal:on]]` marker, the `causal_` key prefix) is
-> duplicated in `proxy/main.py` on purpose.
 
 ---
 
 ## `proxy/` — Cloud Run Gateway
 
-The lightweight FastAPI service the browser calls. It authenticates users,
-stores per-user history, accepts file uploads, and proxies chat requests to the
-Agent Engine. It never holds API keys — it uses Application Default Credentials.
+Everything the browser touches. Roughly 3,200 lines, and the largest single
+component in the repo — the access tier is most of it.
 
-```text
-proxy/
-├── main.py                          # FastAPI proxy: auth, history, uploads, agent proxy
-└── static/                          # Compiled React bundle (output of ui/ Docker build stage)
-    └── index.html                   # Entry point served by the proxy
-```
+| File | Lines | Responsibility |
+|---|---|---|
+| `main.py` | ~1360 | ASGI app: serves `ui/dist`, auth/history/upload endpoints, and `POST /analyze-prompt`, which proxies the Agent Engine run to the browser as **Server-Sent Events**. Also holds the offline mock stream. |
+| `access.py` | ~1030 | The email access gate: address validation, HMAC session/link signing, Firestore records, per-user token quota, run metrics, SMTP/Resend mail. |
+| `admin.py` | ~680 | `/admin` — password + emailed OTP two-factor, review endpoints, one-click approve links, the retention sweep, and the server-rendered dashboard HTML. |
+| `memstore.py` | ~120 | In-memory stand-in for Firestore, enabled by `ACCESS_STORE=memory`. Offline dev only. Also used by the test suite as its Firestore fake. |
 
-| File | Role |
-|---|---|
-| `proxy/main.py` | Endpoints: `GET /` (redirect to UI), `GET /health`, `GET /history` & `GET /history/{chat_id}` (Firestore-backed, auth required), `POST /upload` (text file attachments), `POST /analyze-prompt` (prepends the `[[causal:on]]`/`[[web:on]]` markers, streams to the Agent Engine, collects every causal `state_delta` incl. `causal_estimand`/`causal_effect`/`causal_counterfactual`/`causal_graph_reconcile`/`causal_web_retrieval`, sums token usage, persists to Firestore). Optional Firebase auth and CORS allow-list. |
-| `proxy/static/` | **Compiled output** of the React + Vite build. Do not edit directly; regenerate with `docker compose up --build` or `cd ui && npm run build`. |
-
----
-
-## `ui/` — React + Vite Frontend (Source)
-
-The browser UI is a **React 18 + TypeScript + Vite** application. The `Dockerfile.proxy` Node stage runs `npm ci && npm run build` and copies `ui/dist/` to `proxy/static/` inside the container. In production the FastAPI proxy serves these files statically — there is no Node process at runtime.
-
-```text
-ui/
-├── src/
-│   ├── App.tsx                      # Root component: layout, state, send / stop logic
-│   ├── main.tsx                     # React entry point (mounts <App />, StrictMode)
-│   ├── types.ts                     # Shared TypeScript interfaces (ChatMessage, Report, …)
-│   ├── styles.css                   # Design system: tokens, layout, components, animations
-│   ├── components/
-│   │   ├── ChatHeader.tsx           # Header: token badge, model selector, toggles, auth chip
-│   │   ├── Composer.tsx             # Input pill: textarea, attach btn, send/stop button swap
-│   │   ├── DropOverlay.tsx          # Full-page drag-and-drop file overlay
-│   │   ├── MessageList.tsx          # Message stream, starter cards, pending/live bubble
-│   │   ├── Sidebar.tsx              # Brand, conversation history, settings (model/causal/web/theme)
-│   │   └── causal/
-│   │       ├── CausalPanel.tsx      # Right-pane container (head, estimand, timeline, graph, drawer)
-│   │       ├── CausalGraph.tsx      # ReactFlow DAG: nodes by status/kind, click-through to drawer
-│   │       ├── EstimandCard.tsx     # DoWhy identification card + EffectChart
-│   │       ├── EffectChart.tsx      # Effect estimate bar + CI + refutation rows
-│   │       ├── StepDrawer.tsx       # Slide-in overlay: ledger for a specific node
-│   │       └── WorkflowTimeline.tsx # Live pipeline stages with elapsed-time counters (rAF)
-│   ├── hooks/
-│   │   ├── useAttachments.ts        # Attachment upload state machine (chips, upload, remove)
-│   │   ├── useHistory.ts            # Firestore conversation history pagination
-│   │   └── useRunProgress.ts        # SSE → Stage[] + live CausalGraph state
-│   └── lib/
-│       ├── api.ts                   # analyzePrompt (SSE + AbortSignal), uploadFile, fetchHistory
-│       ├── access.ts                # Access session (localStorage, sign-in link capture)
-│       ├── graph.ts                 # buildReactFlowGraph: CausalGraph → ReactFlow + Dagre layout
-│       ├── ids.ts                   # generateSessionId, nextMessageKey, getAnonId
-│       ├── markdown.ts              # renderMarkdown: marked + DOMPurify + highlight.js
-│       ├── sse.ts                   # readSse: async SSE frame generator from a fetch Response
-│       ├── stages.ts                # updateStages: ADK progress frames → typed Stage state machine
-│       └── theme.ts                 # getTheme / setTheme: localStorage + <html data-theme>
-├── package.json                     # React, ReactFlow, Vite, TypeScript deps
-└── vite.config.ts                   # Build config: proxy /api → localhost:8080 in dev mode
-```
-
-| File | Role |
-|---|---|
-| `App.tsx` | All top-level React state: messages, input, causal/web/model toggles, `selectedMessageId` for the right pane, `abortControllerRef` for stream cancellation, `isSendingRef` sync lock. Calls `send(overrideText?)` (assembles + streams the request, catches `AbortError` silently) and `stop()` (fires the abort). |
-| `Composer.tsx` | Renders the input pill. While `isSending` is true, the `➤` send button is replaced by a red `■` stop button that calls `onStop`. |
-| `MessageList.tsx` | User messages, AI markdown bubbles, error rows. When messages are empty: starter prompt cards (call `onPromptClick` which directly invokes `send()`). Pending AI bubble: animated `⚯ Causal reasoning: <active stage>` label while the agent runs; `⚯ View Causal Details →` button on completed causal messages. |
-| `WorkflowTimeline.tsx` | Ordered pipeline stage rows; each row's elapsed timer runs its own `requestAnimationFrame` loop (throttled to ~10fps) so ticking never re-renders the parent. |
-| `useRunProgress.ts` | Receives `onProgress(frame)` callbacks from `analyzePrompt`; maps `frame.stage` strings to a typed `Stage[]` via `stages.ts`; provides `run.stages` and `run.graph` to `App.tsx`. |
-| `api.ts` | `analyzePrompt(body, handlers)` — `POST /analyze-prompt`, reads SSE frames via `readSse`, calls `handlers.onProgress` / `handlers.onGraph`, resolves with the terminal `Report`. Accepts an `AbortSignal` so the fetch can be cancelled mid-stream. |
+There is **no `proxy/static/`**. The compiled frontend lives in `ui/dist`
+(gitignored, built by `Dockerfile.proxy` or `npm run build`), and `proxy/main.py`
+resolves it via `UI_DIST` or the default `ui/dist`.
 
 ---
 
 ## `src/` — ADK Agent
 
-The agent packaged and deployed to Vertex AI Agent Runtime by `agents-cli`.
+Deployed to Vertex AI Agent Runtime by `agents-cli`. Never serves the browser.
 
-```text
-src/
-├── agent.py                         # Root router + general assistant + engine wrapper
-├── fast_api_app.py                  # Agent-side FastAPI server (local/Console serving)
-├── app_utils/                       # Shared services & serving surfaces
-│   ├── services.py                  #   process-wide session/artifact services
-│   ├── a2a.py                       #   Agent2Agent (A2A) route attachment
-│   ├── reasoning_engine_adapter.py  #   reasoning_engine {class_method,input} HTTP contract
-│   ├── telemetry.py                 #   OpenTelemetry / GenAI logging setup
-│   └── typing.py                    #   Feedback pydantic model
-└── causal/                          # Causal-reasoning pipeline engine (see below)
-```
-
-| File | Role |
-|---|---|
-| `src/agent.py` | Builds the `general_assistant` (Gemini + `BuiltInCodeExecutor`) and the deterministic `CausalRouterAgent` root; wraps them in an `AdkApp` + `TracerLensEngine` for Agent Runtime. Rewrites `GOOGLE_CLOUD_LOCATION=global` to the working region on import. |
-| `src/fast_api_app.py` | Assembles the agent-serving FastAPI app via ADK's `get_fast_api_app`, plus A2A routes, the reasoning-engine adapter, telemetry, and a `/feedback` endpoint. Used for local serving and the Vertex Console Playground. |
-| `src/app_utils/services.py` | One shared session + artifact service registered under `shared://` so the ADK web, A2A, and reasoning-engine surfaces all see the same sessions. Picks `VertexAiSessionService`, a URI-configured service, or in-memory. |
-| `src/app_utils/a2a.py` | Attaches the A2A JSON-RPC + agent-card endpoints and resolves the public agent-card URL. |
-| `src/app_utils/reasoning_engine_adapter.py` | Serves `/api/reasoning_engine` (sync) and `/api/stream_reasoning_engine` (streaming) dispatching to the `AdkApp`'s registered operations. |
-| `src/app_utils/telemetry.py` | Configures GenAI prompt/response logging and the Agent Engine tracer provider. |
-| `src/app_utils/typing.py` | The `Feedback` pydantic model logged by `/feedback`. |
-
-### `src/causal/` — Causal Reasoning Engine
-
-The deterministic causal pipeline. The **pure** modules have no ADK/Vertex
-dependencies (so they unit-test hermetically); the **orchestration** modules
-wire them into the ADK multi-agent pipeline. Full walkthrough in
-[Causal Reasoning](causal_reasoning.md).
-
-```text
-src/causal/
-├── state_keys.py                    # [pure] control marker, session-state keys, budgets/caps
-├── models.py                        # [pure] pydantic models (graph, plan, ledger, LLM schemas)
-├── complexity.py                    # [pure] query-complexity scoring → dynamic budgets
-├── graph_engine.py                  # [pure] DAG build/repair, plan, impact propagation, splice
-├── runtime.py                       # [pure] verdict parsing, ready-step selection, trace lines
-├── ledger.py                        # [pure] append-only, capped change ledger
-├── estimation.py                    # [pure] DoWhy identify/estimate/refute + counterfactual + web parsing (lazy dowhy/pandas)
-├── discovery.py                     # [pure] data-driven DAG correction (causal-learn PC + LiNGAM; lazy, soft dep)
-├── prompts.py                       # instruction providers for each LLM agent
-├── callbacks.py                     # deterministic glue between LLM agents and the engine
-├── controller.py                    # CausalStepController: the loop's deterministic core
-├── estimator.py                     # CausalEstimator: deterministic DoWhy + discovery stage (zero LLM)
-├── router.py                        # CausalRouterAgent: marker routing + per-turn state reset
-└── agents.py                        # factories wiring the ADK pipeline together (incl. web-search + ingest agents)
-```
-
-| File | Role |
-|---|---|
-| `state_keys.py` | Single source of truth for the `[[causal:on]]` marker, all `causal_*` session keys, budget defaults (`DEFAULT_MAX_STEPS`, `DEFAULT_MAX_REPLANS`), graph caps, and the executor output-trailer regexes. |
-| `models.py` | Runtime models (`Component`, `CausalGraph`, `ExecutionPlan`, `PlanStep`, `ChangeRecord`, `CausalStatus`, `IdentificationResult`, `EffectEstimate`, …) and shallow LLM-facing schemas (`CausalDecomposition`, `ReplanResult`, `CausalEstimand`) for constrained decoding; plus `parse_model` and `slugify`. |
-| `complexity.py` | Scores a query's complexity from cheap lexical features and maps it to a speed-biased `{max_steps, max_replans}` tier. |
-| `graph_engine.py` | `CausalTaskGraph` over `networkx`: validate/repair a DAG, derive the critical path and plan, propagate failure impact to descendants, invalidate steps, and splice localized replans. |
-| `runtime.py` | Pure decision helpers: parse the `OBSERVED:`/`STEP_STATUS:` verdict, pick the next ready step, budget checks, and human-readable UI trace lines. |
-| `ledger.py` | Append-only change ledger (returns new lists so `state_delta` semantics hold), capped at `LEDGER_CAP`. |
-| `estimation.py` | Deterministic DoWhy wrapper: `run_identification` does back-door/IV identification (data-free) and, with a parsed dataset, estimation + refutation; `run_counterfactual` fits a `dowhy.gcm` SCM for do-contrast queries; `acquire_dataframe`/`parse_dataset`/`parse_web_retrieval`/`build_causal_graph` helpers. Lazily imports `dowhy`/`pandas`; never raises. |
-| `discovery.py` | Data-driven correction of the LLM-asserted **variable** DAG: `reconcile_graph` runs constraint-based discovery (causal-learn PC, FisherZ) + DirectLiNGAM and conservatively reconciles them against the LLM prior, returning a `GraphReconciliation` (verdict, edits, latent confounders). Lazily imports `causallearn`; a soft dependency that degrades to a no-op (returns `None`) when absent; never raises. |
-| `prompts.py` | Callable instruction providers (web-search, decomposer, estimand-spec, executor, replanner, synthesizer) that read bounded state, avoiding template `KeyError`s; `_estimand_grounding` injects the identified estimand (and any reconciliation caution / web evidence). |
-| `callbacks.py` | After/before-agent callbacks that build the graph+plan, skip agents on the happy path (incl. `skip_unless_effect_query`, `skip_unless_web_requested`), and splice replans — all writes ride on `state_delta`. |
-| `controller.py` | `CausalStepController` (custom `BaseAgent`, zero LLM calls): parses each step's verdict, updates the ledger and graph, requests a replan or escalates, and advances the plan. |
-| `estimator.py` | `CausalEstimator` (custom `BaseAgent`, zero LLM): acquires a dataframe (attached or web), runs `discovery.reconcile_graph` (when data is present) then `estimation.run_identification`/`run_counterfactual`, and writes `causal_graph_reconcile`/`causal_estimand`/`causal_effect`/`causal_counterfactual`; a silent no-op when the estimand stage was skipped. |
-| `router.py` | `CausalRouterAgent`: routes by marker to the pipeline or the general assistant, records the `[[web:on]]` flag, and seeds complexity-sized budgets while resetting stale causal state each turn. |
-| `agents.py` | `build_causal_pipeline()` and `build_root_agent()` factories; the `CausalWebSearch`/`CausalWebIngestor` and `CausalFallbackEmitter` custom agents; enforces the isolation invariant (one built-in per `LlmAgent`). |
-
----
-
-## `terraform/` — Infrastructure as Code
-
-All GCP resources are declared here using Terraform (hashicorp/google provider `~> 5.0`, Terraform `>= 1.5.0`).
-
-```text
-terraform/
-├── main.tf                          # Provider configuration + required versions
-├── variables.tf                     # Input variables
-├── cloudrun.tf                      # Cloud Run service + public IAM
-├── iam.tf                           # Service accounts & Workload Identity Federation
-├── storage.tf                       # Artifact Registry, GCS, BigQuery
-├── causal_mlops.tf                  # API enablement + Causal MLOps resources
-└── outputs.tf                       # Terraform outputs
-```
-
-| File | Resources Managed |
-|---|---|
-| `main.tf` | Google provider configuration, required Terraform version (≥1.5.0), provider `~> 5.0` |
-| `variables.tf` | `project_id` (`icarus-agent-26`), `region` (`europe-west2`), `github_repo` (`Jakee4488/TracerLensAi`), `causal_artifact_repo_name`, `causal_artifacts_bucket` |
-| `cloudrun.tf` | `google_cloud_run_service` (`tracerlensai-app`) with the `agent-app-sa` service account and public `allUsers` invoker IAM; the image is `ignore_changes`d so deploys don't fight Terraform |
-| `iam.tf` | `agent-app-sa` (roles: `aiplatform.user`, `bigquery.dataEditor`, `logging.logWriter`), `github-actions-sa` (owner — flagged to scope down), WIF pool `github-actions-pool-v3` + provider `github-actions-provider-v3`, GKE Workload Identity binding, Artifact Registry reader for the compute SA |
-| `storage.tf` | Artifact Registry (`agent-docker-repo`), GCS bucket (`<project>-agent-cache`), BigQuery dataset (`agent_orchestrator_logs`, 365-day TTL) |
-| `causal_mlops.tf` | API enablement (Artifact Registry, Cloud Functions, Cloud Run, AI Platform), Causal MLOps Artifact Registry (`causal-mlops-repo`), GCS bucket for causal artifacts |
-| `outputs.tf` | `artifact_registry_repo` name |
-
----
-
-## `.github/` — CI/CD & Automation
-
-```text
-.github/
-├── workflows/
-│   ├── ci.yml                       # PR gate — pytest backend suite
-│   ├── deploy.yml                   # Continuous deployment (all three tiers)
-│   └── uptime.yml                   # Health check & uptime badge
-└── badges/
-    └── uptime.json                  # shields.io endpoint badge data
-```
-
-| Workflow | Trigger | Action |
+| File | Lines | Responsibility |
 |---|---|---|
-| `ci.yml` | Pull request → `main` | Installs deps and runs `pytest tests/ --ignore=tests/ui_tests` |
-| `deploy.yml` | Push to `main` (merge) or manual dispatch | Runs `deploy_to_gcp.sh`: Agent Engine → Cloud Run proxy → Firebase Hosting (dispatch can target a single stage); records a GitHub Deployment linked to `https://tracerlensai.com` |
-| `uptime.yml` | Every 5 minutes (cron) | Pings `https://tracerlensai.com/health`, updates `uptime.json` badge |
+| `agent.py` | ~130 | Builds the general assistant (Gemini + `BuiltInCodeExecutor`), the root router, and the `AdkApp` / engine wrappers. |
+| `fast_api_app.py` | ~115 | The agent-side ASGI entrypoint the container runs: ADK web routes, A2A, reasoning-engine shim, `/feedback`. |
+| `_eval_compat.py` | ~55 | Patches the Vertex SDK to tolerate callable instruction providers, which this pipeline uses throughout. Still required. |
+| `__init__.py` | ~20 | Lazy (PEP 562) re-exports of `root_agent`, `adk_app`, `engine`, `fastapi_app` for ADK/`agents-cli` discovery. |
+
+### `src/app_utils/` — serving surfaces
+
+| File | Responsibility |
+|---|---|
+| `services.py` | Process-wide session and artifact services. |
+| `a2a.py` | Agent2Agent JSON-RPC routes and the agent card. |
+| `reasoning_engine_adapter.py` | `/api/reasoning_engine` and `/api/stream_reasoning_engine` for the Vertex console. |
+| `telemetry.py` | GenAI logging setup and the Agent Engine tracer provider. Runs in `NO_CONTENT` mode deliberately — prompts routinely carry user data. |
+| `typing.py` | The `Feedback` model. |
+
+### `src/causal/` — the causal-reasoning pipeline
+
+The deep-dive is [causal_reasoning.md](causal_reasoning.md); this is just the map.
+
+| File | Responsibility |
+|---|---|
+| `agents.py` | `build_causal_pipeline()` / `build_root_agent()`, plus the custom web-ingest and fallback agents. |
+| `router.py` | `CausalRouterAgent` — deterministic marker routing, state reset, budget seeding. |
+| `prompts.py` | Instruction providers (callables) for every `LlmAgent`. |
+| `callbacks.py` | Deterministic glue between the LLM agents and the engine: skip-gates, graph/plan build, replan splice. |
+| `controller.py` | `CausalStepController` — the verdict/propagate/replan loop node. |
+| `graph_engine.py` | `CausalTaskGraph`: DAG validation and repair, plan derivation, impact propagation, splice. |
+| `estimation.py` | Pure DoWhy library — dataset parsing, GML build, identification, estimation, refutation, counterfactuals. **No ADK imports.** |
+| `estimator.py` | The ADK `BaseAgent` node that *calls* `estimation.py` and writes the state delta. |
+| `discovery.py` | causal-learn (PC + DirectLiNGAM) DAG correction against real data. |
+| `complexity.py` | Lexical complexity scoring → per-query budgets; effect/counterfactual query gates. |
+| `models.py` | Every pydantic model, plus `slugify` and `parse_model`. |
+| `ledger.py` | Capped append-only change ledger and replan-event log. |
+| `runtime.py` | Pure decision helpers and the UI trace-line formatters. |
+| `state_keys.py` | Markers, session-state key names, budget and cap constants. |
+
+> `estimation.py` and `estimator.py` are **not** duplicates and both are live.
+> The first is a pure statistics library; the second is the agent node that
+> drives it. The similar names are the only thing they share.
+
+---
+
+## `ui/` — React + Vite Frontend (source)
+
+Compiled to `ui/dist`. The proxy serves the build output, never these files.
+
+```text
+ui/
+├── index.html          # Bootstraps the app; selects the API base for prod hostnames
+├── package.json        # Node dependencies
+├── vite.config.ts      # base "./" and build.outDir
+├── tsconfig.json
+├── eslint.config.js
+└── src/
+    ├── App.tsx         # Application shell, split-pane layout, run orchestration
+    ├── main.tsx
+    ├── styles.css
+    ├── types.ts        # Report, ChatMessage, CausalGraph, …
+    ├── components/
+    ├── hooks/
+    └── lib/
+```
+
+### Components
+
+| File | Responsibility |
+|---|---|
+| `AccessGate.tsx` | The sign-in / request-access modal and privacy notice. |
+| `ChatHeader.tsx` | Hamburger, title, token badge, profile menu or login. |
+| `Sidebar.tsx` | Conversation history, model selector, causal and web toggles. |
+| `Composer.tsx` | Prompt input, attachments, send / stop. |
+| `MessageList.tsx` | Transcript rendering, markdown, live pending bubble. |
+| `ProfileMenu.tsx` | Account menu, theme toggle, data deletion. |
+| `DropOverlay.tsx` | Drag-and-drop file target. |
+| `causal/CausalPanel.tsx` | The right-hand pane. Lazily loaded — it pulls ReactFlow and dagre. |
+| `causal/CausalGraph.tsx` | The interactive DAG (ReactFlow + dagre layout). |
+| `causal/WorkflowTimeline.tsx` | Stage-by-stage run progress. |
+| `causal/EstimandCard.tsx` | Identification result and adjustment set. |
+| `causal/EffectChart.tsx` | Effect estimate, CI, and refutation results. |
+| `causal/PlanView.tsx` | The execution plan and per-step status. |
+| `causal/StepDrawer.tsx` | Click-through detail for a step or node. |
+
+### Hooks and lib
+
+| File | Responsibility |
+|---|---|
+| `hooks/useAccess.ts` | Access-gate state machine and session polling. |
+| `hooks/useHistory.ts` | Conversation list and loading. |
+| `hooks/useAttachments.ts` | Upload lifecycle. |
+| `hooks/useRunProgress.ts` | Accumulates SSE frames into stages and a live graph. |
+| `hooks/useFocusTrap.ts` | Modal focus containment. |
+| `hooks/useMediaQuery.ts` | Responsive breakpoints. |
+| `lib/api.ts` | Every backend call, plus auth headers. |
+| `lib/sse.ts` | SSE frame reader. |
+| `lib/stages.ts` | Stage model the timeline renders. |
+| `lib/graph.ts` | dagre layout, edge building, topology keys. |
+| `lib/markdown.ts` | marked + DOMPurify, syntax highlighting, `[Node: …]` citation linkifying. |
+| `lib/causal.ts` | `hasCausalContent` — kept dependency-free so the panel can load lazily. |
+| `lib/export.ts` | `downloadRun` — one auditable JSON file per run. |
+| `lib/access.ts` | Session token storage. |
+| `lib/ids.ts` | Session, run, message, and anonymous ids. |
+| `lib/theme.ts` | Light/dark persistence. |
 
 ---
 
 ## `tests/` — Test Suite
 
-```text
-tests/
-├── conftest.py                      # `client` TestClient fixture for the proxy app
-├── test_main.py                     # Proxy: health, mock/real analyze-prompt, auth, history, uploads
-├── test_main_causal.py              # Proxy: causal + web marker, state_delta / fenced-block transport
-├── test_causal_agents.py            # Causal: agent-tree wiring & isolation invariant
-├── test_causal_complexity.py        # Causal: complexity scoring → budget tiers
-├── test_causal_engine.py            # Causal: graph build/repair, plan, impact, splice
-├── test_causal_estimation.py        # Causal: DoWhy identify/estimate/refute, counterfactuals, web parsing
-├── test_causal_discovery.py         # Causal: data-driven DAG correction (importorskip causallearn)
-├── test_causal_benchmark.py         # Causal: ground-truth ATE recovery over synthetic SCMs
-├── test_causal_pipeline_flow.py     # Causal: end-to-end pipeline flow over the engine
-├── test_causal_runtime.py           # Causal: verdict parsing & decision helpers
-├── ui_tests/
-│   ├── conftest.py                  # Playwright fixtures (server, console errors, sample files)
-│   └── test_ui.py                   # Browser E2E against the mock-mode proxy
-└── eval/
-    ├── eval_config.yaml             # agents-cli eval config (LLM-as-judge)
-    ├── metrics.py                   # Custom multi-axis causal judge
-    └── datasets/
-        ├── README.md
-        ├── basic-dataset.json       # Eval cases (both pathways)
-        └── causal-inference-dataset.json  # Causal-pipeline ground truths (identification, traps, counterfactual)
-```
+| File | Tests | Covers |
+|---|---|---|
+| `test_access.py` | 52 | Email gate, sessions, quota, retention, mail. |
+| `test_admin.py` | 36 | OTP two-factor, review endpoints, sweep, dashboard. |
+| `test_main.py` | 35 | Proxy endpoints, history, uploads, SSE, token accounting. |
+| `test_main_causal.py` | 31 | Causal transport end to end through the proxy. |
+| `test_causal_estimation.py` | 26 | DoWhy identification, estimation, refutation, counterfactuals. |
+| `test_causal_engine.py` | 19 | Graph engine, ledger, impact propagation, splice. |
+| `test_causal_runtime.py` | 14 | Decision helpers and trace formatting. |
+| `test_causal_agents.py` | 13 | Agent tree shape and the Vertex tool-isolation invariant. |
+| `test_causal_complexity.py` | 10 | Complexity tiers and budgets. |
+| `test_causal_discovery.py` | 7 | causal-learn DAG correction. |
+| `test_causal_pipeline_flow.py` | 5 | Full pipeline wiring. |
+| `test_causal_prompts.py` | 3 | Instruction providers render and cite correctly. |
+| `test_app_entrypoint.py` | 3 | The production ASGI entrypoint imports and serves. |
+| `test_causal_benchmark.py` | 2 | Performance guardrails. |
+| `ui_tests/test_ui.py` | 34 | Playwright browser E2E. |
+| `ui_tests/test_access_gate.py` | 13 | Playwright access-gate behaviour. |
 
-The proxy tests use FastAPI's `TestClient` and a `FakeStore` that mimics
-Firestore (no GCP calls). The causal tests exercise the pure engine directly.
-UI tests drive the mock-mode proxy in a real browser via Playwright and are
-**excluded** from CI (they need a live stack); run them locally with
-`requirements-dev.txt`.
+`tests/fixtures/sales.csv` is the canonical dataset for manual testing — 150 rows
+from a known structural model with a true ATE of −3.00, so an estimate can be
+checked against a real answer. `tests/eval/` holds the `agents-cli eval`
+datasets, config, and custom metrics.
+
+> `conftest.py` uses `proxy/memstore.py` as its Firestore fake rather than
+> carrying its own copy. It used to have a duplicate, and the two silently
+> diverged.
+
+**CI runs `pytest tests/ --ignore=tests/ui_tests`.** The Playwright suite is not
+run by CI and needs a built bundle (`cd ui && npm run build`) plus
+`playwright install chromium`.
 
 ---
 
-## Root Configuration Files
+## `terraform/` — Infrastructure as Code
+
+| File | Provisions |
+|---|---|
+| `main.tf` | Provider, API enablement. |
+| `cloudrun.tf` | The `tracerlensai-app` service and public access. |
+| `iam.tf` | Service accounts, roles, Workload Identity Federation. |
+| `storage.tf` | GCS buckets. |
+| `causal_mlops.tf` | BigQuery dataset and causal artifact storage. |
+| `variables.tf` / `outputs.tf` | Inputs and outputs. |
+
+---
+
+## `.github/` — CI/CD & Automation
+
+| File | Runs |
+|---|---|
+| `workflows/ci.yml` | `uv lock --check`, `pytest tests/ --ignore=tests/ui_tests`, and the UI's `lint` / `typecheck` / `build`. |
+| `workflows/deploy.yml` | Push to `main` → agent, proxy, and hosting. |
+| `workflows/deploy-dev.yml` | Push to any other branch → `tracerlensai-app-dev`, **proxy only**. |
+| `workflows/deploy-staging.yml` | Pull request → `tracerlensai-app-staging-pr-<N>`, **proxy only**. |
+| `workflows/uptime.yml` | Health probe; writes `badges/uptime.json`. |
+| `copilot-instructions.md` | Project context for AI assistants. |
+| `instructions/mermaid.instructions.md` | Diagram conventions. |
+
+---
+
+## Root Configuration
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | Multi-stage build for the **ADK agent server** (`src/`); runs `uvicorn src.fast_api_app:app`. |
-| `Dockerfile.proxy` | Multi-stage build for the **Cloud Run proxy** (`proxy/`); runs `uvicorn proxy.main:app`. |
-| `docker-compose.dev.yml` | Services: `tracerlensai-app` (hot-reload agent server), `test-runner` (pytest, `--profile test`), `causal-agent-ui-test` (Playwright, `--profile ui-test`). |
-| `requirements.txt` | FastAPI, uvicorn, pydantic, google-genai, google-adk[gcp], google-agents-cli, a2a-sdk, google-cloud-logging, firebase-admin, python-multipart, networkx, dowhy (identification/estimation), causal-learn (DAG discovery), pytest, flake8. |
-| `requirements-dev.txt` | Playwright + pytest-playwright (dev-only; kept out of prod images). |
-| `agents-cli-manifest.yaml` | Deploy config: `agent_directory: src`, `region: europe-west2`, `deployment_target: agent_runtime`, `session_type: in_memory`. |
-| `deployment_metadata.json` | The deployed Agent Engine's `remote_agent_runtime_id`; `deploy_to_gcp.sh` reads it to point the proxy at the engine. |
-| `deploy_to_gcp.sh` | One-step deployment: Agent Engine (agents-cli) → Cloud Run proxy (Dockerfile.proxy) → Firebase Hosting; `--only agent\|proxy\|hosting` deploys a single stage. |
-| `firebase.json` | Firebase Hosting config: serves `proxy/static/`, rewrites all paths to the `tracerlensai-app` Cloud Run service. |
-| `.firebaserc` | Binds the Firebase CLI to project `icarus-agent-26`. |
-| `.env.example` | Template for `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_REGION`, `GOOGLE_CLOUD_LOCATION`, optional `GEMINI_API_KEY`, and Artifact Registry vars. |
-| `pytest.ini` | Pytest configuration (deprecation-warning filter). |
-| `.flake8` | Flake8 linting rules. |
-| `.gitignore` | Ignores venvs, terraform state, credentials, Firebase cache, DB files, `.claude`. |
+| `LICENSE` | **AGPL-3.0.** Network use counts as distribution — see the README's License section. |
+| `requirements.txt` | Agent + dev dependencies, including dowhy and causal-learn. |
+| `requirements-proxy.txt` | Proxy-image dependencies only. Deliberately excludes the ~450 MB causal stack — `Dockerfile.proxy` installs this one. |
+| `requirements-dev.txt` | Playwright and test tooling. |
+| `pyproject.toml` / `uv.lock` | Dependency lock; CI enforces they agree. |
+| `pytest.ini` | `testpaths = tests`, warning filters, the `logged_out` marker. |
+| `Dockerfile` | The agent image. |
+| `Dockerfile.proxy` | Multi-stage: Node 20 builds `ui/` → Python packages `proxy/` with `ui/dist`. |
+| `docker-compose.yml` | Full local stack. `MODE=mock` for offline. |
+| `docker-compose.dev.yml` | Hot-reload agent (8080), proxy (8081), test-runner, Playwright services. |
+| `docker/local-entrypoint.sh` | Resolves the agent endpoint and seeds a local admin. |
+| `deploy_to_gcp.sh` | The three-stage deploy, run by CI and available manually. |
+| `deployment_metadata.json` | Written by `agents-cli`; the source of truth for the Agent Engine endpoint. |
+| `agents-cli-manifest.yaml` | Agent deployment manifest (region, session type, entrypoint). |
+| `firebase.json` / `.firebaserc` | Hosting config — publishes `ui/dist`, rewrites everything else to Cloud Run. |
+| `.env.example` | Template for local configuration. |
+
+`artifacts/` holds eval traces and grade results. It is currently tracked in git.
