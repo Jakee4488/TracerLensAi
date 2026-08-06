@@ -2,8 +2,17 @@
 # ci.yml — Pull Request CI
 #
 # Triggers: every pull_request targeting main
-# Jobs    : pytest (backend suite; UI tests excluded — they need a live stack)
+# Jobs    : pytest (backend), then UI lint/typecheck/build + the Playwright E2E
+#           suite against a mock-mode proxy
 # Purpose : Gate PRs — must pass before merge is allowed
+#
+# The E2E suite runs here because excluding it is how the access gate broke
+# unnoticed: mail was unconfigured in production, every /auth/login answered
+# 502, and no visitor could sign in. tests/ui_tests covers exactly that path
+# (request → approve → session) and fails loudly on it, but was skipped in CI.
+# It needs no credentials — proxy/access.py's ACCESS_MAIL_TRANSPORT=console
+# prints each message, and the suite reads its sign-in links back out of the
+# server log.
 #
 # Two dependency-drift guards, added after an incident where `a2a-sdk`'s
 # unbounded `>=0.3.22` pin floated onto a breaking 1.x release during
@@ -56,7 +65,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run tests
+      # Backend only: the E2E suite serves ui/dist, which does not exist until
+      # the Build UI step below, so it runs as its own step further down.
+      - name: Run backend tests
         run: python -m pytest tests/ --ignore=tests/ui_tests -v --tb=short
 
       - name: Set up Node
@@ -77,3 +88,13 @@ jobs:
       - name: Build UI
         run: npm run build
         working-directory: ui
+
+      # requirements.txt covers the agent, not the proxy the E2E suite boots.
+      - name: Install UI test dependencies
+        run: pip install -r requirements-proxy.txt -r requirements-dev.txt
+
+      - name: Install Playwright browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run UI tests
+        run: python -m pytest tests/ui_tests -v --tb=short
