@@ -10,8 +10,6 @@
 
 | Feature | Description |
 |---|---|
-
-
 | **Causal Reasoning Pipeline** | A multi-agent ADK pipeline (decompose → identify → execute → replan → synthesize) with deterministic graph engineering in Python. See [Causal Reasoning](docs/causal_reasoning.md). |
 | **Formal Identification (DoWhy)** | For treatment-effect questions, a deterministic DoWhy stage identifies the back-door/IV adjustment set from the variable DAG (0 LLM calls) and, when a dataset is present, estimates the effect, runs refutation tests, and computes counterfactuals — so the numeric answer is grounded in a real adjustment set, not the LLM's guess. |
 | **Data-Driven DAG Correction** | With a dataset available, causal discovery (causal-learn PC + DirectLiNGAM) conservatively corrects the LLM-asserted graph — reversing, dropping, or adding edges only when the data disagrees strongly and directionally — so a wrong edge changes the *answer*, not just an annotation. |
@@ -57,7 +55,7 @@ The app is split into two backends: a **proxy gateway** (`proxy/`, on Cloud Run)
                                                      │ reasoning-engine
                                                      │ streamQuery (ADC)
                                                      ▼
-                                          ┌───────────────────────┐
+                                          ┌────────────────────────┐
                                           │ Vertex AI Agent Engine │
                                           │ (ADK Agent Runtime)    │
                                           │                        │
@@ -69,7 +67,7 @@ The app is split into two backends: a **proxy gateway** (`proxy/`, on Cloud Run)
                                           │  synthesize) /         │
                                           │  General Assistant     │
                                           │  + sessions            │
-                                          └───────────────────────┘
+                                          └────────────────────────┘
 ```
 
 **Flow:** The browser sends a prompt (with its access-session token and any uploaded attachment ids) to the proxy. The proxy checks the access gate and the caller's token quota, resolves attachments, prepends the `[[causal:on]]` marker when causal mode is on (plus `[[web:on]]` for the Web toggle and `[[run:<id>]]` as a correlation id), and streams the request to the Agent Engine with Application Default Credentials. The agent's **root router** dispatches to the **causal pipeline** (when marked) or the **general assistant**. In the pipeline, an optional web-search stage fetches data/evidence, the decomposer builds the graph, a deterministic DoWhy stage identifies (and, with data, estimates) the effect and corrects the DAG against the data, and the executor loop runs the plan.
@@ -169,11 +167,15 @@ Dockerfile.proxy    # Multi-stage: builds ui/ with Node then packages with proxy
 
    ```bash
    cd ui && npm ci && npm run build && cd ..   # required — the suite serves ui/dist
-   pip install -r requirements-dev.txt && playwright install chromium
+   pip install -r requirements-proxy.txt -r requirements-dev.txt
+   playwright install chromium
    python -m pytest tests/ui_tests -v
    ```
 
-   These are not run by CI.
+   `requirements.txt` covers the agent, not the proxy this suite boots — hence
+   `requirements-proxy.txt`. CI runs this suite on every PR
+   ([`ci.yml`](.github/workflows/ci.yml)); it needs no credentials, because
+   `ACCESS_MAIL_TRANSPORT=console` prints sign-in links to the server log.
 
 > `docker-compose.dev.yml` provides a hot-reload agent container
 > (`tracerlensai-app`, port 8080), the `proxy` on port 8081, a one-shot
@@ -245,9 +247,10 @@ Start at the [documentation index](docs/README.md), or jump straight in:
 2. Before opening a PR, run what CI runs:
 
    ```bash
-   python -m pytest tests/ --ignore=tests/ui_tests -v
-   cd ui && npm run lint && npm run typecheck && npm run build
    uv lock --check
+   python -m pytest tests/ --ignore=tests/ui_tests -v
+   cd ui && npm run lint && npm run typecheck && npm run build && cd ..
+   python -m pytest tests/ui_tests -v   # Playwright E2E — see Getting Started §6
    ```
 
 3. Two invariants are easy to break and are enforced by tests:
