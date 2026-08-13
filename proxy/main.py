@@ -288,7 +288,7 @@ async def auth_login(body: LoginRequest):
 
 @app.post("/auth/exchange")
 async def auth_exchange(body: ExchangeRequest):
-    """Trade a single-use login link for a 30-day session."""
+    """Trade a single-use login link for a 24-hour session."""
     payload = access.unsign(body.auth, access.PURPOSE_LOGIN)
     if not payload:
         raise HTTPException(status_code=401, detail="This sign-in link has expired")

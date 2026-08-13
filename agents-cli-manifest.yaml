@@ -5,4 +5,10 @@ region: "europe-west2"
 language: "python"
 create_params:
   deployment_target: "agent_runtime"
+  # Scaffold-time hint for the cloud_run target only (google/agents/cli:
+  # prompt_session_type_selection, "select a session type for Cloud Run
+  # deployment"). Inert for agent_runtime, and NOT the session backend this
+  # app uses: that is chosen at runtime in src/app_utils/services.py, which
+  # selects VertexAiSessionService whenever GOOGLE_CLOUD_AGENT_ENGINE_ID is
+  # set. Deployed sessions are persistent despite this line.
   session_type: "in_memory"

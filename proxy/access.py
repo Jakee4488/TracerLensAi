@@ -8,7 +8,7 @@ The flow, end to end:
     visitor enters email  →  POST /auth/login
         no record  →  status "pending", admin notified
         approved   →  a signed, single-use login link is emailed to the visitor
-        clicked    →  POST /auth/exchange trades it for a 30-day session token
+        clicked    →  POST /auth/exchange trades it for a 24-hour session token
 
 The session token is the identity for every subsequent request: it rides on the
 existing ``Authorization: Bearer`` header, so nothing about the CORS allow-list
@@ -731,7 +731,7 @@ async def get_caller(authorization: Optional[str] = Header(None)) -> Optional[di
     if record is None:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
     # A denied or deleted user's live sessions die here rather than lingering
-    # until their 30-day expiry.
+    # until their SESSION_TTL_S expiry.
     if int(payload.get("ver", 0)) != int(record.get("token_version", 1)):
         raise HTTPException(status_code=401, detail="Session revoked — please sign in again")
     return {"email": email, "email_key": email_key(email), "verified": True}

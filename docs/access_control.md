@@ -23,7 +23,7 @@ Header "Login" → modal, enter email → POST /auth/login
                        ↓ visitor clicks
                     ${APP_URL}/?auth=<signed>  →  POST /auth/exchange
                        ↓
-                    30-day session token in localStorage, URL param stripped
+                    24-hour session token in sessionStorage, URL param stripped
 ```
 
 One email field does both jobs — the record decides whether a submission is a
@@ -39,7 +39,7 @@ grants access is a signed token that arrived by email.
 | Token | Payload | Lifetime | Notes |
 |---|---|---|---|
 | Sign-in link | `{email, nonce}` | 15 min | Single use — the nonce is cleared on exchange, so a forwarded link is dead |
-| Session | `{email, ver}` | 30 days | Rides on `Authorization: Bearer`; `ver` is checked against `token_version` |
+| Session | `{email, ver}` | 24 h | Rides on `Authorization: Bearer`; `ver` is checked against `token_version`. Held in `sessionStorage`, so closing the browser also ends it |
 | Admin one-click | `{action, email}` | 7 days | The Approve/Deny/Grant links in notification emails |
 | Admin session | `{admin: true}` | 12 h | Issued only after password **and** OTP |
 
@@ -49,7 +49,7 @@ carries a **purpose**, so a sign-in link cannot be replayed as a session and an
 admin session cannot be replayed as a one-click link.
 
 Bumping `token_version` (on deny, or on delete) revokes every live session for
-that address immediately, rather than waiting out the 30 days.
+that address immediately, rather than waiting out the 24 hours.
 
 **Worth knowing:** this trades Google's OAuth verification for email-link
 possession — the same factor Slack, Notion, and Substack use. It is far
@@ -206,11 +206,32 @@ hours of expiry* — which alone would make a flat "within 24 hours" claim false
 **Consequence:** the sidebar is a rolling 24-hour window, not an archive. Older
 conversations disappear by design, and the sidebar says so.
 
-**Caveat to verify before launch:** the Agent Engine session delete
-(`admin.py:_delete_agent_session`) is best-effort and could not be verified
-offline. If that REST surface does not support delete, scope the notice to
-"chat history stored by this site" and link Google's own retention rather than
-leaving an over-promise in place.
+**Session delete — verified against the API contract.** The REST surface does
+support delete. ADK's own `VertexAiSessionService.delete_session` issues
+`DELETE reasoningEngines/{engine}/sessions/{session_id}`, which is the exact
+path `admin.py:_delete_agent_session` builds. Two details worth knowing:
+
+- **Sessions are addressed by session id alone** — `user_id` is *not* a path
+  segment. Passing it would break the call. ADK's own delete re-reads the
+  session and compares `user_id` purely as an ownership guard; the sweep does
+  not need one, since it only ever deletes conversations it just removed from
+  that user's own subtree.
+- **`chat_id` really is the session id.** The UI mints `chat-<ts>-<hex>`, which
+  satisfies Vertex's `^[A-Za-z0-9_-]+$` session-id rule, so it is honoured as
+  the resource id rather than being replaced by a server-assigned one.
+
+Still worth one live check before launch: the path is confirmed from the client
+contract, not yet exercised against the real endpoint.
+
+**Known gap — orphaned agent sessions.** The sweep can only delete sessions it
+can find, and it finds them by walking Firestore conversations. A turn that
+reaches the agent *without* a `chat_id` gets a throwaway upstream session
+(`main.py`: `req.chat_id or uuid.uuid4().hex`) while `_persist_if_signed_in`
+returns early, so no Firestore document is ever written and the sweep never
+learns the id. Those sessions hold `causal_*` state and are not currently
+deleted by anything — `create_session` is called without a `ttl`, so Vertex
+does not expire them either. Options: have the proxy always send a `chat_id`,
+or pass a `ttl` on session creation so Vertex expires them regardless.
 
 ### Setting the Firestore TTL policies
 

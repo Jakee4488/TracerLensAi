@@ -92,7 +92,7 @@ probeable. `_attachment_context` renders contents as
 | `GET /` | — | Serves the compiled UI. |
 | `GET /health` | — | `{"status": "ok"}` for Docker/Cloud Run/uptime probes. |
 | `POST /auth/login` | — | Request access, or ask for a sign-in link. |
-| `POST /auth/exchange` | — | Trade a single-use sign-in nonce for a 30-day session. |
+| `POST /auth/exchange` | — | Trade a single-use sign-in nonce for a 24-hour session. |
 | `GET /access/status` | required | Current status, quota, and usage. |
 | `POST /access/extension` | required | Request more tokens. |
 | `DELETE /account` | required | Delete the caller's data. |

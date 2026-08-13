@@ -1,8 +1,16 @@
 """TracerLensAi - ADK Agent Definition.
 
 This module defines the agent logic using the Agent Development Kit (ADK).
-It configures the agent to use the Memory Bank for persistent sessions and
-enables the Google Search and Code Execution tools.
+It builds the deterministic root router (causal pipeline on one branch, the
+general assistant on the other), wires the process-wide session and artifact
+services from ``src.app_utils.services``, and exposes ``root_agent`` /
+``adk_app`` / ``app`` for ADK discovery and Agent Engine packaging.
+
+Session state only: there is no memory service. Turn state lives under the
+``causal_*`` session keys (``src/causal/state_keys.py``) and is reset at the
+start of every causal turn, so nothing carries across turns. Conversation
+history is persisted by the proxy in Firestore for UI replay and is never fed
+back into agent context.
 """
 
 import logging
