@@ -108,3 +108,7 @@ def evaluate(instance):
         "score": round(aggregate, 2),  # weighted 1-5, causal correctness dominant
         "explanation": f"[{breakdown}] {verdict.explanation}",
     }
+
+# The deterministic counterparts to this judge live in metric_numeric_accuracy.py
+# and metric_node_path.py (one `evaluate` per file, as custom_function_file
+# requires). They assert against expectations.json instead of asking a model.

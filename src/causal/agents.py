@@ -106,6 +106,44 @@ class CausalFallbackEmitter(BaseAgent):
         )
 
 
+class CausalNodeTraceEmitter(BaseAgent):
+    """Emits the turn's node traces as a fenced ```causal-nodes``` block when
+    CAUSAL_NODE_TRACE=1. Zero LLM calls; silent by default.
+
+    This exists because of a hard property of ADK eval traces: they preserve
+    only each event's ``author`` and ``content``. ``actions.state_delta`` never
+    reaches the grader, and a deterministic BaseAgent that yields no content
+    does not appear in the trace at all — so CausalStepController and
+    CausalEstimator are invisible there. Content is the only channel into the
+    eval layer, so the node traces are re-emitted as content for graders to
+    assert against. Off in production: the payload is machine-facing and the
+    proxy's visible answer should not carry it.
+    """
+
+    def __init__(self, name: str = "CausalNodeTraceEmitter", **kwargs):
+        super().__init__(name=name, description="Node-trace transport for evaluation.", **kwargs)
+
+    async def _run_async_impl(self, ctx) -> AsyncGenerator[Event, None]:
+        if os.environ.get("CAUSAL_NODE_TRACE") != "1":
+            return
+        state = ctx.session.state
+        traces = state.get(sk.KEY_NODE_TRACES) or []
+        if not traces:
+            return
+        payload = {
+            "run_id": state.get(sk.KEY_RUN_ID),
+            "dropped": int(state.get(sk.KEY_NODE_TRACES_DROPPED) or 0),
+            "nodes": traces,
+        }
+        block = f"```{sk.NODE_TRACE_BLOCK_LANG}\n{json.dumps(payload)}\n```"
+        yield Event(
+            author=self.name,
+            invocation_id=ctx.invocation_id,
+            branch=getattr(ctx, "branch", None),
+            content=types.Content(role="model", parts=[types.Part(text=block)]),
+        )
+
+
 def build_causal_pipeline() -> SequentialAgent:
     """[web search] -> decomposer -> bounded executor loop -> synthesizer (-> fallback)."""
     # Search-only LlmAgent: carries ONLY tools=[google_search] (no code_executor
@@ -208,6 +246,9 @@ def build_causal_pipeline() -> SequentialAgent:
         sub_agents=[
             web_search, CausalWebIngestor(), decomposer, estimand_spec,
             CausalEstimator(), loop, synthesizer, CausalFallbackEmitter(),
+            # Last: the node trace must describe the whole turn, including the
+            # synthesizer, so it can only be emitted once everything has run.
+            CausalNodeTraceEmitter(),
         ],
     )
 

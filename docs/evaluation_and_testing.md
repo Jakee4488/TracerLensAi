@@ -198,6 +198,83 @@ Grading is deterministic (`temperature=0`).
 **`agent_turn_count`** — a trivial deterministic metric (counts turns); a template
 for adding your own `custom_function` checks.
 
+### 4d. Deterministic assertions (no LLM, no network, no cost)
+
+The two metrics above ask a model for an **opinion**. These two compute a
+**fact**, so they cannot drift when the judge model changes:
+
+| Metric | File | Asserts |
+|---|---|---|
+| `numeric_accuracy` | [`metric_numeric_accuracy.py`](../tests/eval/metric_numeric_accuracy.py) | The agent's number is within tolerance of the known ground truth |
+| `causal_node_path` | [`metric_node_path.py`](../tests/eval/metric_node_path.py) | The reasoning passed through the expected causal nodes |
+
+Both are thin entry points over [`assertions.py`](../tests/eval/assertions.py)
+(one `evaluate` per file is what `custom_function_file` expects); expectations
+and tolerances live in [`expectations.json`](../tests/eval/expectations.json),
+keyed by `eval_case_id`. Score is the **fraction of that case's declared checks
+that passed**. A case with no expectations scores 1.0 and says *"not
+applicable"* — that is absence of a check, not evidence of correctness.
+
+**Tolerance is configurable per metric**, resolved most-specific-first:
+
+1. the individual check's own `tolerance`
+2. `tolerance_defaults.<metric_name>` in `expectations.json`
+3. the global fallback in `assertions.py`
+
+A value passes if it is within `abs` **OR** within `rel` (union, not
+intersection): relative bands are useless near zero, absolute bands are useless
+at scale, and both kinds of target are checked in the same run. Partial
+overrides merge, so overriding only `rel` keeps the metric's `abs`.
+
+**Where the numbers come from.** A check's `source` is either `answer` (parse
+the final prose) or `node:<node_id>.<value>` (read a typed float from a node
+trace — see [Causal Reasoning §7.1](causal_reasoning.md)). Node sources are
+preferred and stricter: they need no parsing and they can target an
+**intermediate** result. Both use the same parser the step controller uses
+(`src/causal/numeric.py`), so grader and agent never disagree about what number
+was written; numbers inside attached-file blocks and fenced code are excluded,
+so a case cannot pass on an echo of its own fixture data.
+
+**The node-path metric is this architecture's answer to tool-trajectory
+scoring.** The agent has no `FunctionTool`s — Vertex tool isolation forbids them
+— so there is no `function_call` sequence to score, which is why
+`tool_use_quality` was dropped (§4a). The equivalent observable is the sequence
+of causal nodes the pipeline traversed, and that is what this asserts:
+
+```jsonc
+"mediator_must_not_be_adjusted": {
+  "nodes": {
+    "require_kinds": ["identification"],   // the stage actually ran
+    "expect_visited": ["identification"],  // the node was reached
+    "adjustment_set_includes": ["family"], // confounder IS adjusted for
+    "adjustment_set_excludes": ["skill"],  // mediator is NOT
+    "require_identifiable": true
+  }
+}
+```
+
+That last pair is the point. `adjustment_set_*` reads the **identification
+node's own output**, so "must not adjust for the mediator" is checked against
+the formal estimand rather than against the prose — a model can write *"we must
+not control for the mediator"* while its estimand adjusts for it anyway, and
+only this check catches that. Node ids match tolerantly (normalized
+containment), because ids are slugified LLM output and `season` may arrive as
+`season_indicator`; exact matching would fail on paraphrase rather than on
+substance. `expect_order` is a **subsequence**, not equality, so a replan retry
+between two required nodes is legitimate.
+
+**These need the traces.** Run generate with `CAUSAL_NODE_TRACE=1`:
+
+```bash
+CAUSAL_NODE_TRACE=1 agents-cli eval generate \
+  --dataset tests/eval/datasets/causal-inference-dataset.json
+agents-cli eval grade
+```
+
+Without it, node-level checks **fail loudly** (`"no node traces in this trace"`)
+rather than passing silently — a silent skip is indistinguishable from a pass,
+which is the one failure mode that makes a check worse than not having it.
+
 **Field model available to any metric:** `{prompt}` (user message), `{response}`
 (final answer), `{agent_data}` (full trace of turns/events — inspect tool calls
 and intermediate reasoning here), and `{reference}` (golden answer, only when the
@@ -368,6 +445,8 @@ and the UI's `npm ci && lint && typecheck && build`.
 | [`test_causal_discovery.py`](../tests/test_causal_discovery.py) | DAG discovery | Data-driven DAG correction: a correct DAG is left untouched; a reversed edge / omitted confounder is corrected; untestable/no-data guards; never-raises. `importorskip("causallearn")`. |
 | [`test_causal_benchmark.py`](../tests/test_causal_benchmark.py) | Ground truth | Synthetic SCMs with known ATEs (confounders, mediator/collider traps, unobserved confounder → IV) across seeds. `importorskip("dowhy")`. |
 | [`test_causal_complexity.py`](../tests/test_causal_complexity.py) | Budgeting | Complexity tiering → budget sizing from query text. |
+| [`test_causal_node_trace.py`](../tests/test_causal_node_trace.py) | Instrumentation | Node-trace recording, chained writes in one `state_delta`, cap eviction + drop counting, and the numeric parser (signs, percents, thousands, scientific notation, attachment/fence exclusion, union tolerance, determinism). |
+| [`test_eval_assertions.py`](../tests/test_eval_assertions.py) | Eval checks | The deterministic metrics: trace extraction, three-level tolerance precedence, numeric checks against answer *and* node values, and the node-path assertions — including the mediator/collider worked examples. |
 | [`test_causal_prompts.py`](../tests/test_causal_prompts.py) | Prompts | Instruction providers render against real and empty state, and emit `[Node: <label>]` in the form the UI's citation linkifier expects. |
 | [`test_main.py`](../tests/test_main.py) | Proxy | The Cloud Run proxy (FastAPI `TestClient`) against `proxy/memstore.py` — routing, history, uploads, and token accounting including the aborted-stream path. |
 | [`test_main_causal.py`](../tests/test_main_causal.py) | Proxy transport | The causal transport: marker detection and `state_delta` streaming through the proxy. |
@@ -415,7 +494,8 @@ doesn't call the LLM — is caught by `eval`. Run `pytest` on every change; run
 python -m pytest tests/ --ignore=tests/ui_tests -v
 
 # ─── Quality eval (live agent, needs Vertex ADC + GOOGLE_GENAI_USE_VERTEXAI=true) ───
-agents-cli eval generate                       # run agent → traces
+# CAUSAL_NODE_TRACE=1 is required for the node-level checks (§4d).
+CAUSAL_NODE_TRACE=1 agents-cli eval generate   # run agent → traces
 agents-cli eval grade                           # score traces → results
 agents-cli eval compare BASE.json NEW.json      # regression check
 agents-cli eval metric list                     # list built-in metrics
@@ -426,6 +506,8 @@ agents-cli eval metric list                     # list built-in metrics
 | Eval dataset | [`tests/eval/datasets/basic-dataset.json`](../tests/eval/datasets/basic-dataset.json) |
 | Metric config | [`tests/eval/eval_config.yaml`](../tests/eval/eval_config.yaml) |
 | Custom judge | [`tests/eval/metrics.py`](../tests/eval/metrics.py) |
+| Deterministic expectations + tolerances | [`tests/eval/expectations.json`](../tests/eval/expectations.json) |
+| Deterministic check engine | [`tests/eval/assertions.py`](../tests/eval/assertions.py) |
 | Generated traces | `artifacts/traces/` |
 | Grade results (JSON + HTML) | `artifacts/grade_results/` |
 | pytest suite | [`tests/`](../tests/) |

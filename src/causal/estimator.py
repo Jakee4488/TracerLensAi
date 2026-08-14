@@ -18,6 +18,7 @@ from typing import AsyncGenerator
 from google.adk.agents import BaseAgent
 from google.adk.events import Event, EventActions
 
+from src.causal import node_trace
 from src.causal import state_keys as sk
 from src.causal.complexity import is_counterfactual_query
 from src.causal.discovery import reconcile_graph
@@ -115,9 +116,130 @@ class CausalEstimator(BaseAgent):
                                      if recon is not None else None),
             sk.KEY_STEPS: trace,
         }
+        self._record_nodes(state, delta, spec, ident, effect, counterfactual, recon,
+                           has_data=df is not None)
         yield Event(
             author=self.name,
             invocation_id=ctx.invocation_id,
             branch=getattr(ctx, "branch", None),
             actions=EventActions(state_delta=delta),
         )
+
+    @staticmethod
+    def _record_nodes(state, delta, spec, ident, effect, counterfactual, recon,
+                      *, has_data: bool) -> None:
+        """Node traces for the statistical stage.
+
+        These are the highest-value assertion targets in the pipeline: unlike a
+        step's free-text OBSERVED trailer, every quantity here is already a
+        typed float, so an arithmetic check reads it directly instead of
+        parsing it back out of prose the model wrote.
+
+        Node ids are the stable stage names ("identification", "effect",
+        "counterfactual", "reconciliation"), so the eval layer addresses them
+        as e.g. "effect.point" regardless of what the LLM named its variables.
+        """
+        node_trace.record(
+            state, sink=delta,
+            node_id="identification",
+            node_kind="identification",
+            stage="CausalEstimator",
+            inputs={
+                "treatment": spec.treatment,
+                "outcome": spec.outcome,
+                "asserted_variables": [v.id for v in spec.variables],
+                "asserted_edges": [f"{e.source}->{e.target}" for e in spec.edges],
+                "has_data": has_data,
+            },
+            outputs={
+                "identifiable": ident.identifiable,
+                "estimand_type": ident.estimand_type,
+                # The adjustment set is the whole point of the formal stage:
+                # asserting a mediator or collider is absent from it is a
+                # structural check no prose judge can make reliably.
+                "adjustment_set": list(ident.adjustment_set),
+                "instruments": list(ident.instruments),
+                "treatment": ident.treatment,
+                "outcome": ident.outcome,
+            },
+            values={
+                "identifiable": 1.0 if ident.identifiable else 0.0,
+                "adjustment_set_size": len(ident.adjustment_set),
+                "n_instruments": len(ident.instruments),
+            },
+            note=ident.note,
+        )
+
+        if effect is not None:
+            values = {
+                "point": effect.point,
+                "n_obs": effect.n_obs,
+                "n_refutations_passed": sum(1 for r in effect.refutations if r.passed),
+                "n_refutations": len(effect.refutations),
+            }
+            if effect.ci_low is not None:
+                values["ci_low"] = effect.ci_low
+            if effect.ci_high is not None:
+                values["ci_high"] = effect.ci_high
+            node_trace.record(
+                state, sink=delta,
+                node_id="effect",
+                node_kind="effect",
+                stage="CausalEstimator",
+                inputs={"method": effect.method, "estimand_type": ident.estimand_type,
+                        "adjustment_set": list(ident.adjustment_set)},
+                outputs={
+                    "point": effect.point,
+                    "ci_low": effect.ci_low,
+                    "ci_high": effect.ci_high,
+                    "refutations": [
+                        {"method": r.method, "passed": r.passed, "p_value": r.p_value}
+                        for r in effect.refutations
+                    ],
+                },
+                values=values,
+                note=effect.note,
+            )
+
+        if counterfactual is not None:
+            node_trace.record(
+                state, sink=delta,
+                node_id="counterfactual",
+                node_kind="counterfactual",
+                stage="CausalEstimator",
+                inputs={"treatment": counterfactual.treatment,
+                        "outcome": counterfactual.outcome,
+                        "baseline_value": counterfactual.baseline_value,
+                        "intervention_value": counterfactual.intervention_value},
+                outputs={"baseline_outcome": counterfactual.baseline_outcome,
+                         "intervention_outcome": counterfactual.intervention_outcome,
+                         "delta": counterfactual.delta},
+                values={
+                    "delta": counterfactual.delta,
+                    "baseline_outcome": counterfactual.baseline_outcome,
+                    "intervention_outcome": counterfactual.intervention_outcome,
+                    "baseline_value": counterfactual.baseline_value,
+                    "intervention_value": counterfactual.intervention_value,
+                },
+                note=counterfactual.note,
+            )
+
+        if recon is not None:
+            node_trace.record(
+                state, sink=delta,
+                node_id="reconciliation",
+                node_kind="reconciliation",
+                stage="CausalEstimator",
+                inputs={"asserted_edges": [f"{e.source}->{e.target}" for e in spec.edges]},
+                outputs={
+                    "verdict": recon.verdict,
+                    "changes": [f"{c.kind} {c.source}->{c.target}" for c in recon.changes],
+                    "corrected_edges": [f"{e.source}->{e.target}" for e in recon.corrected_edges],
+                    "latent_confounders": list(recon.latent_confounders),
+                },
+                values={
+                    "n_changes": recon.n_changes,
+                    "n_latent_confounders": len(recon.latent_confounders),
+                },
+                note=recon.note,
+            )

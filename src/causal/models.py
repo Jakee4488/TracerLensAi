@@ -12,8 +12,9 @@ No google.adk / vertexai imports here: unit tests stay hermetic.
 
 from __future__ import annotations
 
+import math
 import re
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -121,6 +122,90 @@ class ChangeRecord(BaseModel):
     affected: list[str] = Field(default_factory=list)
     plan_version: int = 1
     ts: str = ""
+
+
+NodeKind = Literal[
+    "graph", "step", "identification", "effect", "counterfactual", "reconciliation",
+]
+
+
+class NodeTrace(BaseModel):
+    """One node-level record of what a reasoning node computed.
+
+    The ledger records *what changed*; this records *what was computed* — the
+    node's inputs, its outputs, and any numeric quantities it produced. The
+    ``values`` map is the hook the evaluation layer asserts against, so an
+    arithmetic check can target an intermediate result (the identified effect
+    at the estimator node) and not only the final number in the prose answer.
+
+    Everything is plain JSON and size-capped: these ride in session state and,
+    when CAUSAL_NODE_TRACE=1, in an event payload as well.
+    """
+    seq: int
+    node_id: str                                   # component id, or the stage's own id
+    node_kind: NodeKind = "step"
+    stage: str = ""                                # authoring agent / callback
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    outputs: dict[str, Any] = Field(default_factory=dict)
+    # Numeric quantities this node produced, keyed by a stable short name.
+    # Addressed from the eval layer as "<node_id>.<value_name>".
+    values: dict[str, float] = Field(default_factory=dict)
+    note: str = ""
+    ts: str = ""
+
+    @field_validator("inputs", "outputs")
+    @classmethod
+    def _jsonify(cls, v: dict) -> dict:
+        """Keep payloads JSON-safe and bounded — these are persisted per node."""
+        return {str(k)[:60]: _json_safe(val) for k, val in list((v or {}).items())[:12]}
+
+    @field_validator("values", mode="before")
+    @classmethod
+    def _finite_floats(cls, v: dict) -> dict:
+        """Drop non-finite/uncoercible entries: a NaN here would silently pass
+        or fail an arithmetic check depending on comparison direction.
+
+        ``mode="before"`` is load-bearing. After pydantic's own float coercion,
+        a non-numeric value raises ValidationError before this runs — and
+        because ``node_trace.record`` is called from the step controller and the
+        estimator, that would abort a live turn over an unusable log entry.
+        Instrumentation must never be able to break the thing it instruments.
+        """
+        if not isinstance(v, dict):  # mode="before" sees the raw input
+            return {}
+        out: dict[str, float] = {}
+        for key, val in list(v.items())[:20]:
+            try:
+                num = float(val)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(num):
+                out[str(key)[:60]] = num
+        return out
+
+    @field_validator("note")
+    @classmethod
+    def _cap_note(cls, v: str) -> str:
+        return (v or "").strip()[:300]
+
+
+def _json_safe(value: Any, _depth: int = 0) -> Any:
+    """Coerce an arbitrary value into something JSON-serializable and bounded."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return value if isinstance(value, int) or math.isfinite(value) else str(value)
+    if isinstance(value, str):
+        return value[:300]
+    if isinstance(value, (list, tuple, set)):
+        if _depth >= 2:
+            return f"[{len(value)} items]"
+        return [_json_safe(v, _depth + 1) for v in list(value)[:20]]
+    if isinstance(value, dict):
+        if _depth >= 2:
+            return f"{{{len(value)} keys}}"
+        return {str(k)[:60]: _json_safe(v, _depth + 1) for k, v in list(value.items())[:20]}
+    return str(value)[:300]
 
 
 class ReplanEvent(BaseModel):

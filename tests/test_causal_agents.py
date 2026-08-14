@@ -71,6 +71,8 @@ def test_pipeline_shape(root):
         "CausalWebSearch", "CausalWebIngestor", "CausalDecomposer",
         "CausalEstimandSpec", "CausalEstimator", "CausalExecutorLoop",
         "CausalSynthesizer", "CausalFallbackEmitter",
+        # Last: the node trace must describe the whole turn, synthesizer included.
+        "CausalNodeTraceEmitter",
     ]
 
     loop = pipeline.sub_agents[5]
@@ -78,6 +80,93 @@ def test_pipeline_shape(root):
     assert loop.max_iterations == sk.LOOP_MAX_ITERATIONS
     assert [s.name for s in loop.sub_agents] == [
         "CausalStepExecutor", "CausalStepController", "CausalReplanner"]
+
+
+def test_node_trace_emitter_is_deterministic_and_off_by_default():
+    """The emitter carries node traces into event *content*, which is the only
+    channel that reaches the eval layer (ADK eval traces keep author+content and
+    drop actions.state_delta). It must cost nothing and stay silent unless
+    CAUSAL_NODE_TRACE=1, since the payload is machine-facing."""
+    import asyncio
+    from src.causal.agents import CausalNodeTraceEmitter
+
+    emitter = CausalNodeTraceEmitter()
+    assert not isinstance(emitter, LlmAgent)   # zero LLM calls
+    assert isinstance(emitter, BaseAgent)
+
+    class _Ctx:
+        invocation_id = "inv"
+        branch = None
+
+        class session:  # noqa: N801 - stub
+            state = {sk.KEY_NODE_TRACES: [{"seq": 1, "node_id": "graph",
+                                           "node_kind": "graph", "values": {}}]}
+
+    async def _drain(ctx):
+        return [event async for event in emitter._run_async_impl(ctx)]
+
+    # Off by default: no event at all.
+    assert asyncio.run(_drain(_Ctx())) == []
+
+
+def test_node_trace_emitter_emits_a_fenced_block_when_enabled(monkeypatch):
+    import asyncio
+    import json
+
+    from src.causal.agents import CausalNodeTraceEmitter
+
+    monkeypatch.setenv("CAUSAL_NODE_TRACE", "1")
+    emitter = CausalNodeTraceEmitter()
+
+    class _Ctx:
+        invocation_id = "inv"
+        branch = None
+
+        class session:  # noqa: N801 - stub
+            state = {
+                sk.KEY_NODE_TRACES: [
+                    {"seq": 1, "node_id": "identification",
+                     "node_kind": "identification",
+                     "values": {"identifiable": 1.0},
+                     "outputs": {"adjustment_set": ["z"]}},
+                ],
+                sk.KEY_RUN_ID: "run-1",
+            }
+
+    async def _drain(ctx):
+        return [event async for event in emitter._run_async_impl(ctx)]
+
+    events = asyncio.run(_drain(_Ctx()))
+    assert len(events) == 1
+    text = events[0].content.parts[0].text
+    assert text.startswith(f"```{sk.NODE_TRACE_BLOCK_LANG}")
+
+    payload = json.loads(text.split("\n", 1)[1].rsplit("\n```", 1)[0])
+    assert payload["run_id"] == "run-1"
+    assert payload["nodes"][0]["outputs"]["adjustment_set"] == ["z"]
+
+
+def test_node_trace_emitter_is_silent_with_no_traces(monkeypatch):
+    """A non-causal turn records nothing; emitting an empty block would put a
+    meaningless fenced payload into the user-visible answer."""
+    import asyncio
+
+    from src.causal.agents import CausalNodeTraceEmitter
+
+    monkeypatch.setenv("CAUSAL_NODE_TRACE", "1")
+    emitter = CausalNodeTraceEmitter()
+
+    class _Ctx:
+        invocation_id = "inv"
+        branch = None
+
+        class session:  # noqa: N801 - stub
+            state: dict = {}
+
+    async def _drain(ctx):
+        return [event async for event in emitter._run_async_impl(ctx)]
+
+    assert asyncio.run(_drain(_Ctx())) == []
 
 
 def test_web_search_is_search_only_and_gated(root):

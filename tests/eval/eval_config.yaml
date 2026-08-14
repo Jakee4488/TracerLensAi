@@ -22,6 +22,14 @@ metrics_to_run:
   - custom_response_quality  # multi-axis causal judge (see metrics.py)
   - agent_turn_count
 
+  # --- Deterministic assertions (no LLM, no network, no cost). These do not
+  #     grade an opinion, they check a fact: a number is within tolerance of a
+  #     known ground truth, or the reasoning visited the causal nodes it should
+  #     have. They cannot drift when the judge model changes, which is exactly
+  #     why they sit beside the judges rather than replacing them.
+  - numeric_accuracy         # arithmetic vs ground truth (expectations.json)
+  - causal_node_path         # reasoning passed through the expected nodes
+
 custom_metrics:
   # Multi-axis causal LLM-as-judge defined in metrics.py (a real, lintable/
   # testable module) rather than an inline blob. Scores causal_correctness,
@@ -35,3 +43,22 @@ custom_metrics:
       def evaluate(instance):
           turns = (instance.get("agent_data") or {}).get("turns", [])
           return {'score': len(turns)}
+
+  # Deterministic checks. Expectations and per-metric tolerance defaults live in
+  # expectations.json; the shared logic lives in assertions.py (unit-tested by
+  # tests/test_eval_assertions.py). Each metric gets its own file because
+  # custom_function_file expects exactly one `evaluate` per module.
+  #
+  # Score is the fraction of that case's declared checks that passed (0.0-1.0).
+  # A case with no expectations scores 1.0 and says "not applicable" in its
+  # explanation — read it before treating a 1.0 as a pass.
+  - name: numeric_accuracy
+    custom_function_file: metric_numeric_accuracy.py
+  # NOTE: causal_node_path needs the node traces, which the agent only emits
+  # under CAUSAL_NODE_TRACE=1:
+  #     CAUSAL_NODE_TRACE=1 agents-cli eval generate \
+  #       --dataset tests/eval/datasets/causal-inference-dataset.json
+  # Without it, node-level checks fail with "no node traces in this trace"
+  # rather than passing silently.
+  - name: causal_node_path
+    custom_function_file: metric_node_path.py

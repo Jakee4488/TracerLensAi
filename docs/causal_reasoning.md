@@ -35,7 +35,8 @@ CausalRouterAgent  (custom, 0 LLM)         ── marker routing + state reset +
     │     └── CausalReplanner   (LlmAgent)  ── output_schema=ReplanResult (skipped on happy path)
     │           └─ after: splice_replan
     ├── CausalSynthesizer  (LlmAgent, 1)    ── output_key=causal_final_answer
-    └── CausalFallbackEmitter (custom, 0)   ── fenced causal-json only if CAUSAL_TEXT_FALLBACK=1
+    ├── CausalFallbackEmitter (custom, 0)   ── fenced causal-json only if CAUSAL_TEXT_FALLBACK=1
+    └── CausalNodeTraceEmitter (custom, 0)  ── fenced causal-nodes only if CAUSAL_NODE_TRACE=1
 ```
 
 | Agent | LLM calls | Responsibility |
@@ -51,6 +52,7 @@ CausalRouterAgent  (custom, 0 LLM)         ── marker routing + state reset +
 | `CausalReplanner` | ≤1/failure | Produces replacement steps **only** for the affected subgraph; skipped unless a replan was requested. |
 | `CausalSynthesizer` | 1 | Writes the final user-facing answer grounded in the executed plan. |
 | `CausalFallbackEmitter` | 0 | Optional text transport for proxies that can't read state deltas. |
+| `CausalNodeTraceEmitter` | 0 | Optional transport for the node traces (§7.1), for the evaluation layer. |
 
 ### End-to-end execution flow
 
@@ -231,6 +233,8 @@ All pipeline state lives under `causal_*` session keys ([`src/causal/state_keys.
 | `causal_ledger` | `list[ChangeRecord]` — backs the click-through drawer | ✅ → `causal_ledger` |
 | `causal_ledger_dropped` | count of entries lost past `LEDGER_CAP`, so the drawer stays honest | ✅ → `causal_ledger_dropped` |
 | `causal_replan_events` | why the plan changed | ✅ → `causal_replan_events` |
+| `causal_node_traces` | `list[NodeTrace]` — per-node inputs/outputs/values (§7.1) | ✅ → `causal_node_traces` |
+| `causal_node_traces_dropped` | count of node traces lost past `NODE_TRACE_CAP` | ✅ → `causal_node_traces_dropped` |
 | `causal_run_id` | correlation id from the `[[run:<id>]]` marker | internal (observability) |
 | `causal_current_step`, `causal_budgets`, `causal_estimand_spec_raw`, `causal_web_requested`, `causal_web_dataset`, `causal_web_search_raw`, … | pipeline internals | internal |
 
@@ -239,6 +243,22 @@ The proxy collects every `causal_*` key it sees in each event's `actions.state_d
 **Streaming.** State deltas do not reach the browser as one payload at the end. The proxy converts them into Server-Sent Events as the run proceeds — `progress` frames carrying the stage and any new trace lines, `graph` frames when the DAG changes, and a final `done` frame with the whole report. The contract is specified in the [Developer Guide](developer_guide.md#the-sse-contract).
 
 **Transport fallback.** If a proxy can't read state deltas, running the agent with `CAUSAL_TEXT_FALLBACK=1` makes `CausalFallbackEmitter` emit the results as a fenced ` ```causal-json ` block; the proxy's `_extract_causal_fallback` parses it and strips it from the visible answer. This path is silent (zero LLM calls) by default.
+
+### 7.1 Node traces — what each node computed
+
+The ledger records *what a step changed*; [`src/causal/node_trace.py`](../src/causal/node_trace.py) records **what a node computed** — its inputs, its outputs, and the numeric quantities it produced — so the full reasoning path is recoverable rather than only the final answer. Three sites record, all deterministic (0 LLM):
+
+| Recorded by | `node_id` / `node_kind` | Carries |
+|---|---|---|
+| `build_graph_and_plan` | `graph` / `graph` | component ids + labels, edges, critical path, plan step ids, repair notes |
+| `CausalStepController` | the step's `component_id` / `step` | objective, dependencies, verdict, `observed` text, affected subgraph, and every number in the trailer as `observed_0…n` |
+| `CausalEstimator` | `identification`, `effect`, `counterfactual`, `reconciliation` | the **typed floats** — adjustment set, estimand type, `point`, CI, `delta`, refutation counts |
+
+`values` is a flat `{name: float}` map, addressed from the eval layer as `"<node_id>.<value>"` — so `effect.point` and `counterfactual.delta` are assertable **intermediate** results, not just whatever number reached the prose. Numbers on step nodes are positional because the executor's `OBSERVED:` trailer is free text with no declared schema; naming them would mean guessing which quantity is which.
+
+Estimator nodes are the strongest assertion targets: those quantities are already typed floats, so a check reads them directly instead of re-parsing prose the model wrote. Non-finite and uncoercible values are dropped at the model boundary — instrumentation must never be able to break the pipeline it instruments — and the log is capped at `NODE_TRACE_CAP=60` with the eviction count kept beside it, the same honesty contract as the ledger.
+
+**Why a second transport exists.** ADK eval traces preserve only each event's `author` and `content`; `actions.state_delta` never reaches a grader, and a deterministic `BaseAgent` that yields no content does not appear in the trace at all. So `CausalStepController` and `CausalEstimator` are *invisible* to evaluation. `CausalNodeTraceEmitter` therefore re-emits the traces as a fenced ` ```causal-nodes ` block under `CAUSAL_NODE_TRACE=1` — content is the only channel that reaches the eval layer. Off by default: the payload is machine-facing. See [Evaluation & Testing §4d](evaluation_and_testing.md).
 
 ---
 
@@ -270,8 +290,9 @@ In the proxy's mock mode (no `AGENT_ENGINE_ENDPOINT`), a canned 3-node graph, st
 | `CAUSAL_MAX_STEPS` | 8 | Ceiling on executed plan steps per turn (clamps the dynamic budget). |
 | `CAUSAL_MAX_REPLANS` | 2 | Ceiling on localized replans per turn. |
 | `CAUSAL_TEXT_FALLBACK` | off | When `1`, also emit results as a fenced `causal-json` block. |
+| `CAUSAL_NODE_TRACE` | off | When `1`, also emit the node traces (§7.1) as a fenced `causal-nodes` block. Set it for `agents-cli eval generate`; leave it off in production. |
 
-Structural constants (not env-overridable) live in `state_keys.py`: `MAX_COMPONENTS=12`, `MAX_EDGES=24`, `LOOP_MAX_ITERATIONS=16`, `LEDGER_CAP=50`.
+Structural constants (not env-overridable) live in `state_keys.py`: `MAX_COMPONENTS=12`, `MAX_EDGES=24`, `LOOP_MAX_ITERATIONS=16`, `LEDGER_CAP=50`, `NODE_TRACE_CAP=60`.
 
 ---
 

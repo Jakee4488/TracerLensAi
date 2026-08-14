@@ -172,5 +172,79 @@ def test_deviation_from_missing_trailer_triggers_replan():
     assert state[sk.KEY_LEDGER][-1]["verdict"] == "deviation"
 
 
+def test_node_traces_record_the_whole_reasoning_path():
+    """End-to-end node instrumentation through the real control flow.
+
+    This is what the eval layer's node-path metric reads: the graph node, then
+    one node per executed step in traversal order, each carrying the numbers
+    that step reported. Driven through the same fake contexts the LoopAgent
+    sequences, so it exercises the actual callback/controller wiring.
+    """
+    from src.causal import node_trace
+
+    state = seeded_state()
+
+    # The graph node is recorded by the decomposer's after-callback.
+    traces = state[sk.KEY_NODE_TRACES]
+    assert [t["node_kind"] for t in traces] == ["graph"]
+    graph_node = traces[0]
+    assert graph_node["outputs"]["component_ids"] == [
+        "data", "elasticity", "scenarios", "forecast"]
+    assert graph_node["outputs"]["plan_component_ids"] == [
+        "elasticity", "scenarios", "forecast"]
+    assert graph_node["values"]["n_components"] == 4
+    assert graph_node["values"]["n_plan_steps"] == 3
+
+    # One node per executed step, in the order the reasoning visited them.
+    state[sk.KEY_STEP_OUTPUT] = "OBSERVED: elasticity -1.4\nSTEP_STATUS: success"
+    run_controller(state)
+    state[sk.KEY_STEP_OUTPUT] = "OBSERVED: revenue change -3.2\nSTEP_STATUS: success"
+    run_controller(state)
+
+    traces = state[sk.KEY_NODE_TRACES]
+    assert node_trace.visited_node_ids(traces) == ["graph", "elasticity", "scenarios"]
+
+    # Numbers the step reported are captured as intermediate values, so an
+    # arithmetic check can target them instead of only the final answer.
+    values = node_trace.values_index(traces)
+    assert values["elasticity.observed_0"] == -1.4
+    assert values["scenarios.observed_0"] == -3.2
+
+    step_node = next(t for t in traces if t["node_id"] == "elasticity")
+    assert step_node["outputs"]["verdict"] == "success"
+    assert step_node["inputs"]["step_id"] == "s1"
+
+
+def test_failed_step_node_records_verdict_and_impact():
+    """A failure must be visible in the node path, with the subgraph it
+    invalidated — the trace is how a replan is reconstructed after the fact."""
+    from src.causal import node_trace
+
+    state = seeded_state()
+    state[sk.KEY_STEP_OUTPUT] = "OBSERVED: elasticity -1.4\nSTEP_STATUS: success"
+    run_controller(state)
+    state[sk.KEY_STEP_OUTPUT] = "OBSERVED: matrix singular\nSTEP_STATUS: failure"
+    run_controller(state)
+
+    traces = state[sk.KEY_NODE_TRACES]
+    failed = next(t for t in traces if t["node_id"] == "scenarios")
+    assert failed["outputs"]["verdict"] == "failure"
+    assert failed["outputs"]["affected"] == ["forecast"]
+    assert node_trace.visited_node_ids(traces) == ["graph", "elasticity", "scenarios"]
+
+
+def test_node_traces_survive_an_unparseable_decomposition():
+    """Graceful degradation: no graph means no graph node, but nothing raises.
+    Instrumentation must never be able to break the pipeline it instruments."""
+    state = {
+        sk.KEY_BUDGETS: {"max_steps": 8, "max_replans": 2},
+        sk.KEY_STATUS: CausalStatus(phase="decomposing").model_dump(mode="json"),
+        sk.KEY_DECOMPOSITION_RAW: "not json at all",
+    }
+    build_graph_and_plan(FakeCallbackContext(state))
+    assert state[sk.KEY_STATUS]["phase"] == "failed"
+    assert not state.get(sk.KEY_NODE_TRACES)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -15,9 +15,11 @@ from typing import AsyncGenerator
 from google.adk.agents import BaseAgent
 from google.adk.events import Event, EventActions
 
+from src.causal import node_trace
 from src.causal import state_keys as sk
 from src.causal.graph_engine import CausalTaskGraph
 from src.causal.ledger import append_to_state, next_seq
+from src.causal.numeric import extract_numbers
 from src.causal.models import (
     CausalStatus,
     ChangeRecord,
@@ -169,6 +171,37 @@ class CausalStepController(BaseAgent):
         )
 
         append_to_state(state, record, sink=delta)
+
+        # Node trace for the component this step advanced: what it was asked to
+        # do, what it reported back, and every number it stated. The numbers are
+        # positional (observed_0, observed_1, ...) because the executor's
+        # OBSERVED: trailer is free text with no declared schema — naming them
+        # would mean guessing which quantity is which, and a wrong guess makes
+        # an arithmetic check assert against the wrong thing.
+        observed_numbers = extract_numbers(observed)
+        node_trace.record(
+            state,
+            node_id=step.component_id,
+            node_kind="step",
+            stage=self.name,
+            inputs={
+                "step_id": step.id,
+                "objective": step.objective,
+                "expected_effect": step.expected_effect,
+                "depends_on": list(step.depends_on),
+                "attempt": step.attempt,
+            },
+            outputs={
+                "verdict": verdict,
+                "observed": observed,
+                "affected": affected,
+                "plan_version": plan.version,
+            },
+            values={f"observed_{i}": n.value for i, n in enumerate(observed_numbers)},
+            note=f"{step.id} -> {verdict}",
+            sink=delta,
+        )
+
         delta[sk.KEY_PLAN] = plan.model_dump(mode="json")
         delta[sk.KEY_GRAPH_FULL] = graph.to_state()
         delta[sk.KEY_GRAPH] = graph.to_ui_graph()

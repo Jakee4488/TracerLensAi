@@ -46,6 +46,11 @@ KEY_WEB_DATASET = "causal_web_dataset"           # fenced CSV text fetched from 
 KEY_WEB_EVIDENCE = "causal_web_evidence"         # list[str] evidence snippets
 KEY_WEB_SOURCES = "causal_web_sources"           # list[str] source URLs
 KEY_WEB_RETRIEVAL = "causal_web_retrieval"       # WebRetrieval dump (UI-facing)
+# Node-level instrumentation: what each reasoning node computed (inputs,
+# outputs, numeric values). Backs the deterministic arithmetic and node-path
+# checks in tests/eval/. See src/causal/node_trace.py.
+KEY_NODE_TRACES = "causal_node_traces"           # list[NodeTrace dumps]
+KEY_NODE_TRACES_DROPPED = "causal_node_traces_dropped"  # int: entries lost to cap
 
 # All keys the router resets at the start of a causal turn.
 ALL_KEYS = (
@@ -56,6 +61,7 @@ ALL_KEYS = (
     KEY_ESTIMAND_SPEC_RAW, KEY_ESTIMAND, KEY_EFFECT, KEY_COUNTERFACTUAL,
     KEY_GRAPH_RECONCILE, KEY_WEB_REQUESTED, KEY_WEB_SEARCH_RAW, KEY_WEB_DATASET,
     KEY_WEB_EVIDENCE, KEY_WEB_SOURCES, KEY_WEB_RETRIEVAL,
+    KEY_NODE_TRACES, KEY_NODE_TRACES_DROPPED,
 )
 
 # Budgets and caps (env-overridable where noted in agents.py/router.py).
@@ -65,6 +71,10 @@ MAX_COMPONENTS = 12
 MAX_EDGES = 24
 LOOP_MAX_ITERATIONS = 16
 LEDGER_CAP = 50
+# One trace per executed step plus a handful of stage-level nodes (graph,
+# identification, effect, counterfactual, reconciliation); sized so a
+# max-length run with replans cannot evict its own head.
+NODE_TRACE_CAP = 60
 
 # Executor output trailer contract (see prompts.step_executor_instruction).
 STEP_STATUS_RE = r"STEP_STATUS:\s*(success|failure)"
@@ -72,3 +82,10 @@ OBSERVED_RE = r"OBSERVED:\s*(.+)"
 
 # Fenced-block language for the optional text-transport fallback.
 FENCED_BLOCK_LANG = "causal-json"
+# Fenced-block language for the node-trace transport (CAUSAL_NODE_TRACE=1).
+# Separate from FENCED_BLOCK_LANG because the two carry different payloads and
+# are gated independently: the fallback is UI transport, this is eval transport.
+# It exists because ADK eval traces preserve only each event's author and
+# content — `actions.state_delta` never reaches the grader — so node-level
+# instrumentation has to ride in content to be assertable.
+NODE_TRACE_BLOCK_LANG = "causal-nodes"

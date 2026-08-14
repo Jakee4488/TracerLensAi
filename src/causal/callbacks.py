@@ -12,6 +12,7 @@ from typing import Optional
 
 from google.genai import types
 
+from src.causal import node_trace
 from src.causal import state_keys as sk
 from src.causal.complexity import is_effect_query
 from src.causal.graph_engine import CausalTaskGraph
@@ -94,6 +95,38 @@ def _ensure_graph_built(callback_context) -> None:
         phase="executing" if first is not None else "synthesizing",
         plan_version=plan.version,
     ).model_dump(mode="json")
+
+    # Node trace for the graph-construction node itself. This is the record the
+    # eval layer reads to assert the reasoning built the components it should
+    # have — the DAG the rest of the turn is derived from.
+    node_trace.record(
+        state,
+        node_id="graph",
+        node_kind="graph",
+        stage="build_graph_and_plan",
+        inputs={
+            "goal": graph.model.goal,
+            "decomposed_components": len(dec.components),
+            "decomposed_edges": len(dec.edges),
+        },
+        outputs={
+            "component_ids": [c.id for c in graph.model.components],
+            "component_labels": [c.label for c in graph.model.components],
+            "edges": [f"{e.source}->{e.target}" for e in graph.model.edges],
+            "critical_path": list(graph.model.critical_path),
+            "plan_step_ids": [s.id for s in plan.steps],
+            "plan_component_ids": [s.component_id for s in plan.steps],
+            "repair_notes": list(graph.model.repair_notes),
+        },
+        values={
+            "n_components": len(graph.model.components),
+            "n_edges": len(graph.model.edges),
+            "n_plan_steps": len(plan.steps),
+            "n_repairs": len(graph.model.repair_notes),
+            "critical_path_length": len(graph.model.critical_path),
+        },
+        note=plan.rationale,
+    )
 
 
 def skip_if_aborted(callback_context) -> Optional[types.Content]:

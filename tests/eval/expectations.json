@@ -1,0 +1,152 @@
+{
+  "_readme": [
+    "Deterministic expectations for tests/eval/assertions.py, keyed by eval_case_id.",
+    "Consumed by the `numeric_accuracy` and `causal_node_path` metrics in metrics.py.",
+    "",
+    "TOLERANCE resolves in three levels, most specific first:",
+    "  1. a check's own `tolerance`",
+    "  2. `tolerance_defaults.<metric_name>`",
+    "  3. the global fallback in assertions.py (_FALLBACK_TOLERANCE)",
+    "A value passes if it is within `abs` OR within `rel` (union, not intersection):",
+    "relative bands are useless near zero and absolute bands are useless at scale.",
+    "",
+    "NUMERIC `source`:",
+    "  'answer'            -> parse the final response prose",
+    "  'node:<id>.<value>' -> read a typed float straight from a node trace",
+    "Node sources are stricter and preferred: they need no parsing and they can",
+    "target an INTERMEDIATE result. They require the agent to have run with",
+    "CAUSAL_NODE_TRACE=1; without it those checks fail loudly rather than silently.",
+    "",
+    "`match_abs: true` also accepts the magnitude, for answers that carry the",
+    "direction in words ('reduces demand by 1.5' for a true -1.5). Only set it",
+    "where a node-level or node-path check pins the sign separately."
+  ],
+
+  "tolerance_defaults": {
+    "numeric_accuracy": { "rel": 0.20, "abs": 0.15 }
+  },
+
+  "cases": {
+    "ate_recovery_confounder_csv": {
+      "_note": "Synthetic SCM, true ATE = 2.0, confounder z. 60 rows, so the sampling band is wide in absolute terms.",
+      "numeric": [
+        {
+          "name": "ate_from_estimator",
+          "expected": 2.0,
+          "source": "node:effect.point",
+          "tolerance": { "rel": 0.15, "abs": 0.25 }
+        },
+        {
+          "name": "ate_in_answer",
+          "expected": 2.0,
+          "source": "answer",
+          "tolerance": { "rel": 0.25, "abs": 0.35 }
+        }
+      ],
+      "nodes": {
+        "require_kinds": ["graph", "identification", "effect"],
+        "expect_visited": ["identification", "effect"],
+        "expect_order": ["identification", "effect"],
+        "adjustment_set_includes": ["z"],
+        "require_identifiable": true,
+        "estimand_type": "backdoor"
+      }
+    },
+
+    "price_elasticity_season_csv": {
+      "_note": "True slope -1.5, confounder season. Answers usually phrase this as a decrease, hence match_abs on the prose check; the node check pins the sign.",
+      "numeric": [
+        {
+          "name": "slope_from_estimator",
+          "expected": -1.5,
+          "source": "node:effect.point",
+          "tolerance": { "rel": 0.20, "abs": 0.30 }
+        },
+        {
+          "name": "slope_in_answer",
+          "expected": -1.5,
+          "source": "answer",
+          "match_abs": true,
+          "tolerance": { "rel": 0.30, "abs": 0.50 }
+        }
+      ],
+      "nodes": {
+        "require_kinds": ["identification", "effect"],
+        "expect_visited": ["identification", "effect"],
+        "adjustment_set_includes": ["season"],
+        "require_identifiable": true
+      }
+    },
+
+    "counterfactual_price_csv": {
+      "_note": "do(price=10) vs do(price=12) with slope -1.5 => delta ~ +3.",
+      "numeric": [
+        {
+          "name": "counterfactual_delta",
+          "expected": 3.0,
+          "source": "node:counterfactual.delta",
+          "tolerance": { "rel": 0.30, "abs": 0.75 }
+        },
+        {
+          "name": "delta_in_answer",
+          "expected": 3.0,
+          "source": "answer",
+          "match_abs": true,
+          "tolerance": { "rel": 0.35, "abs": 1.0 }
+        }
+      ],
+      "nodes": {
+        "require_kinds": ["identification", "counterfactual"],
+        "expect_visited": ["counterfactual"],
+        "adjustment_set_includes": ["season"]
+      }
+    },
+
+    "mediator_must_not_be_adjusted": {
+      "_note": "The money check: skills is a MEDIATOR (training -> skills -> earnings). It must not enter the back-door adjustment set for a TOTAL effect. Structural, so no numeric target.",
+      "nodes": {
+        "require_kinds": ["identification"],
+        "expect_visited": ["identification"],
+        "adjustment_set_includes": ["family"],
+        "adjustment_set_excludes": ["skill"],
+        "require_identifiable": true
+      }
+    },
+
+    "collider_must_not_be_adjusted": {
+      "_note": "hospitalization is a COLLIDER (exercise -> hospitalization <- heart disease). Conditioning on it opens a spurious path, so it must be absent from the adjustment set.",
+      "nodes": {
+        "require_kinds": ["identification"],
+        "expect_visited": ["identification"],
+        "adjustment_set_excludes": ["hospital"],
+        "require_identifiable": true
+      }
+    },
+
+    "estimand_no_data_confounders": {
+      "_note": "Data-free identification. There is deliberately NO numeric check: with no dataset the agent must NOT state a precise data-derived effect, so asserting a number here would reward exactly the behaviour the case exists to discourage.",
+      "nodes": {
+        "require_kinds": ["identification"],
+        "expect_visited": ["identification"],
+        "adjustment_set_includes": ["age"],
+        "require_identifiable": true
+      }
+    },
+
+    "causal_pipeline_ate_estimation": {
+      "_note": "Basic-dataset stratified ATE; the reference states +0.139 (see docs/evaluation_and_testing.md section 7).",
+      "numeric": [
+        {
+          "name": "stratified_ate",
+          "expected": 0.139,
+          "source": "answer",
+          "tolerance": { "rel": 0.10, "abs": 0.01 }
+        }
+      ],
+      "nodes": {
+        "require_kinds": ["graph"],
+        "expect_visited": ["graph"]
+      }
+    }
+  }
+}
