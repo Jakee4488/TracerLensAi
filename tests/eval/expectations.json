@@ -19,13 +19,22 @@
     "",
     "`match_abs: true` also accepts the magnitude, for answers that carry the",
     "direction in words ('reduces demand by 1.5' for a true -1.5). Only set it",
-    "where a node-level or node-path check pins the sign separately."
+    "where a node-level or node-path check pins the sign separately.",
+    "",
+    "TRAP CASES (causal-traps-dataset.json) carry a `_trap` tag: confounder |",
+    "mediator | collider | spurious. Each is built from a known SCM and VERIFIED so",
+    "that the naive wrong answer falls OUTSIDE the tolerance band while the correct",
+    "adjusted estimate falls inside \u2014 a case that both answers pass is not a trap.",
+    "Their _note records true / naive / correct so the band can be re-checked.",
+    "`adjustment_set_empty: true` states that the correct adjustment set is EMPTY \u2014",
+    "the right answer for full mediation, a pure collider, and reverse causation."
   ],
-
   "tolerance_defaults": {
-    "numeric_accuracy": { "rel": 0.20, "abs": 0.15 }
+    "numeric_accuracy": {
+      "rel": 0.2,
+      "abs": 0.15
+    }
   },
-
   "cases": {
     "ate_recovery_confounder_csv": {
       "_note": "Synthetic SCM, true ATE = 2.0, confounder z. 60 rows, so the sampling band is wide in absolute terms.",
@@ -34,25 +43,42 @@
           "name": "ate_from_estimator",
           "expected": 2.0,
           "source": "node:effect.point",
-          "tolerance": { "rel": 0.15, "abs": 0.25 }
+          "tolerance": {
+            "rel": 0.15,
+            "abs": 0.25
+          }
         },
         {
           "name": "ate_in_answer",
           "expected": 2.0,
           "source": "answer",
-          "tolerance": { "rel": 0.25, "abs": 0.35 }
+          "tolerance": {
+            "rel": 0.25,
+            "abs": 0.35
+          }
         }
       ],
       "nodes": {
-        "require_kinds": ["graph", "identification", "effect"],
-        "expect_visited": ["identification", "effect"],
-        "expect_order": ["identification", "effect"],
-        "adjustment_set_includes": ["z"],
+        "require_kinds": [
+          "graph",
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "z"
+        ],
         "require_identifiable": true,
         "estimand_type": "backdoor"
       }
     },
-
     "price_elasticity_season_csv": {
       "_note": "True slope -1.5, confounder season. Answers usually phrase this as a decrease, hence match_abs on the prose check; the node check pins the sign.",
       "numeric": [
@@ -60,24 +86,37 @@
           "name": "slope_from_estimator",
           "expected": -1.5,
           "source": "node:effect.point",
-          "tolerance": { "rel": 0.20, "abs": 0.30 }
+          "tolerance": {
+            "rel": 0.2,
+            "abs": 0.3
+          }
         },
         {
           "name": "slope_in_answer",
           "expected": -1.5,
           "source": "answer",
           "match_abs": true,
-          "tolerance": { "rel": 0.30, "abs": 0.50 }
+          "tolerance": {
+            "rel": 0.3,
+            "abs": 0.5
+          }
         }
       ],
       "nodes": {
-        "require_kinds": ["identification", "effect"],
-        "expect_visited": ["identification", "effect"],
-        "adjustment_set_includes": ["season"],
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "season"
+        ],
         "require_identifiable": true
       }
     },
-
     "counterfactual_price_csv": {
       "_note": "do(price=10) vs do(price=12) with slope -1.5 => delta ~ +3.",
       "numeric": [
@@ -85,54 +124,83 @@
           "name": "counterfactual_delta",
           "expected": 3.0,
           "source": "node:counterfactual.delta",
-          "tolerance": { "rel": 0.30, "abs": 0.75 }
+          "tolerance": {
+            "rel": 0.3,
+            "abs": 0.75
+          }
         },
         {
           "name": "delta_in_answer",
           "expected": 3.0,
           "source": "answer",
           "match_abs": true,
-          "tolerance": { "rel": 0.35, "abs": 1.0 }
+          "tolerance": {
+            "rel": 0.35,
+            "abs": 1.0
+          }
         }
       ],
       "nodes": {
-        "require_kinds": ["identification", "counterfactual"],
-        "expect_visited": ["counterfactual"],
-        "adjustment_set_includes": ["season"]
+        "require_kinds": [
+          "identification",
+          "counterfactual"
+        ],
+        "expect_visited": [
+          "counterfactual"
+        ],
+        "adjustment_set_includes": [
+          "season"
+        ]
       }
     },
-
     "mediator_must_not_be_adjusted": {
       "_note": "The money check: skills is a MEDIATOR (training -> skills -> earnings). It must not enter the back-door adjustment set for a TOTAL effect. Structural, so no numeric target.",
       "nodes": {
-        "require_kinds": ["identification"],
-        "expect_visited": ["identification"],
-        "adjustment_set_includes": ["family"],
-        "adjustment_set_excludes": ["skill"],
+        "require_kinds": [
+          "identification"
+        ],
+        "expect_visited": [
+          "identification"
+        ],
+        "adjustment_set_includes": [
+          "family"
+        ],
+        "adjustment_set_excludes": [
+          "skill"
+        ],
         "require_identifiable": true
       }
     },
-
     "collider_must_not_be_adjusted": {
       "_note": "hospitalization is a COLLIDER (exercise -> hospitalization <- heart disease). Conditioning on it opens a spurious path, so it must be absent from the adjustment set.",
       "nodes": {
-        "require_kinds": ["identification"],
-        "expect_visited": ["identification"],
-        "adjustment_set_excludes": ["hospital"],
+        "require_kinds": [
+          "identification"
+        ],
+        "expect_visited": [
+          "identification"
+        ],
+        "adjustment_set_excludes": [
+          "hospital"
+        ],
         "require_identifiable": true
       }
     },
-
     "estimand_no_data_confounders": {
       "_note": "Data-free identification. There is deliberately NO numeric check: with no dataset the agent must NOT state a precise data-derived effect, so asserting a number here would reward exactly the behaviour the case exists to discourage.",
       "nodes": {
-        "require_kinds": ["identification"],
-        "expect_visited": ["identification"],
-        "adjustment_set_includes": ["age"],
+        "require_kinds": [
+          "identification"
+        ],
+        "expect_visited": [
+          "identification"
+        ],
+        "adjustment_set_includes": [
+          "age"
+        ],
         "require_identifiable": true
       }
     },
-
     "causal_pipeline_ate_estimation": {
       "_note": "Basic-dataset stratified ATE; the reference states +0.139 (see docs/evaluation_and_testing.md section 7).",
       "numeric": [
@@ -140,12 +208,391 @@
           "name": "stratified_ate",
           "expected": 0.139,
           "source": "answer",
-          "tolerance": { "rel": 0.10, "abs": 0.01 }
+          "tolerance": {
+            "rel": 0.1,
+            "abs": 0.01
+          }
         }
       ],
       "nodes": {
-        "require_kinds": ["graph"],
-        "expect_visited": ["graph"]
+        "require_kinds": [
+          "graph"
+        ],
+        "expect_visited": [
+          "graph"
+        ]
+      }
+    },
+    "confounder_sign_flip_csv": {
+      "_trap": "confounder",
+      "_naive_estimate": -0.173,
+      "_correct_estimate": 1.1017,
+      "_note": "true=1.0 | naive(wrong)=-0.173 | correct=1.101735785704344",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 1.0,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": 0.2,
+            "abs": 0.3
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "soil_quality"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor"
+      }
+    },
+    "confounder_magnitude_inflation_csv": {
+      "_trap": "confounder",
+      "_naive_estimate": 1.669,
+      "_correct_estimate": 0.4309,
+      "_note": "true=0.5 | naive(wrong)=1.669 | correct=0.4308977240130436",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 0.5,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": 0.3,
+            "abs": 0.25
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "store_traffic"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor"
+      }
+    },
+    "confounder_simpson_paradox_csv": {
+      "_trap": "confounder",
+      "_naive_estimate": -0.273,
+      "_correct_estimate": 0.1008,
+      "_note": "true=0.1034 | naive(wrong)=-0.273 | correct=0.10077519379844979 | stratified ATE 0.1034; mild +0.075, severe +0.133",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 0.1034,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": 0.5,
+            "abs": 0.09
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "severity"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor"
+      }
+    },
+    "mediator_full_mediation_csv": {
+      "_trap": "mediator",
+      "_naive_estimate": 0.669,
+      "_correct_estimate": 3.0956,
+      "_note": "true=3.0 | naive(wrong)=0.669 | correct=3.095556888762827",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 3.0,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": 0.15,
+            "abs": 0.3
+          }
+        },
+        {
+          "name": "adjustment_set_is_empty",
+          "expected": 0,
+          "source": "node:identification.adjustment_set_size",
+          "tolerance": {
+            "abs": 0
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_excludes": [
+          "skill_score"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor",
+        "adjustment_set_empty": true
+      }
+    },
+    "mediator_with_confounder_csv": {
+      "_trap": "mediator",
+      "_naive_estimate": 0.76,
+      "_correct_estimate": 2.3522,
+      "_note": "true=2.3 | naive(wrong)=0.760 | correct=2.3521704386594386 | adjust-nothing = +3.233 (confounded, also rejected)",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 2.3,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": 0.15,
+            "abs": 0.3
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "family_income"
+        ],
+        "adjustment_set_excludes": [
+          "study_hours"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor"
+      }
+    },
+    "collider_null_effect_csv": {
+      "_trap": "collider",
+      "_naive_estimate": -0.904,
+      "_correct_estimate": -0.1455,
+      "_note": "true=0.0 | naive(wrong)=-0.904 | correct=-0.14554615441502392",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 0.0,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": null,
+            "abs": 0.35
+          }
+        },
+        {
+          "name": "adjustment_set_is_empty",
+          "expected": 0,
+          "source": "node:identification.adjustment_set_size",
+          "tolerance": {
+            "abs": 0
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_excludes": [
+          "hospital_visit"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor",
+        "adjustment_set_empty": true
+      }
+    },
+    "collider_with_confounder_csv": {
+      "_trap": "collider",
+      "_naive_estimate": -0.429,
+      "_correct_estimate": 0.9548,
+      "_note": "true=1.0 | naive(wrong)=-0.429 | correct=0.954784693104817",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 1.0,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": 0.2,
+            "abs": 0.3
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "age_group"
+        ],
+        "adjustment_set_excludes": [
+          "clinic_record"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor"
+      }
+    },
+    "spurious_common_cause_only_csv": {
+      "_trap": "spurious",
+      "_naive_estimate": 1.001,
+      "_correct_estimate": -0.0145,
+      "_note": "true=0.0 | naive(wrong)=1.001 | correct=-0.014496832897565204",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 0.0,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": null,
+            "abs": 0.3
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "adjustment_set_includes": [
+          "city_size"
+        ],
+        "require_identifiable": true,
+        "estimand_type": "backdoor"
+      }
+    },
+    "spurious_unobserved_confounder_csv": {
+      "_trap": "spurious",
+      "_naive_estimate": 1.936,
+      "_correct_estimate": null,
+      "_note": "true=None | naive(wrong)=1.936 | correct=refuse",
+      "nodes": {
+        "require_kinds": [
+          "identification"
+        ],
+        "expect_visited": [
+          "identification"
+        ],
+        "adjustment_set_excludes": [
+          "brand_demand"
+        ],
+        "require_identifiable": false,
+        "estimand_type": "none"
+      }
+    },
+    "spurious_reverse_causation_csv": {
+      "_trap": "spurious",
+      "_naive_estimate": 1.05,
+      "_correct_estimate": 0.0,
+      "_note": "true=0.0 | naive(wrong)=1.050 | correct=0.0 | corr = 0.822",
+      "numeric": [
+        {
+          "name": "effect_from_estimator",
+          "expected": 0.0,
+          "source": "node:effect.point",
+          "tolerance": {
+            "rel": null,
+            "abs": 0.35
+          }
+        },
+        {
+          "name": "adjustment_set_is_empty",
+          "expected": 0,
+          "source": "node:identification.adjustment_set_size",
+          "tolerance": {
+            "abs": 0
+          }
+        }
+      ],
+      "nodes": {
+        "require_kinds": [
+          "identification",
+          "effect"
+        ],
+        "expect_visited": [
+          "identification",
+          "effect"
+        ],
+        "expect_order": [
+          "identification",
+          "effect"
+        ],
+        "require_identifiable": true,
+        "adjustment_set_empty": true
       }
     }
   }

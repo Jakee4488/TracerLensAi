@@ -181,6 +181,11 @@ def node_values(nodes: list[dict]) -> dict[str, float]:
     return flat
 
 
+# Below this length, containment matching is more dangerous than useful: the
+# pattern "m" would match every id containing the letter m.
+_MIN_FUZZY_LEN = 3
+
+
 def _id_matches(candidate: str, pattern: str) -> bool:
     """Tolerant id comparison.
 
@@ -188,10 +193,18 @@ def _id_matches(candidate: str, pattern: str) -> bool:
     calls `season` may arrive as `season_indicator`. Exact matching would make
     these checks fail on paraphrase rather than on substance, so normalized
     containment counts either way.
+
+    Very short patterns fall back to exact match. A one- or two-character
+    pattern is a substring of almost anything — `"m"` for a mediator would match
+    an adjustment set containing `income`, failing an exclusion check over a
+    letter rather than a variable. Prefer names of >= 3 characters in
+    expectations so the fuzzy path stays available.
     """
     left, right = _normalize(candidate), _normalize(pattern)
     if not left or not right:
         return False
+    if len(right) < _MIN_FUZZY_LEN or len(left) < _MIN_FUZZY_LEN:
+        return left == right
     return left == right or left in right or right in left
 
 
@@ -344,6 +357,20 @@ def run_node_checks(instance: dict, case: dict) -> list[dict]:
     adjustment_set = list(((ident or {}).get("outputs") or {}).get("adjustment_set") or [])
     includes = spec.get("adjustment_set_includes") or []
     excludes = spec.get("adjustment_set_excludes") or []
+    # "The correct adjustment set is EMPTY" is a real structural claim, not the
+    # absence of one — it is the right answer for full mediation, for a pure
+    # collider, and for reverse causation, and an agent that adjusts for
+    # anything at all has got it wrong. Expressing it only as a numeric check on
+    # adjustment_set_size would hide structural ground truth in a number.
+    if spec.get("adjustment_set_empty") is not None:
+        want_empty = bool(spec["adjustment_set_empty"])
+        is_empty = ident is not None and not adjustment_set
+        results.append({
+            "name": "adjustment_set_empty", "passed": is_empty == want_empty,
+            "detail": (f"adjustment set: {', '.join(adjustment_set) or 'empty'}"
+                       if ident is not None else "no identification node in the trace"),
+        })
+
     if includes or excludes:
         if ident is None:
             results.append({

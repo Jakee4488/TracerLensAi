@@ -12,6 +12,23 @@ This directory contains evaluation datasets for testing agent behavior.
   truth — regenerate via the SCM recipe in the references if the data ever needs
   refreshing. The deterministic (no-LLM) counterpart of these checks lives in
   `tests/test_causal_benchmark.py`.
+- `causal-traps-dataset.json` — **10 discrimination cases built to break a wrong
+  agent.** Four trap families (confounder / mediator / collider / spurious), each from
+  a known SCM with 70 rows. Every case carries **numeric** ground truth (the true
+  effect) *and* **structural** ground truth (which variables belong in the adjustment
+  set and which must be excluded), so the deterministic metrics grade them without the
+  LLM judge.
+
+  The defining property: **the naive answer falls outside the tolerance band while the
+  correct adjusted estimate falls inside.** Three cases are sign flips — the naive
+  estimate has the wrong sign, not merely the wrong magnitude. A case that both a
+  broken and a correct agent pass is not a trap, so
+  `tests/test_eval_assertions.py::test_correct_agent_passes_and_naive_agent_fails`
+  asserts both halves for every case and will fail if a tolerance is ever widened
+  until a trap stops trapping. Each entry in `../expectations.json` records
+  `_naive_estimate` and `_correct_estimate` so the band can be re-checked by hand.
+
+  These need node traces — run generate with `CAUSAL_NODE_TRACE=1`.
 
 ## Running Evaluations
 

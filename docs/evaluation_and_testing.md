@@ -331,6 +331,41 @@ weighted highest. Run it explicitly:
 `agents-cli eval generate --dataset tests/eval/datasets/causal-inference-dataset.json`
 then `agents-cli eval grade`.
 
+### 5b. The trap dataset (discrimination)
+
+[`causal-traps-dataset.json`](../tests/eval/datasets/causal-traps-dataset.json)
+exists because the datasets above **saturate** — they score near-ceiling, so they
+can no longer tell a good agent from a lucky one. These ten cases are built to be
+failed by a wrong agent:
+
+| Trap family | Cases | What a wrong agent does |
+|---|---|---|
+| **Confounder** | 3 | Reports the raw association; misses the common cause |
+| **Mediator** | 2 | Controls for a variable on the causal path, erasing the effect |
+| **Collider** | 2 | Adjusts for everything, manufacturing an effect that isn't there |
+| **Spurious** | 3 | Explains a causal story the structure does not support, instead of rejecting it |
+
+Every case carries **both** kinds of ground truth, which is what lets the
+deterministic metrics grade them with no judge involved:
+
+- **numeric** — the true effect, checked against `node:effect.point`
+- **structural** — `adjustment_set_includes` / `adjustment_set_excludes` /
+  `adjustment_set_empty` / `require_identifiable`
+
+**The invariant that makes them traps:** the naive estimate falls *outside* the
+tolerance band while the correct adjusted estimate falls *inside*. Three cases
+are sign flips — the naive answer has the wrong **sign**, not just the wrong
+magnitude, so an agent cannot stumble into a pass. Both halves are asserted by
+`test_correct_agent_passes_and_naive_agent_fails`, which fails loudly if a
+tolerance is ever widened until a trap stops discriminating. Each expectations
+entry records `_naive_estimate` and `_correct_estimate` for hand re-checking.
+
+One case (`spurious_unobserved_confounder_csv`) has **no numeric expectation on
+purpose**: its only confounder is unmeasured and there is no instrument, so the
+correct behaviour is to refuse a number. It is graded purely structurally on
+`require_identifiable: false` — asserting a value there would reward exactly the
+overconfidence the case exists to catch.
+
 > **Extending it:** copy a case, give it a unique `eval_case_id`, and add a
 > `reference`. To test the pipeline, prefix the prompt with `[[causal:on]]`.
 > Start with 1–2 cases, get them passing, then expand. See the

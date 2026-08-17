@@ -378,6 +378,149 @@ def test_shipped_expectations_file_is_valid():
                 assert key in ("rel", "abs"), f"unknown tolerance key '{key}'"
 
 
+# ── Trap datasets actually trap ──────────────────────────────────────────────
+# The point of causal-traps-dataset.json is discrimination: a broken agent must
+# FAIL and a correct agent must PASS. A case both answers survive is not a trap,
+# it is saturation with extra steps. These tests are what stop a tolerance from
+# being widened until a trap quietly stops trapping.
+
+def _trap_cases():
+    expectations = assertions.load_expectations()
+    return [(cid, case) for cid, case in (expectations.get("cases") or {}).items()
+            if "_trap" in case]
+
+
+def _instance_reporting(case_id: str, value, expectations) -> dict:
+    """A grading instance for an agent whose estimator produced `value`."""
+    case = expectations["cases"][case_id]
+    ident_out = {"identifiable": True, "estimand_type": "backdoor",
+                 "adjustment_set": list(case.get("nodes", {}).get(
+                     "adjustment_set_includes") or [])}
+    nodes = [node("identification", "identification", seq=1,
+                  values={"identifiable": 1.0,
+                          "adjustment_set_size": len(ident_out["adjustment_set"])},
+                  outputs=ident_out)]
+    if value is not None:
+        nodes.append(node("effect", "effect", seq=2, values={"point": float(value)},
+                          outputs={"point": float(value)}))
+    prompt = _prompt_for(case_id)
+    return make_instance(prompt=prompt, response=f"The estimated effect is {value}.",
+                         nodes=nodes)
+
+
+def _prompt_for(case_id: str) -> str:
+    for path in (Path(__file__).resolve().parent / "eval" / "datasets").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for case in data.get("eval_cases") or []:
+            if case.get("eval_case_id") == case_id:
+                return " ".join(p.get("text", "")
+                                for p in (case.get("prompt") or {}).get("parts") or [])
+    raise AssertionError(f"no dataset case for {case_id}")
+
+
+def test_every_trap_case_has_both_numeric_and_structural_ground_truth():
+    """The stated requirement: numeric truth where one exists, and structural
+    truth (which variables belong in the adjustment set) for all of them."""
+    for case_id, case in _trap_cases():
+        nodes = case.get("nodes") or {}
+        assert nodes, f"{case_id}: no structural expectations"
+        structural = (nodes.get("adjustment_set_includes")
+                      or nodes.get("adjustment_set_excludes")
+                      or nodes.get("adjustment_set_empty") is not None
+                      or nodes.get("require_identifiable") is False)
+        assert structural, f"{case_id}: declares no adjustment-set ground truth"
+        if case.get("_correct_estimate") is not None:
+            assert case.get("numeric"), f"{case_id}: has a numeric truth but no check"
+
+
+@pytest.mark.parametrize("case_id", [cid for cid, _ in _trap_cases()])
+def test_correct_agent_passes_and_naive_agent_fails(case_id):
+    """Both halves matter. Passing only the first would let a case that nothing
+    can fail count as hardening."""
+    expectations = assertions.load_expectations()
+    case = expectations["cases"][case_id]
+    correct, naive = case["_correct_estimate"], case["_naive_estimate"]
+
+    if correct is None:  # non-identifiable case: structural only, no number
+        pytest.skip("structural-only case, covered by the identifiability test")
+
+    good = assertions.evaluate_case(
+        _instance_reporting(case_id, correct, expectations), "numeric_accuracy")
+    assert good["score"] == 1.0, f"correct estimate rejected:\n{good['explanation']}"
+
+    bad = assertions.evaluate_case(
+        _instance_reporting(case_id, naive, expectations), "numeric_accuracy")
+    assert bad["score"] < 1.0, (
+        f"NAIVE estimate {naive} passed — this case is not a trap:\n{bad['explanation']}")
+
+
+def test_non_identifiable_case_rejects_an_agent_that_answers_anyway():
+    """The spurious/unobserved-confounder case: an agent that reports a number
+    has substituted a confounded regression for a causal claim."""
+    case_id = "spurious_unobserved_confounder_csv"
+    prompt = _prompt_for(case_id)
+
+    honest = node("identification", "identification",
+                  outputs={"identifiable": False, "estimand_type": "none",
+                           "adjustment_set": []})
+    result = assertions.evaluate_case(
+        make_instance(prompt=prompt, nodes=[honest]), "causal_node_path")
+    assert result["score"] == 1.0, result["explanation"]
+
+    overconfident = node("identification", "identification",
+                         outputs={"identifiable": True, "estimand_type": "backdoor",
+                                  "adjustment_set": ["brand_demand"]})
+    bad = assertions.evaluate_case(
+        make_instance(prompt=prompt, nodes=[overconfident]), "causal_node_path")
+    assert bad["score"] < 1.0
+    assert "identifiable" in bad["explanation"]
+
+
+@pytest.mark.parametrize("case_id,forbidden", [
+    ("mediator_full_mediation_csv", "skill_score"),
+    ("mediator_with_confounder_csv", "study_hours"),
+    ("collider_null_effect_csv", "hospital_visit"),
+    ("collider_with_confounder_csv", "clinic_record"),
+])
+def test_adjusting_for_the_trap_variable_fails_structurally(case_id, forbidden):
+    """An agent that adjusts for everything is caught by the adjustment set
+    itself, independently of whatever number it reported."""
+    expectations = assertions.load_expectations()
+    case = expectations["cases"][case_id]
+    adjust = list((case.get("nodes") or {}).get("adjustment_set_includes") or [])
+
+    ident = node("identification", "identification",
+                 outputs={"identifiable": True, "estimand_type": "backdoor",
+                          "adjustment_set": adjust + [forbidden]})
+    result = assertions.evaluate_case(
+        make_instance(prompt=_prompt_for(case_id), nodes=[ident]), "causal_node_path")
+    assert result["score"] < 1.0
+    assert f"never-adjust-for:{forbidden}" in result["explanation"]
+
+
+def test_empty_adjustment_set_is_a_checkable_claim():
+    """"Adjust for nothing" is the correct answer for full mediation, a pure
+    collider, and reverse causation — an agent that adjusts for anything there
+    has over-adjusted, and that must be catchable structurally."""
+    case = {"nodes": {"adjustment_set_empty": True}}
+    empty = node("identification", "identification",
+                 outputs={"adjustment_set": [], "identifiable": True})
+    assert assertions.run_node_checks(make_instance(nodes=[empty]), case)[0]["passed"]
+
+    nonempty = node("identification", "identification",
+                    outputs={"adjustment_set": ["skill_score"], "identifiable": True})
+    result = assertions.run_node_checks(make_instance(nodes=[nonempty]), case)[0]
+    assert not result["passed"] and "skill_score" in result["detail"]
+
+
+def test_short_id_patterns_fall_back_to_exact_match():
+    """Guard on the fuzzy matcher: a one-character pattern must not match every
+    id containing that letter, or an exclusion check fails over a letter."""
+    assert assertions._id_matches("season_indicator", "season")
+    assert not assertions._id_matches("income", "m")
+    assert assertions._id_matches("m", "m")
+
+
 @pytest.mark.parametrize("metric_file", ["metric_numeric_accuracy", "metric_node_path"])
 def test_cli_metric_entrypoints_expose_evaluate(metric_file):
     """custom_function_file requires exactly one module-level `evaluate`."""

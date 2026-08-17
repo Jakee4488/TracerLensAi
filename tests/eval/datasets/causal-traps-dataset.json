@@ -1,0 +1,214 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "confounder_sign_flip_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: harvest.csv ---\nsoil_quality,fertilizer,crop_yield\n0.132,1.039,1.813\n1.018,-4.169,-2.070\n0.749,-2.627,-1.729\n0.139,0.185,0.600\n0.498,0.733,1.559\n-1.957,3.800,-2.227\n-1.830,2.866,-2.697\n1.110,-2.687,-0.835\n-0.335,1.920,1.257\n-0.399,1.700,0.127\n-1.238,4.664,-0.048\n0.122,-0.568,-0.099\n0.777,-0.966,1.528\n0.814,-0.615,1.724\n0.295,0.363,1.497\n0.271,-0.235,0.416\n0.105,-0.576,0.043\n1.744,-3.984,1.239\n-1.673,2.781,-1.963\n0.234,-0.837,-0.279\n-0.479,1.374,0.086\n1.081,-3.156,-0.063\n0.001,0.211,0.923\n-0.553,1.879,1.418\n0.164,-0.966,-0.475\n0.105,-0.374,-0.444\n2.930,-6.227,2.804\n1.842,-3.374,2.746\n1.138,-2.302,1.542\n-0.155,-0.028,-1.602\n-0.557,0.882,-0.579\n-0.208,1.201,0.368\n-0.817,1.804,-1.373\n-1.083,3.199,0.246\n1.221,-1.527,1.839\n-0.493,-1.041,-2.468\n2.031,-2.827,3.747\n0.727,-1.100,0.372\n-0.594,1.627,0.477\n0.901,-2.217,0.159\n1.094,-2.006,-0.430\n1.315,-2.626,1.700\n0.462,-0.423,0.739\n-0.173,-2.237,-3.160\n-1.104,1.371,-1.708\n0.137,-1.173,-0.886\n1.305,-1.272,2.449\n-1.761,4.104,-0.943\n0.664,-0.758,2.330\n0.848,-1.439,1.518\n-0.004,-1.189,-1.690\n-0.740,1.104,-1.310\n-1.062,4.029,0.424\n0.257,-0.812,-0.282\n-0.808,2.919,0.495\n-1.485,3.681,-1.159\n0.967,-2.386,-0.045\n-0.180,0.567,0.364\n0.397,-1.815,-1.334\n-1.498,3.241,-1.672\n0.136,-0.934,-0.761\n-0.302,-0.578,-1.252\n2.359,-5.422,2.040\n-0.592,0.999,-0.241\n1.259,-2.427,1.154\n-0.066,0.111,-0.248\n1.502,-4.769,-0.651\n-0.344,0.352,-1.766\n0.558,-2.449,-0.964\n-0.695,1.478,-0.164\n--- End of file: harvest.csv ---\nWhat is the causal effect of fertilizer on crop_yield? soil_quality is a common cause of both: richer soil means less fertilizer is applied, and richer soil independently raises yield."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The causal effect of fertilizer on crop_yield is approximately +1.0 per unit (true effect 1.0). soil_quality must be in the adjustment set: it is a common cause of both. The unadjusted regression gives roughly -0.17, i.e. it reverses the SIGN and concludes fertilizer reduces yield. A correct answer adjusts for soil_quality, reports a positive effect near +1.0, and explicitly notes that the raw correlation is misleading."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "confounder_magnitude_inflation_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: stores.csv ---\nstore_traffic,ad_spend,revenue\n-0.405,-0.756,-1.394\n1.535,3.018,5.724\n0.061,-1.492,-0.188\n-1.180,-1.789,-4.035\n-1.056,-2.535,-3.220\n-0.352,-2.283,-1.557\n0.764,0.275,1.958\n0.484,-0.017,0.990\n-0.180,-0.694,-0.711\n0.177,0.375,-0.518\n0.451,0.485,1.695\n0.685,1.243,3.275\n1.266,0.934,3.135\n1.717,2.841,6.206\n-0.056,0.057,0.318\n0.697,2.542,2.688\n0.760,0.009,1.955\n-1.834,-2.818,-6.121\n-0.493,-1.167,-2.113\n-0.776,0.585,-1.482\n-2.864,-2.920,-9.683\n0.669,0.144,1.110\n0.331,0.443,1.541\n1.262,0.761,3.588\n-1.406,-1.149,-3.270\n-0.212,-1.002,-0.960\n-0.520,0.854,-0.955\n-0.402,-0.810,-1.490\n-0.505,0.119,-1.315\n1.037,1.570,2.995\n-1.327,-1.663,-4.649\n0.863,1.360,4.129\n-1.177,-3.511,-4.383\n-0.056,1.282,0.318\n-1.900,-4.800,-6.274\n0.449,0.713,1.638\n0.300,0.388,1.159\n1.700,1.179,5.417\n0.622,2.404,3.015\n-1.355,-3.652,-5.146\n0.440,0.951,2.417\n1.159,0.986,2.842\n0.659,0.974,2.619\n0.908,1.398,3.650\n-1.358,-2.703,-5.490\n0.899,-0.578,2.403\n-0.048,2.416,0.606\n0.897,1.782,2.442\n-0.493,1.545,-0.565\n-1.066,0.132,-2.222\n1.987,3.453,6.260\n1.193,3.345,4.498\n0.154,1.172,0.693\n0.318,1.545,2.281\n-0.646,-1.197,-2.466\n0.273,-0.127,1.545\n1.405,1.332,3.755\n-0.501,-0.826,-1.736\n2.786,2.429,8.581\n0.833,0.319,2.439\n0.206,-0.275,-0.367\n0.880,-0.864,0.905\n-1.238,-2.499,-3.645\n0.640,2.530,2.197\n-0.558,0.392,-0.808\n-0.223,-1.962,-0.973\n0.092,0.747,1.175\n-0.016,-0.525,-0.564\n-0.679,-1.257,-2.124\n2.523,2.762,8.729\n--- End of file: stores.csv ---\nEstimate the causal effect of ad_spend on revenue. store_traffic drives both: busy stores get bigger ad budgets and also earn more regardless of advertising."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The causal effect of ad_spend on revenue is approximately +0.5 per unit (true effect 0.5). store_traffic must be adjusted for. The unadjusted slope is about +1.67 \u2014 over three times too large \u2014 because busy stores both advertise more and earn more. A correct answer adjusts for store_traffic and reports roughly +0.5."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "confounder_simpson_paradox_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: patients.csv ---\nseverity,treated,recovered\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,1\n0,0,0\n0,0,0\n0,0,0\n0,0,0\n0,0,0\n0,0,0\n0,1,1\n0,1,1\n0,1,1\n0,1,1\n0,1,1\n0,1,1\n0,1,1\n0,1,0\n1,0,1\n1,0,0\n1,0,0\n1,0,0\n1,0,0\n1,0,0\n1,1,1\n1,1,1\n1,1,1\n1,1,1\n1,1,1\n1,1,1\n1,1,1\n1,1,1\n1,1,1\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n1,1,0\n--- End of file: patients.csv ---\nDoes treated improve recovered? severity (0 = mild, 1 = severe) affects both who receives treatment and who recovers \u2014 severe cases are far more likely to be treated."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Treatment HELPS. Within mild cases recovery rises from 0.800 to 0.875 (+0.075) and within severe cases from 0.167 to 0.300 (+0.133); the severity-standardized ATE is about +0.103. The pooled comparison is misleading: overall recovery is 0.421 among treated versus 0.694 among untreated, a difference of -0.273, because severe cases are far more likely to be treated. This is Simpson's paradox \u2014 the correct answer stratifies on severity and concludes the treatment is beneficial."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "mediator_full_mediation_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: training.csv ---\ntraining_hours,skill_score,earnings\n0.895,2.725,3.993\n-1.247,-2.578,-4.711\n0.681,1.836,3.154\n-0.282,-1.501,-1.930\n0.090,0.315,0.573\n-1.051,-1.309,-2.329\n0.787,2.001,2.008\n0.226,0.542,1.197\n1.614,2.854,3.454\n-0.539,-1.341,-2.116\n0.938,2.628,4.166\n0.556,1.179,1.779\n-0.063,0.066,0.372\n-0.061,-0.799,-1.505\n0.263,0.377,1.196\n-0.194,-0.039,0.124\n-0.122,-0.192,-1.032\n-1.489,-3.062,-4.674\n0.254,-0.132,-0.059\n-0.049,0.807,0.700\n0.180,-0.605,0.389\n-0.254,0.562,0.900\n-0.429,-0.577,-0.889\n0.392,1.323,1.956\n-0.084,-0.540,-0.526\n-1.155,-0.838,-0.879\n0.058,-0.664,-0.988\n2.222,4.179,5.904\n0.297,1.722,2.274\n-0.673,-1.950,-2.202\n-0.723,-2.286,-2.900\n2.033,4.866,7.760\n-0.483,-1.799,-2.170\n-0.191,-0.514,-1.691\n-0.157,-0.193,-0.287\n-0.965,-1.288,-3.111\n-0.610,-1.562,-2.405\n-0.083,-0.662,-0.199\n0.050,0.461,1.671\n-1.832,-3.767,-5.650\n-1.023,-1.513,-1.811\n-0.349,0.415,-0.126\n-1.169,-2.151,-3.055\n0.033,-0.139,0.456\n0.411,1.682,2.209\n0.051,-1.263,-1.307\n1.152,1.892,3.555\n0.618,1.880,2.475\n0.834,1.107,3.178\n1.127,1.575,2.831\n-0.779,-0.906,-0.704\n-0.244,-0.252,-1.146\n0.678,2.168,2.720\n1.833,3.731,6.008\n-0.051,-0.798,-1.057\n-1.622,-3.418,-5.201\n-0.079,-0.268,0.176\n1.076,2.554,3.919\n0.211,-0.526,-0.768\n-0.707,-1.610,-3.341\n-1.305,-3.153,-4.981\n2.360,4.342,7.561\n0.205,-0.419,-1.547\n-0.217,-1.132,-0.873\n-0.114,0.315,0.349\n0.954,2.149,2.442\n-1.705,-3.889,-5.682\n-1.485,-2.594,-3.869\n-0.398,-0.823,-1.006\n0.112,1.407,1.502\n--- End of file: training.csv ---\nWhat is the TOTAL causal effect of training_hours on earnings? training_hours raises skill_score, and skill_score raises earnings."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The TOTAL causal effect of training_hours on earnings is approximately +3.0 (2.0 x 1.5 through skill_score). skill_score is a MEDIATOR and must NOT be controlled for: the correct adjustment set is EMPTY. Controlling for skill_score collapses the estimate to roughly +0.67 and would wrongly suggest training barely matters, because it blocks the very path through which training works."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "mediator_with_confounder_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: tutoring.csv ---\nfamily_income,tutoring,study_hours,test_score\n0.044,0.846,1.631,2.468\n0.084,1.467,1.903,3.128\n0.733,0.063,-0.074,1.281\n-1.182,-0.301,-0.371,-2.818\n-0.008,1.269,1.497,2.228\n0.958,-0.211,0.299,2.463\n0.606,-0.179,-0.706,-0.211\n-0.027,-0.488,-0.542,-1.233\n0.865,2.585,3.969,8.149\n-1.497,-2.600,-3.708,-9.461\n0.053,0.694,0.965,1.771\n1.021,1.503,2.520,6.321\n1.085,0.594,0.842,2.698\n1.019,1.530,1.813,4.715\n0.884,1.272,1.905,5.371\n1.148,1.655,1.998,4.542\n-0.695,-1.544,-2.829,-5.596\n1.545,3.453,5.529,11.584\n0.169,-1.131,-2.447,-3.073\n0.673,0.686,0.851,2.965\n2.166,1.904,2.978,8.304\n-0.122,0.159,0.513,0.463\n-0.996,-2.708,-4.803,-8.991\n0.234,-0.232,-0.536,-0.439\n1.102,0.739,1.094,4.861\n-0.432,-1.257,-1.837,-2.985\n1.250,0.743,1.826,4.466\n1.291,2.643,4.456,8.911\n-1.526,-3.001,-3.947,-9.665\n0.286,0.107,0.959,1.267\n-0.915,-1.629,-1.758,-5.114\n-0.554,-0.253,-0.195,-1.611\n0.520,2.094,2.810,5.738\n-0.514,-1.116,-1.638,-3.350\n-0.142,1.131,1.686,2.747\n-0.800,-0.505,-1.042,-2.951\n0.856,-0.708,-1.458,-1.508\n-0.036,1.126,1.832,3.169\n0.178,-0.475,-1.051,0.051\n-0.663,-0.228,-0.266,-2.159\n1.216,1.113,1.100,4.415\n0.587,0.496,0.858,2.748\n-1.899,-3.520,-4.495,-10.714\n1.643,1.891,3.181,7.863\n-0.088,-1.101,-0.823,-2.294\n-0.339,1.945,3.282,4.553\n-0.826,-0.404,-0.420,-2.653\n0.406,1.258,1.950,4.214\n0.991,3.279,4.567,9.009\n0.121,-1.137,-1.643,-1.844\n1.360,1.301,2.050,6.493\n0.969,1.560,2.230,5.227\n0.218,0.644,1.303,2.008\n0.992,0.239,0.404,2.516\n-0.055,-0.726,-0.438,-1.321\n-1.282,-2.826,-4.014,-9.318\n0.446,-0.398,0.317,1.168\n0.607,1.638,3.180,5.508\n0.308,-0.078,-0.031,0.974\n-1.109,-0.181,0.302,-1.649\n-1.729,-1.531,-2.232,-7.020\n-1.495,-1.201,-1.143,-5.456\n-1.794,-0.324,-0.669,-4.610\n0.681,1.774,2.872,6.257\n1.265,1.719,2.306,5.300\n-0.816,-1.010,-1.645,-4.090\n-0.398,0.332,1.501,1.004\n-0.654,-1.424,-1.873,-4.178\n-1.480,-3.896,-5.647,-10.995\n-0.874,-1.153,-2.975,-5.326\n--- End of file: tutoring.csv ---\nEstimate the TOTAL causal effect of tutoring on test_score. family_income is a common cause of tutoring and test_score. study_hours lies on the causal path from tutoring to test_score."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The TOTAL causal effect of tutoring on test_score is approximately +2.3 (direct 0.8 plus 1.5 x 1.0 through study_hours). The correct adjustment set is {family_income} ONLY. Adjusting for study_hours as well leaves roughly +0.76 (the direct effect alone, erasing the mediated part); adjusting for nothing gives about +3.23 (confounded). Both are wrong: adjust for the confounder, never for the mediator."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "collider_null_effect_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: cohort.csv ---\nexercise,hospital_visit,heart_risk\n-1.670,-1.507,0.461\n0.282,0.238,-0.074\n0.457,0.704,0.554\n0.926,2.379,1.217\n0.498,1.564,1.033\n0.781,-0.175,-0.918\n-0.850,-3.549,-3.007\n0.897,-0.352,-1.105\n-0.334,0.442,0.688\n1.402,2.965,1.732\n-0.968,-1.292,-0.084\n0.259,-0.244,-0.053\n-0.746,-0.284,0.043\n0.908,-0.747,-0.997\n1.693,1.785,-0.275\n0.875,-0.426,-1.158\n0.698,1.862,1.100\n1.883,0.262,-0.825\n0.945,1.235,-0.379\n-0.167,-0.339,0.043\n0.334,0.529,-0.076\n-1.159,-1.180,0.168\n1.447,0.179,-1.892\n0.581,2.259,1.797\n-0.041,-0.742,-0.720\n-0.598,-1.247,-0.964\n0.381,0.600,0.095\n0.707,1.016,0.531\n-0.280,0.122,0.320\n-3.328,-3.932,-0.301\n0.285,0.373,-0.063\n-1.591,-1.597,-0.562\n0.181,0.826,0.941\n2.699,3.306,0.279\n-1.128,-2.787,-1.353\n0.847,0.796,0.084\n-1.752,0.720,2.132\n0.014,-0.633,0.042\n0.779,0.760,-0.073\n0.289,0.238,-0.021\n0.844,1.030,0.273\n0.405,0.807,0.615\n-1.052,-0.879,0.441\n-2.143,-1.147,1.106\n-0.951,1.365,1.455\n0.374,-0.076,-0.469\n-0.411,-0.474,-0.293\n-0.295,-0.715,-0.181\n0.941,1.462,1.209\n0.434,0.777,0.184\n-1.540,-0.323,1.320\n0.126,-0.127,-0.323\n-0.885,-0.053,1.035\n-0.182,-0.289,-0.188\n-1.556,-0.282,1.302\n-1.967,-1.878,-0.083\n-0.142,1.749,1.433\n0.056,0.445,0.434\n-0.525,0.193,0.390\n0.365,-0.589,-0.425\n1.255,1.375,-0.293\n1.874,1.981,-0.223\n1.208,1.393,-0.071\n0.522,-1.304,-1.713\n-0.604,-1.028,0.230\n-0.801,0.232,0.883\n0.330,0.444,-0.188\n-1.921,-1.088,0.879\n0.059,1.489,1.222\n-0.113,-0.626,-0.398\n--- End of file: cohort.csv ---\nWhat is the causal effect of exercise on heart_risk? Both exercise and heart_risk independently influence whether someone has a hospital_visit."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "There is NO causal effect of exercise on heart_risk; the true effect is 0.0. hospital_visit is a COLLIDER (exercise -> hospital_visit <- heart_risk) and must NOT be conditioned on \u2014 the correct adjustment set is EMPTY. Controlling for hospital_visit manufactures a strong spurious association of about -0.90, which is collider/selection bias (Berkson's paradox), not a causal effect."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "collider_with_confounder_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: screening.csv ---\nage_group,screening,clinic_record,disease_score\n1.228,2.574,6.837,4.149\n0.220,-0.765,-1.481,-0.900\n-0.034,-0.323,-1.357,-0.909\n-1.165,-0.104,-1.853,-2.348\n-0.820,-1.428,-3.864,-2.125\n-0.641,0.343,-0.385,-0.565\n-0.722,-1.087,-2.464,-1.693\n-0.581,-1.173,-2.943,-1.737\n1.266,0.695,2.897,2.192\n0.026,0.443,0.733,0.525\n-1.498,-2.836,-8.169,-4.862\n0.209,0.360,0.061,0.006\n1.128,-0.453,0.840,0.927\n-0.613,0.105,-1.388,-1.092\n-1.236,-1.776,-5.141,-3.311\n-0.271,-1.948,-4.122,-2.258\n-0.892,-0.884,-4.043,-2.860\n-0.201,0.329,0.808,0.395\n0.503,1.124,3.672,2.382\n0.902,2.167,5.457,3.292\n-0.441,0.075,-0.688,-0.605\n-1.413,-1.578,-5.233,-3.162\n-1.141,-1.573,-3.970,-2.643\n-0.547,-1.279,-3.341,-2.022\n0.642,-0.898,0.116,0.745\n0.477,0.546,1.856,1.602\n-0.871,-1.221,-4.335,-3.057\n0.280,1.493,2.594,1.533\n-1.767,-2.807,-8.602,-5.714\n-0.042,-0.176,-0.220,-0.040\n-1.677,-1.405,-5.534,-3.740\n0.308,0.404,1.760,1.316\n0.996,0.495,2.860,2.303\n-0.029,-1.498,-2.476,-1.276\n-1.211,-2.945,-7.592,-4.870\n-0.918,0.630,0.304,-0.308\n-0.887,-0.634,-1.646,-1.614\n1.213,2.264,4.879,3.217\n0.947,1.242,4.857,3.481\n-0.511,1.272,1.856,0.396\n0.313,-0.622,-0.340,0.314\n1.234,1.125,5.000,3.362\n-1.701,-1.040,-4.079,-3.368\n-0.902,-2.535,-6.478,-4.153\n0.077,-0.340,0.193,0.174\n0.019,1.676,3.008,1.868\n-1.941,-1.740,-6.443,-4.797\n0.028,1.381,2.985,1.546\n0.068,-1.332,-1.982,-0.621\n0.455,0.454,2.459,1.985\n-1.525,-1.886,-6.735,-4.510\n0.050,1.307,1.566,0.304\n0.389,-1.672,-2.301,-0.699\n-0.235,-1.763,-4.768,-3.168\n-0.452,-1.776,-4.587,-2.511\n0.221,1.614,4.033,2.274\n0.346,1.589,4.234,2.819\n0.988,-0.455,0.613,1.240\n0.268,-0.549,-0.125,0.237\n-1.537,-2.437,-6.914,-4.336\n0.702,2.057,6.243,4.135\n-1.094,-2.247,-5.669,-3.294\n-0.264,-0.087,-1.066,-0.895\n0.437,-0.723,-0.553,-0.404\n1.287,0.768,3.385,2.318\n0.364,1.239,2.837,1.317\n-1.829,-3.485,-8.777,-5.644\n1.515,2.734,7.090,4.437\n-0.160,-0.504,-0.579,-0.290\n-1.480,-1.128,-4.055,-3.182\n--- End of file: screening.csv ---\nEstimate the causal effect of screening on disease_score. age_group is a common cause of both. Both screening and disease_score influence clinic_record."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The causal effect of screening on disease_score is approximately +1.0. The correct adjustment set is {age_group} ONLY. clinic_record is a collider on both screening and disease_score and must be excluded: adjusting for age_group AND clinic_record gives roughly -0.43, flipping the sign. Adjust for the confounder, never for the collider."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "spurious_common_cause_only_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: cities.csv ---\ncity_size,library_count,crime_rate\n0.350,0.195,0.632\n0.260,0.118,1.086\n1.711,1.628,3.231\n-1.604,-1.514,-3.223\n1.244,4.111,2.147\n-0.687,-0.063,-1.242\n0.637,2.192,0.183\n1.577,2.316,3.732\n-0.650,-1.488,-0.921\n-0.691,-0.769,-1.534\n0.038,0.122,-0.319\n-0.447,-0.661,-0.399\n-0.372,0.481,-1.025\n-0.431,0.271,-0.131\n1.012,0.785,3.296\n-1.283,-2.507,-3.077\n1.318,3.139,2.820\n-1.589,-0.432,-3.318\n0.969,0.547,1.601\n0.942,1.338,2.081\n-0.519,-0.678,-1.165\n1.131,2.416,1.806\n-0.192,-1.350,-0.467\n-0.593,-1.750,-1.420\n1.384,2.087,2.427\n1.499,0.314,2.832\n0.568,1.292,1.185\n0.351,0.686,0.785\n-0.237,-0.200,-0.497\n-1.023,-0.324,-2.132\n0.492,0.129,1.116\n-0.588,1.909,-0.443\n-0.332,-0.365,-0.184\n1.038,-0.507,2.277\n1.280,2.058,1.727\n0.002,-0.205,0.431\n0.051,-1.423,-0.242\n0.514,0.358,1.693\n2.719,5.500,6.305\n-0.179,1.166,-0.671\n-0.590,-1.939,-1.251\n0.428,-0.184,1.264\n-1.084,-1.593,-3.172\n0.369,0.575,0.637\n-1.470,-3.381,-3.037\n-1.983,-2.740,-3.976\n2.301,3.095,4.150\n1.079,3.020,1.958\n-0.469,-0.283,-0.573\n-0.604,-0.514,-1.188\n1.861,3.130,3.477\n2.022,4.658,4.150\n-0.010,-0.255,0.874\n-0.282,-0.801,0.042\n1.060,0.875,2.233\n1.680,2.774,4.301\n0.131,2.635,0.334\n0.029,-0.584,0.260\n1.811,2.903,3.668\n-0.423,-0.388,-0.800\n-0.113,-0.173,-0.757\n-1.963,-2.566,-4.123\n0.484,1.628,1.128\n-0.103,-0.161,0.183\n-0.091,-0.885,0.439\n-0.583,-1.444,-1.267\n-1.527,-0.867,-3.670\n0.404,1.489,1.322\n1.464,3.700,3.046\n1.372,1.405,2.790\n--- End of file: cities.csv ---\nlibrary_count and crime_rate move together across cities. Does library_count cause crime_rate, and if so by how much? city_size is a common cause of both."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "library_count does NOT cause crime_rate; the true causal effect is 0.0. The observed association (unadjusted slope about +1.0) is entirely explained by city_size, which drives both. Adjusting for city_size leaves essentially nothing (about -0.01). The correct behaviour is to REJECT the causal story rather than explain it with a mechanism."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "spurious_unobserved_confounder_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: market.csv ---\npromo_spend,signups\n-0.845,-1.106\n5.352,9.574\n0.491,3.234\n1.013,2.135\n0.736,3.630\n-0.424,-2.141\n-0.874,-1.602\n0.500,1.898\n-1.941,-4.343\n1.147,1.714\n-1.472,-2.822\n-1.312,-0.664\n0.175,0.378\n2.417,5.169\n4.458,9.097\n2.749,4.042\n-2.271,-5.307\n-1.438,-2.294\n1.381,1.214\n2.485,4.710\n-2.403,-5.296\n0.252,-1.591\n-0.659,-0.303\n0.176,-0.465\n-0.442,-0.974\n0.352,-0.260\n0.390,0.991\n1.238,2.269\n2.832,5.573\n-1.220,-2.429\n1.465,2.715\n0.610,3.010\n-0.997,-2.106\n-0.917,-1.155\n1.078,1.518\n-1.622,-2.196\n1.199,3.961\n0.275,1.192\n1.284,1.360\n1.593,3.564\n3.334,7.496\n-1.386,-0.683\n-0.024,-0.400\n1.033,0.058\n2.184,3.878\n-1.382,-2.941\n0.797,1.932\n-0.743,-3.148\n-3.970,-6.613\n-1.698,-5.029\n0.765,1.857\n1.333,4.901\n-1.232,-2.745\n0.113,-0.405\n3.367,6.649\n2.563,6.415\n1.680,1.923\n-2.760,-4.772\n1.635,2.552\n0.026,0.379\n0.089,-0.797\n2.266,5.190\n0.104,-0.817\n1.329,1.108\n0.403,0.873\n-2.041,-3.176\n-0.807,-2.770\n2.361,5.237\n-0.726,-2.737\n-0.418,-1.455\n--- End of file: market.csv ---\nEstimate the causal effect of promo_spend on signups. An unmeasured factor brand_demand \u2014 deliberately NOT recorded in this data \u2014 drives both promo_spend and signups, and no instrument or proxy for it is available."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The effect is NOT IDENTIFIABLE from this data. The only confounder, brand_demand, is unmeasured and no instrument or proxy is available, so no adjustment set exists and no valid back-door estimate can be formed. Regressing signups on promo_spend gives about +1.94, but reporting that as the causal effect is wrong. The correct answer refuses to state a causal number and explains what would be needed (a measurement of brand_demand or a valid instrument)."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "spurious_reverse_causation_csv",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "[[causal:on]] --- Attached file: signups.csv ---\nnewsletter_opens,product_interest\n0.542,1.335\n0.846,0.378\n0.066,0.985\n0.966,1.107\n0.482,-0.069\n-0.269,0.445\n-1.243,-1.555\n-2.016,-2.029\n0.507,1.061\n-1.530,-1.813\n0.496,-1.071\n1.111,1.046\n0.092,-0.630\n-1.311,-0.111\n1.131,1.622\n-1.109,-1.648\n-0.618,-0.961\n-1.328,-1.488\n-0.273,-0.570\n0.002,0.012\n0.120,0.539\n0.858,1.705\n-0.391,-0.669\n0.971,1.043\n0.844,0.677\n0.185,-0.271\n0.649,0.219\n-0.234,-1.614\n-0.619,-0.646\n1.005,1.479\n0.437,0.880\n-0.569,-0.395\n0.585,-0.694\n0.079,0.298\n-0.755,-1.402\n0.517,-0.140\n0.950,1.541\n1.968,1.682\n-1.426,-0.956\n0.666,0.596\n-1.008,-1.276\n1.687,2.423\n0.715,0.507\n-0.461,-0.575\n0.627,-0.154\n-0.845,-2.063\n-0.016,0.856\n1.285,0.571\n0.051,-0.415\n-1.367,-1.645\n0.906,0.570\n0.210,0.309\n0.722,0.496\n0.022,0.476\n0.744,0.801\n-0.244,-0.008\n-0.865,-1.062\n0.489,1.086\n0.283,-0.185\n-0.639,-1.552\n-0.078,-0.937\n0.120,-0.398\n0.013,0.130\n-0.201,-0.580\n0.035,0.589\n0.247,0.184\n0.518,0.293\n-0.343,-0.164\n0.217,-1.159\n0.612,0.608\n--- End of file: signups.csv ---\nnewsletter_opens and product_interest are strongly correlated. A colleague argues that newsletter_opens causes product_interest. In this system product_interest is determined first and then drives newsletter_opens; nothing feeds back from newsletter_opens into product_interest. What is the causal effect of newsletter_opens on product_interest?"
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "The causal effect of newsletter_opens on product_interest is 0.0. The arrow runs the other way: product_interest drives newsletter_opens. The strong correlation (about 0.82, regression slope about +1.05) reflects reverse causation, not an effect of opens on interest. Intervening on newsletter_opens would not change product_interest. The correct behaviour is to REJECT the proposed direction."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
