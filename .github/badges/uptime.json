@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "status",
-  "message": "down (503)",
-  "color": "red"
+  "message": "operational",
+  "color": "brightgreen"
 }
